@@ -1,6 +1,8 @@
-# obsidian-calendar-plugin
+# Work Assistant Plugin
 
-This plugin for [Obsidian](https://obsidian.md/) creates a simple Calendar view for visualizing and navigating between your daily notes.
+This plugin for [Obsidian](https://obsidian.md/) combines a Calendar view with word count statistics for visualizing and navigating between your daily notes.
+
+The plugin supports both English and Simplified Chinese languages, automatically detecting your Obsidian interface language.
 
 ![screenshot-full](https://raw.githubusercontent.com/liamcain/obsidian-calendar-plugin/master/images/screenshot-full.png)
 
@@ -10,26 +12,31 @@ After enabling the plugin in the settings menu, you should see the calendar view
 
 The plugin reads your Daily Note settings to know your date format, your daily note template location, and the location for new daily notes it creates.
 
+In addition to the standard calendar features, this plugin also tracks your daily word count and displays it as background colors on the calendar days. The more you write, the darker the background color becomes.
+
 ## Features
 
 - Go to any **daily note**.
 - Create new daily notes for days that don't have one. (This is helpful for when you need to backfill old notes or if you're planning ahead for future notes! This will use your current **daily note** template!)
 - Visualize your writing. Each day includes a meter to approximate how much you've written that day.
 - Use **Weekly notes** for an added organization layer! They work just like daily notes, but have their own customization options.
+- Track daily word count statistics and display them as background colors on calendar days.
+- Customize word count color ranges and opacity levels through the plugin settings.
 
 ## Settings
 
 - **Start week on [default: locale]**: Configure the Calendar view to show Sunday or Monday as the first day of the week. Choosing 'locale' will set the start day to be whatever is the default for your chosen locale (`Settings > About > Language`)
-- **Words per Dot [default: 250]**: Starting in version 1.3, dots reflect the word count of your files. By default, each dot represents 250 words, you can change that value to whatever you want. Set this to `0` to disable the word count entirely. **Note:** There is a max of 5 dots so that the view doesn't get too big!
+- **Words per Dot [default: 250]**: Starting in version 1.3, dots reflect the word count of your daily note files. By default, each dot represents 250 words, you can change that value to whatever you want. Set this to `0` to disable the word count entirely. **Note:** There is a max of 5 dots so that the view doesn't get too big!
 - **Confirm before creating new note [default: on]**: If you don't like that a modal prompts you before creating a new daily note, you can turn it off.
 - **Show Week Number [default: off]**: Enable this to add a new column to the calendar view showing the [Week Number](https://en.wikipedia.org/wiki/Week#Week_numbering). Clicking on these cells will open your **weekly note**.
+- **Word Count Background Settings**: Customize the color ranges and opacity levels for the word count background visualization. The background color intensity reflects the word count of your daily note files. You can define multiple ranges with minimum and maximum word counts and corresponding opacity values.
 
 ## Customization
 
 The following CSS Variables can be overridden in your `obsidian.css` file.
 
 ```css
-/* obsidian-calendar-plugin */
+/* work-assistant */
 /* https://github.com/liamcain/obsidian-calendar-plugin */
 
 #calendar-container {
@@ -47,7 +54,10 @@ The following CSS Variables can be overridden in your `obsidian.css` file.
   --color-text-day: var(--text-normal);
   --color-text-today: var(--interactive-accent);
   --color-text-weeknum: var(--text-muted);
-}
+  
+  /* Word count background color variable */
+  --calendar-word-count-color: var(--text-normal);
+}```
 ```
 
 In addition to the CSS Variables, there are some classes you can override for further customization. For example, if you don't like how bright the title is, you can override it with:
@@ -66,7 +76,7 @@ If you use "Inspect Element" on the calendar, you will notice that the CSS class
 
 ## Compatibility
 
-`obsidian-calendar-plugin` currently requires Obsidian v0.9.11 or above to work properly.
+`work-assistant` currently requires Obsidian v0.9.11 or above to work properly.
 
 ## Installation
 
@@ -76,7 +86,7 @@ You can install the plugin via the Community Plugins tab within Obsidian. Just s
 
 ### What do the dots mean?
 
-Each solid dot represents 250 words in your daily note. So 4 dots means you've written a thousands words for that day! If you want to change that threshold, you can set a different value for "Words Per Dot" in the Calendar settings.
+Each solid dot represents 250 words in your daily note file. So 4 dots means you've written a thousand words for that day! If you want to change that threshold, you can set a different value for "Words Per Dot" in the Calendar settings.
 
 The hollow dots, on the other hand, mean that the day has incomplete tasks in it. (**Note:** There will only ever be 1 hollow dot on a particular day, regardless of the number of remaining tasks)
 

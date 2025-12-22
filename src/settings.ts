@@ -1,8 +1,9 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import { appHasDailyNotesPluginLoaded } from "obsidian-daily-notes-interface";
-import type { ILocaleOverride, IWeekStartOption } from "obsidian-calendar-ui";
+import type { IWeekStartOption } from "obsidian-calendar-ui";
 
-import { DEFAULT_WEEK_FORMAT, DEFAULT_WORDS_PER_DOT } from "src/constants";
+import { DEFAULT_WEEK_FORMAT, DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
+import { t, getLanguage } from "./i18n";
 
 import type CalendarPlugin from "./main";
 
@@ -17,7 +18,11 @@ export interface ISettings {
   weeklyNoteTemplate: string;
   weeklyNoteFolder: string;
 
-  localeOverride: ILocaleOverride;
+  // Word count background settings
+  wordCountColorRanges: Array<{ min: number; max: number; opacity: number }>;
+
+  // Advanced settings
+  heatmapRefreshInterval: number;
 }
 
 const weekdays = [
@@ -41,7 +46,16 @@ export const defaultSettings = Object.freeze({
   weeklyNoteTemplate: "",
   weeklyNoteFolder: "",
 
-  localeOverride: "system-default",
+  // Default word count color ranges
+  wordCountColorRanges: [
+    { min: 0, max: 149, opacity: 0.44 },
+    { min: 150, max: 399, opacity: 0.6 },
+    { min: 400, max: 749, opacity: 0.76 },
+    { min: 750, max: 1499, opacity: 0.92 },
+    { min: 1500, max: Infinity, opacity: 1 }
+  ],
+
+  heatmapRefreshInterval: DEFAULT_REFRESH_INTERVAL,
 });
 
 export function appHasPeriodicNotesPluginLoaded(): boolean {
@@ -61,54 +75,64 @@ export class CalendarSettingsTab extends PluginSettingTab {
   display(): void {
     this.containerEl.empty();
 
+    // Get the current language from Obsidian
+    const lang = getLanguage();
+
     if (!appHasDailyNotesPluginLoaded()) {
       this.containerEl.createDiv("settings-banner", (banner) => {
         banner.createEl("h3", {
-          text: "⚠️ Daily Notes plugin not enabled",
+          text: `⚠️ ${t('plugin-name', lang)} plugin not enabled`,
         });
         banner.createEl("p", {
           cls: "setting-item-description",
           text:
-            "The calendar is best used in conjunction with either the Daily Notes plugin or the Periodic Notes plugin (available in the Community Plugins catalog).",
+            t('settings-weekly-note-warning', lang),
         });
       });
     }
 
     this.containerEl.createEl("h3", {
-      text: "General Settings",
+      text: t('settings-general-title', lang),
     });
-    this.addDotThresholdSetting();
-    this.addWeekStartSetting();
-    this.addConfirmCreateSetting();
-    this.addShowWeeklyNoteSetting();
+    this.addDotThresholdSetting(lang);
+    this.addWeekStartSetting(lang);
+    this.addConfirmCreateSetting(lang);
+    this.addShowWeeklyNoteSetting(lang);
 
     if (
       this.plugin.options.showWeeklyNote &&
       !appHasPeriodicNotesPluginLoaded()
     ) {
       this.containerEl.createEl("h3", {
-        text: "Weekly Note Settings",
+        text: t('settings-weekly-note-title', lang),
       });
       this.containerEl.createEl("p", {
         cls: "setting-item-description",
         text:
-          "Note: Weekly Note settings are moving. You are encouraged to install the 'Periodic Notes' plugin to keep the functionality in the future.",
+          t('settings-weekly-note-warning', lang),
       });
-      this.addWeeklyNoteFormatSetting();
-      this.addWeeklyNoteTemplateSetting();
-      this.addWeeklyNoteFolderSetting();
+      this.addWeeklyNoteFormatSetting(lang);
+      this.addWeeklyNoteTemplateSetting(lang);
+      this.addWeeklyNoteFolderSetting(lang);
     }
 
+    // Add word count background settings
     this.containerEl.createEl("h3", {
-      text: "Advanced Settings",
+      text: t('settings-word-count-bg-title', lang),
     });
-    this.addLocaleOverrideSetting();
+    this.addWordCountColorRangeSettings(lang);
+
+    this.containerEl.createEl("h3", {
+      text: t('settings-advanced-title', lang),
+    });
+    this.addHeatmapRefreshIntervalSetting(lang);
+    // Locale override setting has been removed as it's now handled by i18n detection
   }
 
-  addDotThresholdSetting(): void {
+  addDotThresholdSetting(lang: Language): void {
     new Setting(this.containerEl)
-      .setName("Words per dot")
-      .setDesc("How many words should be represented by a single dot?")
+      .setName(t('settings-words-per-dot', lang))
+      .setDesc(t('settings-words-per-dot-desc', lang))
       .addText((textfield) => {
         textfield.setPlaceholder(String(DEFAULT_WORDS_PER_DOT));
         textfield.inputEl.type = "number";
@@ -121,7 +145,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addWeekStartSetting(): void {
+  addWeekStartSetting(lang: Language): void {
     const { moment } = window;
 
     const localizedWeekdays = moment.weekdays();
@@ -129,9 +153,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const localeWeekStart = moment.weekdays()[localeWeekStartNum];
 
     new Setting(this.containerEl)
-      .setName("Start week on:")
+      .setName(t('settings-start-week', lang))
       .setDesc(
-        "Choose what day of the week to start. Select 'Locale default' to use the default specified by moment.js"
+        t('settings-start-week-desc', lang)
       )
       .addDropdown((dropdown) => {
         dropdown.addOption("locale", `Locale default (${localeWeekStart})`);
@@ -147,10 +171,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addConfirmCreateSetting(): void {
+  addConfirmCreateSetting(lang: Language): void {
     new Setting(this.containerEl)
-      .setName("Confirm before creating new note")
-      .setDesc("Show a confirmation modal before creating a new note")
+      .setName(t('settings-confirm-create', lang))
+      .setDesc(t('settings-confirm-create-desc', lang))
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.options.shouldConfirmBeforeCreate);
         toggle.onChange(async (value) => {
@@ -161,10 +185,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addShowWeeklyNoteSetting(): void {
+  addShowWeeklyNoteSetting(lang: Language): void {
     new Setting(this.containerEl)
-      .setName("Show week number")
-      .setDesc("Enable this to add a column with the week number")
+      .setName(t('settings-show-week-number', lang))
+      .setDesc(t('settings-show-week-number-desc', lang))
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.options.showWeeklyNote);
         toggle.onChange(async (value) => {
@@ -174,10 +198,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addWeeklyNoteFormatSetting(): void {
+  addWeeklyNoteFormatSetting(lang: Language): void {
     new Setting(this.containerEl)
-      .setName("Weekly note format")
-      .setDesc("For more syntax help, refer to format reference")
+      .setName(t('settings-weekly-note-format', lang))
+      .setDesc(t('settings-weekly-note-format-desc', lang))
       .addText((textfield) => {
         textfield.setValue(this.plugin.options.weeklyNoteFormat);
         textfield.setPlaceholder(DEFAULT_WEEK_FORMAT);
@@ -187,11 +211,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addWeeklyNoteTemplateSetting(): void {
+  addWeeklyNoteTemplateSetting(lang: Language): void {
     new Setting(this.containerEl)
-      .setName("Weekly note template")
+      .setName(t('settings-weekly-note-template', lang))
       .setDesc(
-        "Choose the file you want to use as the template for your weekly notes"
+        t('settings-weekly-note-template-desc', lang)
       )
       .addText((textfield) => {
         textfield.setValue(this.plugin.options.weeklyNoteTemplate);
@@ -201,10 +225,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addWeeklyNoteFolderSetting(): void {
+  addWeeklyNoteFolderSetting(lang: Language): void {
     new Setting(this.containerEl)
-      .setName("Weekly note folder")
-      .setDesc("New weekly notes will be placed here")
+      .setName(t('settings-weekly-note-folder', lang))
+      .setDesc(t('settings-weekly-note-folder-desc', lang))
       .addText((textfield) => {
         textfield.setValue(this.plugin.options.weeklyNoteFolder);
         textfield.onChange(async (value) => {
@@ -213,25 +237,117 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addLocaleOverrideSetting(): void {
-    const { moment } = window;
 
-    const sysLocale = navigator.language?.toLowerCase();
+  addWordCountColorRangeSettings(lang: Language): void {
+    const { wordCountColorRanges } = this.plugin.options;
 
+    // Create a setting for each color range
+    wordCountColorRanges.forEach((range, index) => {
+      const setting = new Setting(this.containerEl)
+        .setName(`${t('settings-color-range', lang)} ${index + 1}`)
+        .setDesc(t('settings-color-range-desc', lang)
+          .replace('{min}', range.min.toString())
+          .replace('{max}', range.max === Infinity ? t('word-count-range-infinity', lang) : range.max.toString())
+          .replace('{opacity}', range.opacity.toString()));
+
+      // Create a flex container for the three inputs
+      const inputsContainer = this.containerEl.createDiv();
+      inputsContainer.style.display = 'flex';
+      inputsContainer.style.gap = '10px';
+      inputsContainer.style.marginBottom = '10px';
+      inputsContainer.style.marginTop = '5px';
+
+      // Min value input
+      const minInput = inputsContainer.createEl('input', { type: 'number', placeholder: t('placeholder-min-value', lang) });
+      minInput.style.width = '80px';
+      minInput.value = String(range.min);
+
+      // Disable the first range's min input and set to 0
+      if (index === 0) {
+        minInput.disabled = true;
+        minInput.value = "0";
+      }
+
+      minInput.addEventListener('change', (e) => {
+        const target = e.target as HTMLInputElement;
+        const newRanges = [...this.plugin.options.wordCountColorRanges];
+        newRanges[index].min = Number(target.value);
+        this.plugin.writeOptions(() => ({
+          wordCountColorRanges: newRanges,
+        }));
+      });
+
+      // Max value input
+      const maxInput = inputsContainer.createEl('input', { type: range.max === Infinity ? 'text' : 'number', placeholder: t('placeholder-max-value', lang) });
+      maxInput.style.width = '80px';
+
+      // Handle Infinity and disabling for the last range
+      if (index === wordCountColorRanges.length - 1) {
+        maxInput.type = 'text';
+        maxInput.value = t('word-count-range-infinity', lang);
+        maxInput.disabled = true;
+      } else {
+        maxInput.value = range.max === Infinity ? "" : String(range.max);
+      }
+
+      maxInput.addEventListener('change', (e) => {
+        const target = e.target as HTMLInputElement;
+        const newRanges = [...this.plugin.options.wordCountColorRanges];
+        newRanges[index].max = target.value === "" ? Infinity : Number(target.value);
+        this.plugin.writeOptions(() => ({
+          wordCountColorRanges: newRanges,
+        }));
+      });
+
+      // Opacity input
+      const opacityInput = inputsContainer.createEl('input', { type: 'number', step: '0.01', placeholder: t('placeholder-opacity', lang) });
+      opacityInput.style.width = '80px';
+      opacityInput.value = String(range.opacity);
+      opacityInput.addEventListener('change', (e) => {
+        const target = e.target as HTMLInputElement;
+        const newRanges = [...this.plugin.options.wordCountColorRanges];
+        newRanges[index].opacity = Number(target.value);
+        this.plugin.writeOptions(() => ({
+          wordCountColorRanges: newRanges,
+        }));
+      });
+
+      // Add the container to the setting
+      setting.settingEl.appendChild(inputsContainer);
+    });
+
+    // Add button to reset to default ranges
     new Setting(this.containerEl)
-      .setName("Override locale:")
-      .setDesc(
-        "Set this if you want to use a locale different from the default"
-      )
-      .addDropdown((dropdown) => {
-        dropdown.addOption("system-default", `Same as system (${sysLocale})`);
-        moment.locales().forEach((locale) => {
-          dropdown.addOption(locale, locale);
-        });
-        dropdown.setValue(this.plugin.options.localeOverride);
-        dropdown.onChange(async (value) => {
+      .setName(t('settings-reset-ranges', lang))
+      .setDesc(t('settings-reset-ranges-desc', lang))
+      .addButton((button) => {
+        button.setButtonText(t('placeholder-reset', lang));
+        button.onClick(async () => {
           this.plugin.writeOptions(() => ({
-            localeOverride: value as ILocaleOverride,
+            wordCountColorRanges: [
+              { min: 0, max: 149, opacity: 0.44 },
+              { min: 150, max: 399, opacity: 0.6 },
+              { min: 400, max: 749, opacity: 0.76 },
+              { min: 750, max: 1499, opacity: 0.92 },
+              { min: 1500, max: Infinity, opacity: 1 }
+            ],
+          }));
+          this.display(); // Refresh the settings display
+        });
+      });
+  }
+
+  addHeatmapRefreshIntervalSetting(lang: Language): void {
+    new Setting(this.containerEl)
+      .setName(t('settings-heatmap-refresh-interval', lang))
+      .setDesc(t('settings-heatmap-refresh-interval-desc', lang))
+      .addText((textfield) => {
+        textfield.setPlaceholder(String(DEFAULT_REFRESH_INTERVAL));
+        textfield.inputEl.type = "number";
+        textfield.setValue(String(this.plugin.options.heatmapRefreshInterval));
+        textfield.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            heatmapRefreshInterval: value !== "" ? Number(value) : DEFAULT_REFRESH_INTERVAL,
           }));
         });
       });

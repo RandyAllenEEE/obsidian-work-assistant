@@ -9,7 +9,7 @@ import {
 import { FileView, TFile, ItemView, WorkspaceLeaf } from "obsidian";
 import { get } from "svelte/store";
 
-import { TRIGGER_ON_OPEN, VIEW_TYPE_CALENDAR } from "src/constants";
+import { TRIGGER_ON_OPEN, VIEW_TYPE_CALENDAR, DEFAULT_REFRESH_INTERVAL } from "src/constants";
 import { tryToCreateDailyNote } from "src/io/dailyNotes";
 import { tryToCreateWeeklyNote } from "src/io/weeklyNotes";
 import type { ISettings } from "src/settings";
@@ -22,14 +22,20 @@ import {
   streakSource,
   tasksSource,
   wordCountSource,
+  createWordCountBackgroundSource,
 } from "./ui/sources";
+import WordCountStats from "./wordCountStats";
 
 export default class CalendarView extends ItemView {
   private calendar: Calendar;
   private settings: ISettings;
+  private wordCountStats: WordCountStats;
+  private refreshInterval: number | undefined;
 
-  constructor(leaf: WorkspaceLeaf) {
+  constructor(leaf: WorkspaceLeaf, wordCountStats: WordCountStats) {
     super(leaf);
+
+    this.wordCountStats = wordCountStats;
 
     this.openOrCreateDailyNote = this.openOrCreateDailyNote.bind(this);
     this.openOrCreateWeeklyNote = this.openOrCreateWeeklyNote.bind(this);
@@ -62,11 +68,45 @@ export default class CalendarView extends ItemView {
     settings.subscribe((val) => {
       this.settings = val;
 
+      // Update refresh interval if settings change
+      this.resetRefreshInterval();
+
+      this.updateHeatmapStyles();
+
       // Refresh the calendar if settings change
+      if (this.calendar) {
+        // For word count background color changes, we need to recreate the sources
+        // so the new color ranges are applied
+        this.calendar.$set({ sources: this.createSources() });
+      }
+    });
+  }
+
+  private resetRefreshInterval() {
+    this.stopRefreshInterval();
+    this.startRefreshInterval();
+  }
+
+  private startRefreshInterval() {
+    const intervalTime = this.settings?.heatmapRefreshInterval || DEFAULT_REFRESH_INTERVAL;
+
+    // Clear any existing interval just in case
+    if (this.refreshInterval) {
+      window.clearInterval(this.refreshInterval);
+    }
+
+    this.refreshInterval = window.setInterval(() => {
       if (this.calendar) {
         this.calendar.tick();
       }
-    });
+    }, intervalTime);
+  }
+
+  private stopRefreshInterval() {
+    if (this.refreshInterval) {
+      window.clearInterval(this.refreshInterval);
+      this.refreshInterval = undefined;
+    }
   }
 
   getViewType(): string {
@@ -82,6 +122,7 @@ export default class CalendarView extends ItemView {
   }
 
   onClose(): Promise<void> {
+    this.stopRefreshInterval();
     if (this.calendar) {
       this.calendar.$destroy();
     }
@@ -91,12 +132,7 @@ export default class CalendarView extends ItemView {
   async onOpen(): Promise<void> {
     // Integration point: external plugins can listen for `calendar:open`
     // to feed in additional sources.
-    const sources = [
-      customTagsSource,
-      streakSource,
-      wordCountSource,
-      tasksSource,
-    ];
+    const sources = this.createSources();
     this.app.workspace.trigger(TRIGGER_ON_OPEN, sources);
 
     this.calendar = new Calendar({
@@ -112,6 +148,26 @@ export default class CalendarView extends ItemView {
         sources,
       },
     });
+  }
+
+  private updateHeatmapStyles() {
+    if (!this.settings || !this.settings.wordCountColorRanges) return;
+
+    // Inject CSS variables for each range's opacity
+    this.settings.wordCountColorRanges.forEach((range, index) => {
+      // Use setProperty on the container so specific classes can access these variables
+      this.containerEl.style.setProperty(`--heatmap-opacity-${index}`, range.opacity.toString());
+    });
+  }
+
+  private createSources() {
+    return [
+      customTagsSource,
+      streakSource,
+      wordCountSource,
+      tasksSource,
+      createWordCountBackgroundSource(this.wordCountStats),
+    ];
   }
 
   onHoverDay(
@@ -301,13 +357,19 @@ export default class CalendarView extends ItemView {
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mode = (this.app.vault as any).getConfig("defaultViewMode");
     const leaf = inNewSplit
       ? workspace.splitActiveLeaf()
       : workspace.getUnpinnedLeaf();
-    await leaf.openFile(existingFile, { active : true, mode });
+    await leaf.openFile(existingFile, { active: true });
 
     activeFile.setFile(existingFile);
+  }
+
+  // Refresh the view when language changes
+  public refresh(): void {
+    if (this.calendar) {
+      this.calendar.$destroy();
+      this.onOpen();
+    }
   }
 }

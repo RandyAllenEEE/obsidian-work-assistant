@@ -9,3 +9,29 @@
 .settings-banner h4 {
   margin: 0;
 }
+
+/* Word count heat map colors */
+:root {
+  --calendar-word-count-color: 66, 185, 131;
+  /* Green color (Vue/Obsidian-like green) for word count heatmap */
+}
+
+/* Selected day styling */
+/* We maintain the box-shadow border preference to prevent layout shifts */
+div.day.active,
+div.day.selected {
+  background-color: transparent !important;
+  box-shadow: inset 0 0 0 2px white !important;
+  border: none !important;
+  color: var(--text-normal) !important;
+}
+
+div.day.active.today {
+  color: var(--interactive-accent) !important;
+}
+
+/* 
+   Note: Heatmap colors are injected via inline styles (style attribute) 
+   using dataAttributes in the JS logic. This ensures robustness without 
+   complex CSS class selectors.
+*/

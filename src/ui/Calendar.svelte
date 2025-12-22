@@ -30,7 +30,8 @@
   }
 
   function getToday(settings: ISettings) {
-    configureGlobalMomentLocale(settings.localeOverride, settings.weekStart);
+    // Removed localeOverride since it's no longer in ISettings
+    configureGlobalMomentLocale(null, settings.weekStart);
     dailyNotes.reindex();
     weeklyNotes.reindex();
     return window.moment();

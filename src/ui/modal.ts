@@ -1,4 +1,5 @@
 import { App, Modal } from "obsidian";
+import { t, Language } from "../i18n";
 
 interface IConfirmationDialogParams {
   cta: string;
@@ -17,9 +18,12 @@ export class ConfirmationModal extends Modal {
     this.contentEl.createEl("h2", { text: title });
     this.contentEl.createEl("p", { text });
 
+    // Get the current language from Obsidian
+    const lang: Language = (window.localStorage.getItem('language') || 'en') as Language;
+    
     this.contentEl.createDiv("modal-button-container", (buttonsEl) => {
       buttonsEl
-        .createEl("button", { text: "Never mind" })
+        .createEl("button", { text: t('modal-cancel', lang) })
         .addEventListener("click", () => this.close());
 
       buttonsEl

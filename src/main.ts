@@ -9,6 +9,8 @@ import {
   ISettings,
 } from "./settings";
 import CalendarView from "./view";
+import WordCountStats from "./wordCountStats";
+import { t, Language } from "./i18n";
 
 declare global {
   interface Window {
@@ -21,6 +23,17 @@ declare global {
 export default class CalendarPlugin extends Plugin {
   public options: ISettings;
   private view: CalendarView;
+  private wordCountStats: WordCountStats;
+  private statusBarEl: HTMLElement;
+
+  private getObsidianLanguage(): Language {
+    // simplified language detection using moment.locale() which is the standard way in Obsidian
+    const momentLang = window.moment.locale();
+    if (momentLang.startsWith('zh')) {
+      return 'zh-cn';
+    }
+    return 'en';
+  }
 
   onunload(): void {
     this.app.workspace
@@ -29,6 +42,12 @@ export default class CalendarPlugin extends Plugin {
   }
 
   async onload(): Promise<void> {
+    // Initialize word count stats
+    this.wordCountStats = new WordCountStats(this);
+
+    // Initialize status bar
+    this.statusBarEl = this.addStatusBarItem();
+
     this.register(
       settings.subscribe((value) => {
         this.options = value;
@@ -37,12 +56,15 @@ export default class CalendarPlugin extends Plugin {
 
     this.registerView(
       VIEW_TYPE_CALENDAR,
-      (leaf: WorkspaceLeaf) => (this.view = new CalendarView(leaf))
+      (leaf: WorkspaceLeaf) => (this.view = new CalendarView(leaf, this.wordCountStats))
     );
+
+    // Get the current language from Obsidian
+    const lang: Language = this.getObsidianLanguage();
 
     this.addCommand({
       id: "show-calendar-view",
-      name: "Open view",
+      name: t('command-open-view', lang),
       checkCallback: (checking: boolean) => {
         if (checking) {
           return (
@@ -55,7 +77,7 @@ export default class CalendarPlugin extends Plugin {
 
     this.addCommand({
       id: "open-weekly-note",
-      name: "Open Weekly Note",
+      name: t('command-open-weekly-note', lang),
       checkCallback: (checking) => {
         if (checking) {
           return !appHasPeriodicNotesPluginLoaded();
@@ -66,7 +88,7 @@ export default class CalendarPlugin extends Plugin {
 
     this.addCommand({
       id: "reveal-active-note",
-      name: "Reveal active note",
+      name: t('command-reveal-active-note', lang),
       callback: () => this.view.revealActiveNote(),
     });
 
@@ -74,22 +96,40 @@ export default class CalendarPlugin extends Plugin {
 
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
 
-    if (this.app.workspace.layoutReady) {
-      this.initLeaf();
-    } else {
-      this.registerEvent(
-        this.app.workspace.on("layout-ready", this.initLeaf.bind(this))
-      );
-    }
+    // Register interval to update status bar
+    this.registerInterval(
+      window.setInterval(() => {
+        // Get the current language from Obsidian
+        const lang: Language = this.getObsidianLanguage();
+        const currentWordCount = this.wordCountStats ? this.wordCountStats.currentWordCount : 0;
+        this.statusBarEl.setText(t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString()));
+      }, 200)
+    );
+
+    // Removed locale change listener due to unsupported event type
+
+    this.initLeaf();
   }
 
   initLeaf(): void {
     if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length) {
       return;
     }
-    this.app.workspace.getRightLeaf(false).setViewState({
-      type: VIEW_TYPE_CALENDAR,
-    });
+
+    // Wait for layout to be ready before trying to add the leaf
+    if (this.app.workspace.layoutReady) {
+      this.app.workspace.getRightLeaf(false).setViewState({
+        type: VIEW_TYPE_CALENDAR,
+      });
+    } else {
+      this.app.workspace.onLayoutReady(() => {
+        if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0) {
+          this.app.workspace.getRightLeaf(false).setViewState({
+            type: VIEW_TYPE_CALENDAR,
+          });
+        }
+      });
+    }
   }
 
   async loadOptions(): Promise<void> {
@@ -99,6 +139,17 @@ export default class CalendarPlugin extends Plugin {
         ...old,
         ...(options || {}),
       };
+
+      // Fix JSON serialization where Infinity becomes null
+      if (old.wordCountColorRanges) {
+        old.wordCountColorRanges.forEach(range => {
+          if (range.max === null) {
+            range.max = Infinity;
+          }
+        });
+      }
+
+      return old;
     });
 
     await this.saveData(this.options);
@@ -109,5 +160,11 @@ export default class CalendarPlugin extends Plugin {
   ): Promise<void> {
     settings.update((old) => ({ ...old, ...changeOpts(old) }));
     await this.saveData(this.options);
+
+    // Refresh the calendar view if it exists to apply new settings
+    if (this.view) {
+      // Trigger a refresh to apply new settings
+      this.view.refresh();
+    }
   }
 }
