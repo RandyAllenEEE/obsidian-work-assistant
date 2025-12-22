@@ -17,17 +17,9 @@
 }
 
 /* Selected day styling */
-/* We maintain the box-shadow border preference to prevent layout shifts */
-div.day.active,
-div.day.selected {
+/* Removed as selected state binding is disabled to prevent background conflicts */
+div.day:hover {
   background-color: transparent !important;
-  box-shadow: inset 0 0 0 2px white !important;
-  border: none !important;
-  color: var(--text-normal) !important;
-}
-
-div.day.active.today {
-  color: var(--interactive-accent) !important;
 }
 
 /* 

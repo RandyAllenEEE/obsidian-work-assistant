@@ -21,7 +21,7 @@ export default class WordCountStats {
 	today: string;
 	debouncedUpdate: Debouncer<[string, string], void>;
 	plugin: Plugin;
-	
+
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
 	// Simple hash function for content comparison
@@ -59,6 +59,17 @@ export default class WordCountStats {
 			this.plugin.app.workspace.on("quick-preview", this.onQuickPreview.bind(this))
 		);
 
+		this.plugin.registerEvent(
+			this.plugin.app.vault.on("modify", async (file: TFile) => {
+				// Only process markdown files
+				if (file instanceof TFile && file.extension === "md") {
+					// We need to read the file content to update the word count
+					const contents = await this.plugin.app.vault.read(file);
+					this.debouncedUpdate(contents, file.path);
+				}
+			})
+		);
+
 		// Save settings periodically (every 30 seconds)
 		this.plugin.registerInterval(window.setInterval(() => {
 			this.updateDate();
@@ -73,7 +84,7 @@ export default class WordCountStats {
 			this.debouncedUpdate(contents, file.path);
 		}
 	}
-	
+
 	// Helper method to extract date from file (similar to obsidian-daily-notes-interface)
 	private getDateFromFile(file: TFile, _mode: "day" | "week" | "month"): moment.Moment | null {
 		try {
@@ -117,7 +128,7 @@ export default class WordCountStats {
 		// Use cache to avoid recalculating word count for unchanged content
 		const contentHash = this.simpleHash(contents);
 		const cached = this.wordCountCache.get(filepath);
-		
+
 		let curr: number;
 		if (cached && cached.contentHash === contentHash && cached.timestamp > Date.now() - 60000) { // Cache for 1 minute
 			// Use cached word count if content hasn't changed
@@ -131,7 +142,7 @@ export default class WordCountStats {
 				timestamp: Date.now()
 			});
 		}
-		
+
 		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
 			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {//updating existing file
 				this.settings.todaysWordCount[filepath].current = curr;
@@ -189,10 +200,10 @@ export default class WordCountStats {
 					const existingData = await this.plugin.app.vault.adapter.read(dataPath);
 					await this.plugin.app.vault.adapter.write(backupPath, existingData);
 				}
-				
+
 				// Write new data
 				await this.plugin.app.vault.adapter.write(dataPath, JSON.stringify(this.settings));
-				
+
 				// If successful, remove backup
 				if (await this.plugin.app.vault.adapter.exists(backupPath)) {
 					await this.plugin.app.vault.adapter.trash(backupPath);
@@ -207,6 +218,23 @@ export default class WordCountStats {
 	// Get word count for a specific date
 	getWordCountForDate(dateStr: string): number {
 		return this.settings.dayCounts[dateStr] || 0;
+	}
+
+	getWeeklyWordCount(date: Moment): number {
+		// Clone to avoid modifying the original date
+		// Start from the beginning of the week
+		const startOfWeek = date.clone().startOf('week');
+		let total = 0;
+
+		// Iterate through 7 days
+		for (let i = 0; i < 7; i++) {
+			const currentDay = startOfWeek.clone().add(i, 'days');
+			const dateStr = currentDay.format("YYYY/M/D");
+			const count = this.getWordCountForDate(dateStr);
+			total += count;
+		}
+
+		return total;
 	}
 
 	// Get all word count data

@@ -84,14 +84,35 @@ export class WordCountBackgroundSource {
     };
   };
 
+  // Get heatmap level (0-4) based on weekly word count (ranges scaled by 7)
+  private getLevelForWeeklyWordCount(wordCount: number): number {
+    for (let i = 0; i < this.colorMapping.length; i++) {
+      const range = this.colorMapping[i];
+      // Scale min and max by 7 for weekly targets
+      const weeklyMin = range.min * 7;
+      const weeklyMax = range.max === Infinity ? Infinity : range.max * 7;
+
+      if (wordCount >= weeklyMin && wordCount <= weeklyMax) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   getWeeklyMetadata: (date: Moment) => Promise<IDayMetadata> = async (date: Moment) => {
     const file = getWeeklyNote(date, get(weeklyNotes));
+    const showWeeklyNote = get(settings).showWeeklyNote;
 
-    const dateString = date.format("YYYY/M/D");
-    const wordCount = this.wordCountStats.getWordCountForDate(dateString);
+    let wordCount = 0;
+    if (showWeeklyNote) {
+      wordCount = this.wordCountStats.getWeeklyWordCount(date);
+    } else {
+      wordCount = 0;
+    }
 
     const classes = file ? ["has-note"] : [];
-    const level = wordCount === 0 ? -1 : this.getLevelForWordCount(wordCount);
+    // Use the new weekly level calculation which scales ranges by 7
+    const level = wordCount === 0 ? -1 : this.getLevelForWeeklyWordCount(wordCount);
 
     const dataAttributes: Record<string, string> = {
       "data-heatmap-level": level !== -1 ? level.toString() : undefined
