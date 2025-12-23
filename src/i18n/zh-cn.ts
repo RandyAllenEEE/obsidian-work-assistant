@@ -131,6 +131,7 @@ export default {
   "settings-pomo-num-auto-cycles": "休息前的循环次数",
   "settings-pomo-num-auto-cycles-desc": "自动运行的循环次数 (如果开启连续模式，0 表示无限)",
   "settings-white-noise": "白噪音",
+  "media-control-title": "媒体控制",
   "settings-white-noise-desc": "定时器激活时播放白噪音",
   "settings-pomo-background-noise": "自定义白噪音文件",
   "settings-pomo-background-noise-desc": "自定义白噪音音频文件的路径",

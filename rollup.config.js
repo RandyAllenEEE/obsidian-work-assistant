@@ -11,6 +11,7 @@ export default {
     format: "cjs",
     file: "main.js",
     exports: "default",
+    inlineDynamicImports: true,
   },
   external: ["obsidian", "fs", "os", "path"],
   plugins: [

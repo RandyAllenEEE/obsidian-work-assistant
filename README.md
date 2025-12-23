@@ -63,3 +63,17 @@ This project is built upon the incredible work of the Obsidian community. It sta
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🚀 Release 2.2.0: The Native Performance Update
+
+This major release completely re-architects how the plugin interacts with Windows Media controls, solving long-standing stability issues with PowerShell.
+
+### 🌟 Key Changes
+-   **Native Helper Bridge (`SMTCBridge.exe`)**: Replaced slow and fragile PowerShell scripts with a high-performance C# native application.
+-   **Zero-Config Auto-Setup**: The plugin automatically compiles the bridge tool on your machine—no manual installation required.
+-   **Optimized Performance**: New thumbnail caching system ensures zero memory bloat and reduces CPU usage during media polling.
+-   **Polished UI**: Completely redesigned Status Bar Player with a themed, fade-in popover for album art and track info.
+
+### 🛠️ Technical Details
+-   **Architecture change**: Moved from internal `Add-Type` PowerShell reflection to a standalone IO-based Process Bridge.
+-   **Reliability**: Fixes "Interface not found" COM errors by isolating WinRT logic into a separate process.

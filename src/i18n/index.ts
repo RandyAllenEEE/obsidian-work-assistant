@@ -25,6 +25,7 @@ export interface Translation {
 
   // Settings - General
   "settings-general-title": string;
+  "media-control-title": string;
   "settings-words-per-dot": string;
   "settings-words-per-dot-desc": string;
   "settings-start-week": string;

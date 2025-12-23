@@ -1,4 +1,4 @@
-import { PluginSettingTab, Setting } from "obsidian";
+import { PluginSettingTab, Setting, Platform } from "obsidian";
 import type { App } from "obsidian";
 import type { IWeekStartOption } from "obsidian-calendar-ui";
 import { DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
@@ -40,6 +40,7 @@ export interface ISettings {
   longBreakInterval: number;
   continuousMode: boolean;
   whiteNoise: boolean;
+  systemMedia: boolean;
   notificationSound: boolean;
   useSystemNotification: boolean;
   numAutoCycles: number;
@@ -90,6 +91,7 @@ export const defaultSettings = Object.freeze({
   longBreakInterval: 4,
   continuousMode: false,
   whiteNoise: false,
+  systemMedia: false,
   notificationSound: true,
   useSystemNotification: false,
   numAutoCycles: 0,
@@ -124,6 +126,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
     this.addWordCountColorRangeSettings(lang);
     this.addHeatmapRefreshIntervalSetting(lang);
+
+    this.containerEl.createEl("h3", {
+      text: t("media-control-title", lang),
+    });
+    this.addMediaSettings(lang);
 
     this.containerEl.createEl("h3", {
       text: t("pomo-title", lang),
@@ -371,7 +378,67 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
+  addMediaSettings(lang: Language): void {
+    // 1. System Media Integration (Master Switch)
+    if (Platform.isWin) {
+      new Setting(this.containerEl)
+        .setName("System Media Integration")
+        .setDesc("Experimental: Show media from other apps (Spotify, Chrome) in the sidebar. Requires restart.")
+        .addToggle((toggle) => {
+          toggle.setValue(this.plugin.options?.systemMedia ?? false);
+          toggle.onChange(async (value) => {
+            this.plugin.writeOptions(() => ({
+              systemMedia: value,
+            }));
+            // Refresh to update dependent settings visibility
+            this.display();
+          });
+        });
+    }
+
+    // 2. White Noise Toggle
+    const isSystemMediaEnabled = Platform.isWin && this.plugin.options?.systemMedia;
+
+    // Only show or enable White Noise settings if System Media Integration is enabled (if that's the requirement)
+    // The user said "subject to the master switch control". 
+    // If I interpret strictly: if Master Switch is OFF, these are hidden or disabled.
+    // Given the previous functionality was independent, this is a restrictive change requested by the user.
+    // I will disable them if the master switch is off (and exist).
+
+    // Helper to check if we should enable controls
+    const isEnabled = isSystemMediaEnabled;
+    const disabledDesc = isEnabled ? "" : " (Requires System Media Integration enabled)";
+
+    new Setting(this.containerEl)
+      .setName(t("settings-white-noise", lang))
+      .setDesc(t("settings-white-noise-desc", lang) + disabledDesc)
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.options!.whiteNoise);
+        toggle.setDisabled(!isEnabled);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            whiteNoise: value,
+          }));
+        });
+      });
+
+    // 3. Background Noise File
+    new Setting(this.containerEl)
+      .setName(t("settings-pomo-background-noise", lang))
+      .setDesc(t("settings-pomo-background-noise-desc", lang) + disabledDesc)
+      .addText((text) => {
+        text.setValue(this.plugin.options.pomoBackgroundNoiseFile);
+        text.setDisabled(!isEnabled);
+        text.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            pomoBackgroundNoiseFile: value,
+          }));
+        });
+      });
+  }
+
   addPomodoroSettings(lang: Language): void {
+
     new Setting(this.containerEl)
       .setName(t("settings-pomo-duration", lang))
       .setDesc(t("settings-pomo-duration-desc", lang))
@@ -436,17 +503,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
         });
       });
 
-    new Setting(this.containerEl)
-      .setName(t("settings-white-noise", lang))
-      .setDesc(t("settings-white-noise-desc", lang))
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.options!.whiteNoise);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            whiteNoise: value,
-          }));
-        });
-      });
+
+
 
     new Setting(this.containerEl)
       .setName(t("settings-notification-sound", lang))
@@ -473,17 +531,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
         });
       });
 
-    new Setting(this.containerEl)
-      .setName(t("settings-pomo-background-noise", lang))
-      .setDesc(t("settings-pomo-background-noise-desc", lang))
-      .addText((text) => {
-        text.setValue(this.plugin.options.pomoBackgroundNoiseFile);
-        text.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            pomoBackgroundNoiseFile: value,
-          }));
-        });
-      });
 
 
 

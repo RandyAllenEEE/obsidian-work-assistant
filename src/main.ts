@@ -1,5 +1,5 @@
 import type { Moment, WeekSpec } from "moment";
-import { Plugin, addIcon, debounce, TFile } from "obsidian";
+import { Plugin, addIcon, debounce, TFile, Platform } from "obsidian";
 import type { App, WorkspaceLeaf } from "obsidian";
 import type { Writable } from "svelte/store";
 
@@ -37,6 +37,7 @@ import WordCountStats from "./wordCountStats";
 import { t } from "./i18n";
 import type { Language } from "./i18n";
 import { Timer, Mode } from "./pomo/timer";
+import { StatusBarPlayer } from "./ui/StatusBarPlayer";
 
 declare global {
   interface Window {
@@ -57,6 +58,7 @@ export default class CalendarPlugin extends Plugin {
   public cache: PeriodicNotesCache;
   private isInitialized = false;
   private debouncedSync: () => void;
+  public systemMediaMonitor: any; // Type SystemMediaMonitor
 
 
   private getObsidianLanguage(): Language {
@@ -142,6 +144,43 @@ export default class CalendarPlugin extends Plugin {
     });
 
     this.pomoStatusBarEl.setText("🍅");
+
+    // Initialize SMTC
+    console.log("[Work Assistant] Initializing SMTC. Options:", this.options);
+    console.log("[Work Assistant] Platform.isWin:", Platform.isWin);
+    console.log("[Work Assistant] System Media Enabled:", this.options?.systemMedia);
+
+    if (this.settings) {
+      if (this.options.systemMedia) {
+        import('./smtc/BrowserSMTC').then(({ BrowserSMTC }) => {
+          const smtc = new BrowserSMTC(this.timer.whiteNoiseService);
+          this.addChild(smtc);
+          this.timer.whiteNoiseService.setSMTC(smtc);
+        });
+      }
+    }
+
+    if (this.options.systemMedia && Platform.isWin) {
+      console.log("[Work Assistant] Importing SystemMediaMonitor...");
+      import('./smtc/SystemMediaMonitor').then(({ SystemMediaMonitor }) => {
+        console.log("[Work Assistant] SystemMediaMonitor imported.");
+        const basePath = (this.app.vault.adapter as any).getBasePath();
+        const pluginPath = `${basePath}/${this.manifest.dir || '.obsidian/plugins/obsidian-work-assistant'}`;
+
+        this.systemMediaMonitor = new SystemMediaMonitor(pluginPath);
+        this.addChild(this.systemMediaMonitor);
+
+        // Initialize Status Bar Player
+        const statusBarItem = this.addStatusBarItem();
+        new StatusBarPlayer(statusBarItem, this.systemMediaMonitor);
+
+      }).catch(e => {
+        console.error("[Work Assistant] Error importing/initializing SystemMediaMonitor:", e);
+      });
+    } else {
+      console.log("[Work Assistant] SystemMediaMonitor skipped. Enabled:", this.options?.systemMedia, "Win:", Platform.isWin);
+    }
+
 
     addIcon("calendar-day", calendarDayIcon);
     addIcon("calendar-week", calendarWeekIcon);

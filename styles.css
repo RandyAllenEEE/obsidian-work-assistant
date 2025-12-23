@@ -22,17 +22,88 @@ div.day:hover {
   background-color: transparent !important;
 }
 
-/* 
-   Note: Heatmap colors are injected via inline styles (style attribute) 
-   using dataAttributes in the JS logic. This ensures robustness without 
-   complex CSS class selectors.
-
-.statusbar-pomo {
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  padding: 0 4px;
+/* SMTC Status Bar */
+.smtc-status-bar {
+  display: flex !important; /* Force flex as it might be hidden by default logic initially */
+  align-items: center;
+  gap: 4px;
 }
 
-.statusbar-pomo:hover {
+.smtc-control {
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px; /* Slightly larger hit area */
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s, background-color 0.2s;
+}
+
+.smtc-control:hover {
+  color: var(--text-normal);
   background-color: var(--background-modifier-hover);
+}
+
+.smtc-control svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* SMTC Popover */
+.smtc-popover {
+  position: fixed;
+  z-index: var(--layer-popover);
+  background-color: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 200px;
+  pointer-events: none;
+  animation: smtc-fade-in 0.2s ease-out;
+}
+
+.smtc-popover img {
+  width: 100%;
+  aspect-ratio: 1/1;
+  object-fit: cover;
+  border-radius: 6px;
+  background-color: var(--background-secondary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  margin-bottom: 4px;
+}
+
+.smtc-popover .smtc-info {
+  text-align: center;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.smtc-popover .smtc-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-normal);
+}
+
+.smtc-popover .smtc-artist {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+@keyframes smtc-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }

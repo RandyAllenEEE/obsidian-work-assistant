@@ -133,6 +133,7 @@ export default {
   "settings-pomo-num-auto-cycles-desc": "Number of cycles to run automatically before stopping (0 for infinite if Continuous Mode is on)",
   "settings-white-noise": "White noise",
   "settings-white-noise-desc": "Play white noise while timer is active",
+  "media-control-title": "Media Control",
   "settings-pomo-background-noise": "Background White Noise",
   "settings-pomo-background-noise-desc": "Select an audio file for background white noise",
   "settings-notification-sound": "Notification sound",

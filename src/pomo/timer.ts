@@ -1,6 +1,6 @@
 import { Notice, moment } from 'obsidian';
 import { notificationUrl } from './audio_urls';
-import { WhiteNoise } from './white_noise';
+import { WhiteNoiseService } from '../services/audio/WhiteNoiseService';
 import type CalendarPlugin from '../main'; // Import type to avoid circular dependency issues at runtime if possible, or just import class
 
 import { t } from '../i18n';
@@ -27,7 +27,7 @@ export class Timer {
     autoPaused: boolean;
     pomosSinceStart: number;
     cyclesSinceLastAutoStop: number;
-    whiteNoisePlayer: WhiteNoise;
+    whiteNoiseService: WhiteNoiseService;
 
     constructor(plugin: CalendarPlugin) {
         this.plugin = plugin;
@@ -36,18 +36,25 @@ export class Timer {
         this.pomosSinceStart = 0;
         this.cyclesSinceLastAutoStop = 0;
 
+        // Initialize WhiteNoiseService
+        this.whiteNoiseService = new WhiteNoiseService(plugin);
+        plugin.addChild(this.whiteNoiseService); // Register lifecycle
+
         if (this.plugin.options?.whiteNoise === true) {
-            this.whiteNoisePlayer = new WhiteNoise(plugin, '');
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { whiteNoiseUrl } = require('./audio_urls');
+            const url = this.plugin.options.pomoBackgroundNoiseFile || whiteNoiseUrl;
+            this.whiteNoiseService.initialize(url);
         }
     }
 
     // Initialize white noise player properly if needed
     initWhiteNoise() {
-        if (this.plugin.options?.whiteNoise === true && !this.whiteNoisePlayer) {
+        if (this.plugin.options?.whiteNoise === true) {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { whiteNoiseUrl } = require('./audio_urls');
             const url = this.plugin.options.pomoBackgroundNoiseFile || whiteNoiseUrl;
-            this.whiteNoisePlayer = new WhiteNoise(this.plugin, url);
+            this.whiteNoiseService.initialize(url);
         }
     }
 
@@ -110,8 +117,8 @@ export class Timer {
         this.paused = false;
         this.pomosSinceStart = 0;
 
-        if (this.plugin.options.whiteNoise === true && this.whiteNoisePlayer) {
-            this.whiteNoisePlayer.stopWhiteNoise();
+        if (this.plugin.options.whiteNoise === true) {
+            this.whiteNoiseService.stop();
         }
     }
 
@@ -119,8 +126,8 @@ export class Timer {
         this.paused = true;
         this.pausedTime = this.getCountdown();
 
-        if (this.plugin.options.whiteNoise === true && this.whiteNoisePlayer) {
-            this.whiteNoisePlayer.stopWhiteNoise();
+        if (this.plugin.options.whiteNoise === true) {
+            this.whiteNoiseService.stop(); // or pause() if we want it to resume
         }
     }
 
@@ -141,7 +148,7 @@ export class Timer {
 
         if (this.plugin.options.whiteNoise === true) {
             this.initWhiteNoise();
-            if (this.whiteNoisePlayer) this.whiteNoisePlayer.whiteNoise();
+            this.whiteNoiseService.play();
         }
     }
 
@@ -152,8 +159,8 @@ export class Timer {
         this.modeStartingNotification();
 
         if (this.plugin.options.whiteNoise === true) {
-            this.initWhiteNoise();
-            if (this.whiteNoisePlayer) this.whiteNoisePlayer.whiteNoise();
+            this.initWhiteNoise(); // Ensure URL is latest
+            this.whiteNoiseService.play();
         }
     }
 
