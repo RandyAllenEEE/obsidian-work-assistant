@@ -23,8 +23,6 @@ export interface ISettings {
   quarter: PeriodicConfig;
   year: PeriodicConfig;
 
-  hasMigratedDailyNoteSettings: boolean;
-  hasMigratedWeeklyNoteSettings: boolean;
   installedVersion: string;
   enableTimelineComplication: boolean;
   localeOverride: string;
@@ -34,6 +32,18 @@ export interface ISettings {
 
   // Advanced settings
   heatmapRefreshInterval: number;
+
+  // Pomodoro settings
+  pomo: number;
+  shortBreak: number;
+  longBreak: number;
+  longBreakInterval: number;
+  continuousMode: boolean;
+  whiteNoise: boolean;
+  notificationSound: boolean;
+  useSystemNotification: boolean;
+  numAutoCycles: number;
+  pomoBackgroundNoiseFile: string;
 }
 
 const weekdays = [
@@ -58,8 +68,6 @@ export const defaultSettings = Object.freeze({
   quarter: { ...DEFAULT_PERIODIC_CONFIG },
   year: { ...DEFAULT_PERIODIC_CONFIG },
 
-  hasMigratedDailyNoteSettings: false,
-  hasMigratedWeeklyNoteSettings: false,
   installedVersion: "1.0.0",
   enableTimelineComplication: true,
   localeOverride: "system-default",
@@ -74,13 +82,20 @@ export const defaultSettings = Object.freeze({
   ],
 
   heatmapRefreshInterval: DEFAULT_REFRESH_INTERVAL,
+
+  // Pomodoro defaults
+  pomo: 25,
+  shortBreak: 5,
+  longBreak: 15,
+  longBreakInterval: 4,
+  continuousMode: false,
+  whiteNoise: false,
+  notificationSound: true,
+  useSystemNotification: false,
+  numAutoCycles: 0,
+  pomoBackgroundNoiseFile: "",
 });
 
-export function appHasPeriodicNotesPluginLoaded(): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const periodicNotes = (<any>window.app).plugins.getPlugin("periodic-notes");
-  return periodicNotes && periodicNotes.settings?.weekly?.enabled;
-}
 
 export class CalendarSettingsTab extends PluginSettingTab {
   private plugin: CalendarPlugin;
@@ -108,11 +123,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
       text: t('settings-word-count-bg-title', lang),
     });
     this.addWordCountColorRangeSettings(lang);
+    this.addHeatmapRefreshIntervalSetting(lang);
 
     this.containerEl.createEl("h3", {
-      text: t('settings-advanced-title', lang),
+      text: t("pomo-title", lang),
     });
-    this.addHeatmapRefreshIntervalSetting(lang);
+    this.addPomodoroSettings(lang);
 
     // Calendar Sets
     mount(SettingsRouter, {
@@ -350,6 +366,135 @@ export class CalendarSettingsTab extends PluginSettingTab {
         textfield.onChange(async (value) => {
           this.plugin.writeOptions(() => ({
             heatmapRefreshInterval: value !== "" ? Number(value) : DEFAULT_REFRESH_INTERVAL,
+          }));
+        });
+      });
+  }
+
+  addPomodoroSettings(lang: Language): void {
+    new Setting(this.containerEl)
+      .setName(t("settings-pomo-duration", lang))
+      .setDesc(t("settings-pomo-duration-desc", lang))
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setValue(String(this.plugin.options!.pomo));
+        text.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            pomo: value !== "" ? Number(value) : 25,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-short-break", lang))
+      .setDesc(t("settings-short-break-desc", lang))
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setValue(String(this.plugin.options!.shortBreak));
+        text.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            shortBreak: value !== "" ? Number(value) : 5,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-long-break", lang))
+      .setDesc(t("settings-long-break-desc", lang))
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setValue(String(this.plugin.options!.longBreak));
+        text.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            longBreak: value !== "" ? Number(value) : 15,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-long-break-interval", lang))
+      .setDesc(t("settings-long-break-interval-desc", lang))
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setValue(String(this.plugin.options!.longBreakInterval));
+        text.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            longBreakInterval: value !== "" ? Number(value) : 4,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-continuous-mode", lang))
+      .setDesc(t("settings-continuous-mode-desc", lang))
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.options!.continuousMode);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            continuousMode: value,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-white-noise", lang))
+      .setDesc(t("settings-white-noise-desc", lang))
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.options!.whiteNoise);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            whiteNoise: value,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-notification-sound", lang))
+      .setDesc(t("settings-notification-sound-desc", lang))
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.options!.notificationSound);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            notificationSound: value,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-pomo-num-auto-cycles", lang))
+      .setDesc(t("settings-pomo-num-auto-cycles-desc", lang))
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setValue(String(this.plugin.options.numAutoCycles));
+        text.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            numAutoCycles: value !== "" ? Number(value) : 0,
+          }));
+        });
+      });
+
+    new Setting(this.containerEl)
+      .setName(t("settings-pomo-background-noise", lang))
+      .setDesc(t("settings-pomo-background-noise-desc", lang))
+      .addText((text) => {
+        text.setValue(this.plugin.options.pomoBackgroundNoiseFile);
+        text.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            pomoBackgroundNoiseFile: value,
+          }));
+        });
+      });
+
+
+
+    new Setting(this.containerEl)
+      .setName(t("settings-use-system-notification", lang))
+      .setDesc(t("settings-use-system-notification-desc", lang)) // Need to check
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.options.useSystemNotification);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions(() => ({
+            useSystemNotification: value,
           }));
         });
       });

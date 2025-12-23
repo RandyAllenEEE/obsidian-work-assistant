@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { App } from "obsidian";
 
-  import type CalendarSetManager from "src/periodic/calendarSetManager";
   import { router } from "src/periodic/settings/stores";
   import Breadcrumbs from "../components/Breadcrumbs.svelte";
 
@@ -24,4 +23,4 @@
   });
 </script>
 
-<Dashboard {app} {settings} {localization} />
+<Dashboard {app} {settings} />

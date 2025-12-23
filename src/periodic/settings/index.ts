@@ -19,8 +19,6 @@ export type IWeekStartOption =
   | "locale";
 
 export interface ISettings {
-  hasMigratedDailyNoteSettings: boolean;
-  hasMigratedWeeklyNoteSettings: boolean;
   installedVersion: string;
 
   day: PeriodicConfig;
@@ -42,8 +40,6 @@ export interface ISettings {
 export const DEFAULT_SETTINGS: ISettings = {
   // Onboarding
   installedVersion: "1.0.0-beta3",
-  hasMigratedDailyNoteSettings: false,
-  hasMigratedWeeklyNoteSettings: false,
 
   // Configuration / Preferences
   day: { enabled: true, openAtStartup: false, format: "YYYY-MM-DD", templatePath: "", folder: "" },

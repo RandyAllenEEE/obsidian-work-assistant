@@ -245,7 +245,7 @@ export async function getTemplateContents(
     return templateFile ? vault.cachedRead(templateFile) : "";
   } catch (err) {
     console.error(
-      `Failed to read the daily note template '${normalizedTemplatePath}'`,
+      `[Work Assistant] Failed to read the daily note template '${normalizedTemplatePath}'`,
       err
     );
     new Notice("Failed to read the daily note template");

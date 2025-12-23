@@ -1,8 +1,9 @@
 import type { Moment, WeekSpec } from "moment";
-import { Plugin, addIcon, debounce } from "obsidian";
-import type { App, WorkspaceLeaf, TFile } from "obsidian";
+import { Plugin, addIcon, debounce, TFile } from "obsidian";
+import type { App, WorkspaceLeaf } from "obsidian";
 import type { Writable } from "svelte/store";
 
+import { getDateUID } from "obsidian-daily-notes-interface";
 import { PeriodicNotesCache } from "./periodic/cache";
 
 import { getCommands, displayConfigs } from "./periodic/commands";
@@ -26,7 +27,7 @@ import {
 import type { PeriodicNoteCachedMetadata } from "./periodic/cache";
 
 import { VIEW_TYPE_CALENDAR } from "./constants";
-import { settings } from "./ui/stores";
+import { settings, dailyNotes, weeklyNotes } from "./ui/stores";
 import {
   CalendarSettingsTab,
 } from "./settings";
@@ -35,6 +36,7 @@ import CalendarView from "./view";
 import WordCountStats from "./wordCountStats";
 import { t } from "./i18n";
 import type { Language } from "./i18n";
+import { Timer, Mode } from "./pomo/timer";
 
 declare global {
   interface Window {
@@ -49,9 +51,12 @@ export default class CalendarPlugin extends Plugin {
   private view: CalendarView;
   public wordCountStats: WordCountStats;
   private statusBarEl: HTMLElement;
+  private pomoStatusBarEl: HTMLElement;
+  public timer: Timer;
   private ribbonEl: HTMLElement | null;
-
   public cache: PeriodicNotesCache;
+  private isInitialized = false;
+  private debouncedSync: () => void;
 
 
   private getObsidianLanguage(): Language {
@@ -65,10 +70,13 @@ export default class CalendarPlugin extends Plugin {
 
   private onSettingsUpdate = debounce(
     async () => {
+      if (!this.isInitialized) return;
+
       await this.saveData(this.options);
       this.configureCommands();
       this.configureRibbonIcons();
-      this.app.workspace.trigger("periodic-notes:settings-updated");
+      // Cache reset is now handled in writeOptions conditionally
+      // this.app.workspace.trigger("periodic-notes:settings-updated");
 
       if (this.view) {
         this.view.refresh();
@@ -82,27 +90,14 @@ export default class CalendarPlugin extends Plugin {
     this.app.workspace
       .getLeavesOfType(VIEW_TYPE_CALENDAR)
       .forEach((leaf) => leaf.detach());
+
+    if (this.timer) {
+      this.timer.quitTimer();
+    }
   }
 
   async onload(): Promise<void> {
-    await this.loadOptions();
-
-    // Initialize word count stats
-    this.wordCountStats = new WordCountStats(this);
-
-    // Initialize status bar
-    this.statusBarEl = this.addStatusBarItem();
-
-    addIcon("calendar-day", calendarDayIcon);
-    addIcon("calendar-week", calendarWeekIcon);
-    addIcon("calendar-month", calendarMonthIcon);
-    addIcon("calendar-quarter", calendarQuarterIcon);
-    addIcon("calendar-year", calendarYearIcon);
-
-    this.settings = settings; // Expose the store
-    this.ribbonEl = null;
-    this.cache = new PeriodicNotesCache(this.app, this);
-
+    this.settings = settings;
     this.register(
       settings.subscribe((value) => {
         this.options = value;
@@ -110,13 +105,56 @@ export default class CalendarPlugin extends Plugin {
       })
     );
 
+    await this.loadOptions();
+    const lang: Language = this.getObsidianLanguage();
+
+    this.cache = new PeriodicNotesCache(this.app, this);
+
+    // Initialize word count stats
+    this.wordCountStats = new WordCountStats(this);
+
+    this.debouncedSync = debounce(() => this.syncCacheToStores(), 200);
+
+    this.registerEvent(
+      this.app.workspace.on("periodic-notes:resolve", () => {
+        this.debouncedSync();
+      })
+    );
+
+    this.app.workspace.onLayoutReady(() => {
+      // The cache initialization will trigger sync via periodic-notes:resolve
+    });
+
+    // Initialize status bar
+    this.statusBarEl = this.addStatusBarItem();
+
+    // Initialize Pomo Timer
+    this.timer = new Timer(this);
+    this.pomoStatusBarEl = this.addStatusBarItem();
+    this.pomoStatusBarEl.addClass("statusbar-pomo");
+    this.pomoStatusBarEl.setAttribute("aria-label", t("pomo-status-bar-aria", lang));
+    this.pomoStatusBarEl.addEventListener("click", () => {
+      if (this.timer.mode === Mode.NoTimer) {
+        this.timer.startTimer(Mode.Pomo);
+      } else {
+        this.timer.togglePause();
+      }
+    });
+
+    this.pomoStatusBarEl.setText("🍅");
+
+    addIcon("calendar-day", calendarDayIcon);
+    addIcon("calendar-week", calendarWeekIcon);
+    addIcon("calendar-month", calendarMonthIcon);
+    addIcon("calendar-quarter", calendarQuarterIcon);
+    addIcon("calendar-year", calendarYearIcon);
+
+    this.ribbonEl = null;
+
     this.registerView(
       VIEW_TYPE_CALENDAR,
       (leaf: WorkspaceLeaf) => (this.view = new CalendarView(leaf, this))
     );
-
-    // Get the current language from Obsidian
-    const lang: Language = this.getObsidianLanguage();
 
     this.configureRibbonIcons();
     this.configureCommands();
@@ -155,13 +193,41 @@ export default class CalendarPlugin extends Plugin {
         // Get the current language from Obsidian
         const lang: Language = this.getObsidianLanguage();
         const currentWordCount = this.wordCountStats ? this.wordCountStats.currentWordCount : 0;
-        this.statusBarEl.setText(t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString()));
+
+        let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
+
+        // Improve status bar: "x / y" where x is current file change, y is total today change
+        const activeFile = this.app.workspace.getActiveFile();
+        if (activeFile && activeFile.extension === 'md' && this.wordCountStats) {
+          const fileChange = this.wordCountStats.getFileCountChange(activeFile.path);
+          const detailText = t('status-bar-words-today-detail', lang)
+            .replace('{file}', fileChange.toString())
+            .replace('{total}', currentWordCount.toString());
+
+          // Only use detailed text if the key exists (fallback safe)
+          if (detailText !== 'status-bar-words-today-detail') {
+            text = detailText;
+          }
+        }
+
+        this.statusBarEl.setText(text);
       }, 200)
     );
+
+    // Register interval to update pomo status bar
+    this.registerInterval(
+      window.setInterval(async () => {
+        const text = await this.timer.setStatusBarText();
+        this.pomoStatusBarEl.setText(text);
+      }, 100)
+    );
+
+    this.addPomoCommands(lang);
 
     // Removed locale change listener due to unsupported event type
 
     this.initLeaf();
+    this.isInitialized = true;
   }
 
   initLeaf(): void {
@@ -188,35 +254,9 @@ export default class CalendarPlugin extends Plugin {
   async loadOptions(): Promise<void> {
     const options = await this.loadData();
     settings.update((old) => {
-      // Simple migration: if calendarSets exists, try to take the active one
-      // Otherwise, merge options directly
-      let migratedOptions = {};
-      if (options?.calendarSets && options?.activeCalendarSet) {
-        // Migration logic
-        const activeSet = options.calendarSets.find((s: any) => s.id === options.activeCalendarSet);
-        if (activeSet) {
-          migratedOptions = {
-            day: activeSet.day,
-            week: activeSet.week,
-            month: activeSet.month,
-            quarter: activeSet.quarter,
-            year: activeSet.year,
-            // Preserve other settings if they exist at root
-            ...options
-          };
-          // Clean up legacy keys
-          delete (migratedOptions as any).calendarSets;
-          delete (migratedOptions as any).activeCalendarSet;
-        } else {
-          migratedOptions = { ...(options || {}) };
-        }
-      } else {
-        migratedOptions = { ...(options || {}) };
-      }
-
       const newSettings = {
         ...old,
-        ...migratedOptions,
+        ...(options || {}),
       };
 
       // Fix JSON serialization where Infinity becomes null
@@ -237,12 +277,25 @@ export default class CalendarPlugin extends Plugin {
   async writeOptions(
     changeOpts: (settings: ISettings) => Partial<ISettings>
   ): Promise<void> {
-    settings.update((old) => ({ ...old, ...changeOpts(old) }));
+    let newSettings: Partial<ISettings> = {};
+    settings.update((old) => {
+      newSettings = changeOpts(old);
+      return { ...old, ...newSettings };
+    });
     await this.saveData(this.options);
+
+    // Determine if cache reset is needed
+    // Cache depends on: granularity configs (folder, format, enabled) and weekStart
+    const cacheAffectingKeys = ['weekStart', 'day', 'week', 'month', 'quarter', 'year'];
+    const shouldResetCache = Object.keys(newSettings).some(key => cacheAffectingKeys.includes(key));
 
     this.configureCommands();
     this.configureRibbonIcons();
-    this.app.workspace.trigger("periodic-notes:settings-updated");
+
+    if (shouldResetCache) {
+      console.log("[Work Assistant] Settings changed requiring cache reset");
+      this.app.workspace.trigger("periodic-notes:settings-updated");
+    }
 
     // Refresh the calendar view if it exists to apply new settings
     if (this.view) {
@@ -251,9 +304,19 @@ export default class CalendarPlugin extends Plugin {
     }
   }
 
-  private configureRibbonIcons() {
-    this.ribbonEl?.detach();
+  private configureRibbonIcons(): void {
+    if (this.ribbonEl) {
+      if (typeof (this.ribbonEl as any).detach === 'function') {
+        (this.ribbonEl as any).detach();
+      } else if (typeof (this.ribbonEl as any).remove === 'function') {
+        (this.ribbonEl as any).remove();
+      }
+      this.ribbonEl = null;
+    }
 
+
+
+    // Calendar Ribbon Icon
     const granularities: Granularity[] = ["day", "week", "month", "quarter", "year"];
     const enabledGranularities = granularities.filter(g => this.options[g]?.enabled);
 
@@ -279,7 +342,9 @@ export default class CalendarPlugin extends Plugin {
         });
       });
     }
+
   }
+
 
   private configureCommands() {
     const granularities: Granularity[] = ["day", "week", "month", "quarter", "year"];
@@ -401,5 +466,72 @@ export default class CalendarPlugin extends Plugin {
     direction: "forwards" | "backwards"
   ): PeriodicNoteCachedMetadata | null {
     return this.cache.findAdjacent(filePath, direction);
+  }
+
+  public syncCacheToStores() {
+    const allCachedFiles = Array.from(this.cache.cachedFiles.values());
+
+    const dailyData: Record<string, TFile> = {};
+    const weeklyData: Record<string, TFile> = {};
+
+    allCachedFiles.forEach((meta) => {
+      const file = this.app.vault.getAbstractFileByPath(meta.filePath);
+      if (!(file instanceof TFile)) return;
+
+      if (meta.granularity === "day") {
+        const uid = getDateUID(meta.date, "day");
+        dailyData[uid] = file;
+      } else if (meta.granularity === "week") {
+        const uid = getDateUID(meta.date, "week");
+        weeklyData[uid] = file;
+      }
+    });
+
+    console.log(`[Work Assistant] Syncing to stores: ${Object.keys(dailyData).length} daily, ${Object.keys(weeklyData).length} weekly`);
+    dailyNotes.reindex(dailyData);
+    weeklyNotes.reindex(weeklyData);
+  }
+  private addPomoCommands(lang: Language) {
+    this.addCommand({
+      id: 'start-pomo',
+      name: t("command-pomo-start", lang),
+      icon: 'play',
+      checkCallback: (checking: boolean) => {
+        if (!checking) {
+          this.timer.startTimer(Mode.Pomo);
+        }
+        return true;
+      }
+    });
+
+    this.addCommand({
+      id: 'pause-pomo',
+      name: t("command-pomo-pause", lang),
+      icon: 'pause',
+      checkCallback: (checking: boolean) => {
+        if (this.timer.mode !== Mode.NoTimer) {
+          if (!checking) {
+            this.timer.togglePause();
+          }
+          return true;
+        }
+        return false;
+      }
+    });
+
+    this.addCommand({
+      id: 'quit-pomo',
+      name: t("command-pomo-quit", lang),
+      icon: 'quit',
+      checkCallback: (checking: boolean) => {
+        if (this.timer.mode !== Mode.NoTimer) {
+          if (!checking) {
+            this.timer.quitTimer();
+          }
+          return true;
+        }
+        return false;
+      }
+    });
   }
 }

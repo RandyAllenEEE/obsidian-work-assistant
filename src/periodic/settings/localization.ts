@@ -108,7 +108,7 @@ export function configureGlobalMomentLocale(
 
   const currentLocale = window.moment.locale(momentLocale);
   console.debug(
-    `[Periodic Notes] Trying to switch Moment.js global locale to ${momentLocale}, got ${currentLocale}`
+    `[Work Assistant] Trying to switch Moment.js global locale to ${momentLocale}, got ${currentLocale}`
   );
 
   overrideGlobalMomentWeekStart(weekStart);

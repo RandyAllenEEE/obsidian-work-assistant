@@ -57,7 +57,7 @@ export class WordCountBackgroundSource {
     const file = getDailyNote(date, get(dailyNotes));
 
     // Get word count for this date
-    const dateString = date.format("YYYY/M/D"); // Match the format used in wordCountStats
+    const dateString = date.format("YYYY-MM-DD"); // Match the format used in wordCountStats
     const wordCount = this.wordCountStats.getWordCountForDate(dateString);
 
     // Check if we should ignore 0 word counts.
@@ -84,38 +84,13 @@ export class WordCountBackgroundSource {
     };
   };
 
-  // Get heatmap level (0-4) based on weekly word count (ranges scaled by 7)
-  private getLevelForWeeklyWordCount(wordCount: number): number {
-    for (let i = 0; i < this.colorMapping.length; i++) {
-      const range = this.colorMapping[i];
-      // Scale min and max by 7 for weekly targets
-      const weeklyMin = range.min * 7;
-      const weeklyMax = range.max === Infinity ? Infinity : range.max * 7;
-
-      if (wordCount >= weeklyMin && wordCount <= weeklyMax) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
   getWeeklyMetadata: (date: Moment) => Promise<IDayMetadata> = async (date: Moment) => {
     const file = getWeeklyNote(date, get(weeklyNotes));
 
-    // Always calculate word count; visibility is controlled by the view
-    const wordCount = this.wordCountStats.getWeeklyWordCount(date);
-
     const classes = file ? ["has-note"] : [];
-    // Use the new weekly level calculation which scales ranges by 7
-    const level = wordCount === 0 ? -1 : this.getLevelForWeeklyWordCount(wordCount);
 
-    const dataAttributes: Record<string, string> = {
-      "data-heatmap-level": level !== -1 ? level.toString() : undefined
-    };
-
-    if (level !== -1) {
-      dataAttributes["style"] = `background-color: rgba(var(--calendar-word-count-color), var(--heatmap-opacity-${level})) !important;`;
-    }
+    // Weekly heatmap logic removed
+    const dataAttributes: Record<string, string> = {};
 
     return {
       classes,

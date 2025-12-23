@@ -33,7 +33,6 @@ export default {
 
   // Settings - Weekly Note
   "settings-weekly-note-title": "周笔记设置",
-  "settings-weekly-note-warning": "注意：周笔记设置正在迁移。建议您安装'Periodic Notes'插件以在未来保持此功能。",
   "settings-weekly-note-format": "周笔记格式",
   "settings-weekly-note-format-desc": "有关语法帮助，请参阅格式参考",
   "settings-weekly-note-template": "周笔记模板",
@@ -42,14 +41,13 @@ export default {
   "settings-weekly-note-folder-desc": "新周笔记将放在此处",
 
   // Settings - Word Count Background
-  "settings-word-count-bg-title": "字数统计背景设置",
+  "settings-word-count-bg-title": "字数统计热力图",
   "settings-color-range": "颜色范围",
   "settings-color-range-desc": "最小值: {min}, 最大值: {max}, 不透明度: {opacity}（基于日记文件字数的背景颜色强度）",
   "settings-reset-ranges": "重置为默认范围",
   "settings-reset-ranges-desc": "恢复默认的字数统计颜色范围",
 
   // Settings - Advanced
-  "settings-advanced-title": "高级设置",
   "settings-override-locale": "覆盖区域设置：",
   "settings-override-locale-desc": "如果您想使用与默认不同的区域设置，请设置此项",
 
@@ -70,6 +68,7 @@ export default {
 
   "settings-timeline-title": "在周期性笔记上显示'Timeline'组件",
   "settings-timeline-desc": "在所有周期性笔记的右上角添加一个可折叠的时间线",
+  "settings-periodic-notes-title": "周期笔记",
   "modal-cancel": "取消",
 
   // Periodic Notes Details
@@ -101,12 +100,10 @@ export default {
   "folder-desc-quarter": "新季度笔记将存放于此",
   "folder-desc-year": "新年度笔记将存放于此",
 
-  // Warnings
-  "warning-loose-parsing": "您的文件名格式无法解析。如果您仍希望为您的 {periodicity} 笔记使用此格式，您需要在模板文件的 frontmatter 中包含以下内容：",
-  "warning-fragile-basename": "您的基本文件名不是唯一可标识的。如果您仍希望使用此格式，建议您在日常笔记模板的 frontmatter 中包含以下内容：",
 
   // Status Bar
   "status-bar-words-today": "今日 {count} 字",
+  "status-bar-words-today-detail": "今日 {file} / {total} 字",
 
   // Calendar UI
   "calendar-week": "周",
@@ -117,5 +114,48 @@ export default {
   "word-count-range-400": "400",
   "word-count-range-750": "750",
   "word-count-range-1500": "1500",
-  "word-count-range-infinity": "无穷大"
+  "word-count-range-infinity": "无穷大",
+
+  // Pomodoro
+  "pomo-title": "番茄钟",
+  "settings-pomo-duration": "番茄钟时长 (分钟)",
+  "settings-pomo-duration-desc": "单次番茄钟循环的时长",
+  "settings-short-break": "短休息时长 (分钟)",
+  "settings-short-break-desc": "短休息的时长",
+  "settings-long-break": "长休息时长 (分钟)",
+  "settings-long-break-desc": "长休息的时长",
+  "settings-long-break-interval": "长休息间隔",
+  "settings-long-break-interval-desc": "进行多少次番茄钟后进入长休息",
+  "settings-continuous-mode": "连续模式",
+  "settings-continuous-mode-desc": "自动启动下一个定时器 (25分钟工作 + 5分钟休息 + ...)",
+  "settings-pomo-num-auto-cycles": "休息前的循环次数",
+  "settings-pomo-num-auto-cycles-desc": "自动运行的循环次数 (如果开启连续模式，0 表示无限)",
+  "settings-white-noise": "白噪音",
+  "settings-white-noise-desc": "定时器激活时播放白噪音",
+  "settings-pomo-background-noise": "自定义白噪音文件",
+  "settings-pomo-background-noise-desc": "自定义白噪音音频文件的路径",
+  "settings-notification-sound": "通知声音",
+  "settings-notification-sound-desc": "定时器结束时播放声音",
+  "settings-use-system-notification": "系统通知",
+  "settings-use-system-notification-desc": "计时结束时使用系统通知",
+  "pomo-status-bar-aria": "点击切换番茄钟定时器",
+  "pomo-notice-start": "正在启动 {time} {unit} {mode}。",
+  "pomo-notice-restart": "正在重新启动 {mode}。",
+  "pomo-notice-quit": "正在退出番茄钟定时器。",
+  "pomo-mode-work": "番茄钟",
+  "pomo-mode-break": "休息",
+  "pomo-unit-minute": "分钟",
+  "pomo-unit-minute-plural": "分钟",
+  "pomo-unit-second": "秒",
+  "pomo-unit-second-plural": "秒",
+  "command-pomo-start": "启动番茄钟",
+  "command-pomo-pause": "暂停番茄钟",
+  "command-pomo-quit": "退出番茄钟",
+  "calendar-tooltip-words": "字数统计",
+  "calendar-tooltip-pomo": "番茄数统计",
+
+  "pomo-notice-paused": "定时器已暂停。",
+  "pomo-sys-notif-pomo-end": "番茄钟结束，该休息了 {emoji}",
+  "pomo-sys-notif-break-end": "休息结束，开始下一个番茄钟吧 {emoji}",
+  "pomo-sys-notif-title": "Obsidian 番茄钟 {emoji}"
 };

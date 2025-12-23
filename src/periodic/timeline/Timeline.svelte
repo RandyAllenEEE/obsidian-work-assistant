@@ -53,11 +53,7 @@
     granularity: Granularity,
     date: Moment,
   ) {
-    let file = cache.getPeriodicNote(
-      plugin.calendarSetManager.getActiveId(),
-      granularity,
-      date,
-    );
+    let file = cache.getPeriodicNote(granularity, date);
     if (!file) {
       file = await plugin.createPeriodicNote(granularity, date);
     }

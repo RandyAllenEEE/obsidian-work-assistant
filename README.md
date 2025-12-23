@@ -30,6 +30,18 @@ Turn your calendar into a productivity tracker.
 - **Goal Tracking**: Visualize your consistency and "streaks" directly on your calendar.
 - **Customizable**: Define your own word count thresholds and color intensities to match your workflow.
 
+### 🍅 Integrated Pomodoro Timer
+Stay focused with a built-in Pomodoro timer seamlessly integrated into your workflow.
+- **Status Bar Integration**: Control the timer directly from the status bar (Start, Pause, Quit) with emoji indicators (🍅/🏖️).
+- **Continuous Mode**: Automatically transition between focus sessions and breaks for uninterrupted flow.
+- **Data Recording**: Automatically logs your completed Pomodoro sessions alongside your daily word counts.
+- **Customizable**: Configure duration, breaks, auto-cycles, and notification sounds/white noise.
+
+### ⚡ Performance & Reliability
+- **Optimized Caching**: Smart cache updates ensure the plugin only re-indexes when necessary, saving resources.
+- **Unified Data Format**: Internal storage standardized to ISO 8601 (`YYYY-MM-DD`) for robust data handling.
+- **Robust Statistics**: Status bar displays "Today {file} / {total} words" with fail-safe logic ensuring accurate feedback even when switching contexts.
+
 ## 🛠️ Configuration
 
 The plugin features a simplified, flat configuration structure for ease of use:

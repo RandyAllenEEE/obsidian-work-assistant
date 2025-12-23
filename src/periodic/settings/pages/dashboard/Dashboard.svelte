@@ -14,6 +14,7 @@
   export let settings: Writable<ISettings>;
 </script>
 
+<h3>{t("settings-periodic-notes-title")}</h3>
 <!-- Show periodic note configurations directly -->
 <div class="periodic-groups-container">
   {#each granularities as granularity}

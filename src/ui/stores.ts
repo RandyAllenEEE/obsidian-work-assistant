@@ -14,15 +14,19 @@ function createDailyNotesStore() {
   let hasError = false;
   const store = writable<Record<string, TFile>>({});
   return {
-    reindex: () => {
+    reindex: (data?: Record<string, TFile>) => {
+      if (data) {
+        store.set(data);
+        hasError = false;
+        return;
+      }
       try {
         const dailyNotes = getAllDailyNotes();
-        store.set(dailyNotes);
+        store.set(dailyNotes || {});
         hasError = false;
       } catch (err) {
         if (!hasError) {
-          // Avoid error being shown multiple times
-          console.log("[Calendar] Failed to find daily notes folder", err);
+          console.warn("[Work Assistant] Daily notes not found or not configured in core Daily Notes plugin. Using internal cache.", err);
         }
         store.set({});
         hasError = true;
@@ -36,15 +40,19 @@ function createWeeklyNotesStore() {
   let hasError = false;
   const store = writable<Record<string, TFile>>({});
   return {
-    reindex: () => {
+    reindex: (data?: Record<string, TFile>) => {
+      if (data) {
+        store.set(data);
+        hasError = false;
+        return;
+      }
       try {
         const weeklyNotes = getAllWeeklyNotes();
-        store.set(weeklyNotes);
+        store.set(weeklyNotes || {});
         hasError = false;
       } catch (err) {
         if (!hasError) {
-          // Avoid error being shown multiple times
-          console.log("[Calendar] Failed to find weekly notes folder", err);
+          console.warn("[Work Assistant] Weekly notes not found or not configured in Periodic Notes plugin. Using internal cache.", err);
         }
         store.set({});
         hasError = true;

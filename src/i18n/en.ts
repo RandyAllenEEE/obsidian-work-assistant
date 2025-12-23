@@ -33,7 +33,6 @@ export default {
 
   // Settings - Weekly Note
   "settings-weekly-note-title": "Weekly Note Settings",
-  "settings-weekly-note-warning": "Note: Weekly Note settings are moving. You are encouraged to install the 'Periodic Notes' plugin to keep the functionality in the future.",
   "settings-weekly-note-format": "Weekly note format",
   "settings-weekly-note-format-desc": "For more syntax help, refer to format reference",
   "settings-weekly-note-template": "Weekly note template",
@@ -42,14 +41,13 @@ export default {
   "settings-weekly-note-folder-desc": "New weekly notes will be placed here",
 
   // Settings - Word Count Background
-  "settings-word-count-bg-title": "Word Count Background Settings",
+  "settings-word-count-bg-title": "Word Count Heatmap",
   "settings-color-range": "Color Range",
   "settings-color-range-desc": "Min: {min}, Max: {max}, Opacity: {opacity} (Background color intensity based on daily note word count)",
   "settings-reset-ranges": "Reset to Default Ranges",
   "settings-reset-ranges-desc": "Restore the default word count color ranges",
 
   // Settings - Advanced
-  "settings-advanced-title": "Advanced Settings",
   "settings-override-locale": "Override locale:",
   "settings-override-locale-desc": "Set this if you want to use a locale different from the default",
 
@@ -70,6 +68,7 @@ export default {
 
   "settings-timeline-title": "Show 'Timeline' complication on periodic notes",
   "settings-timeline-desc": "Adds a collapsible timeline to the top-right of all periodic notes",
+  "settings-periodic-notes-title": "Periodic Notes",
   "modal-cancel": "Never mind",
 
 
@@ -102,12 +101,10 @@ export default {
   "folder-desc-quarter": "New quarterly notes will be placed here",
   "folder-desc-year": "New yearly notes will be placed here",
 
-  // Warnings
-  "warning-loose-parsing": "Your filename format cannot be parsed. If you would still like to use this format for your {periodicity} notes, you will need to include the following in the frontmatter of your template file:",
-  "warning-fragile-basename": "Your base filename is not uniquely identifiable. If you would still like to use this format, it is recommended that you include the following in the frontmatter of your daily note template:",
 
   // Status Bar
   "status-bar-words-today": "{count} words today",
+  "status-bar-words-today-detail": "{file} / {total} words today",
 
   // Calendar UI
   "calendar-week": "W",
@@ -118,5 +115,48 @@ export default {
   "word-count-range-400": "400",
   "word-count-range-750": "750",
   "word-count-range-1500": "1500",
-  "word-count-range-infinity": "Infinity"
+  "word-count-range-infinity": "Infinity",
+
+  // Pomodoro
+  "pomo-title": "Pomodoro Timer",
+  "settings-pomo-duration": "Pomodoro duration (minutes)",
+  "settings-pomo-duration-desc": "Length of a single pomodoro cycle",
+  "settings-short-break": "Short break duration (minutes)",
+  "settings-short-break-desc": "Length of a short break",
+  "settings-long-break": "Long break duration (minutes)",
+  "settings-long-break-desc": "Length of a long break",
+  "settings-long-break-interval": "Long break interval",
+  "settings-long-break-interval-desc": "Number of pomodoros before a long break",
+  "settings-continuous-mode": "Continuous Mode",
+  "settings-continuous-mode-desc": "Automatically start the next timer (25m work + 5m break + ...)",
+  "settings-pomo-num-auto-cycles": "Cycles before pause",
+  "settings-pomo-num-auto-cycles-desc": "Number of cycles to run automatically before stopping (0 for infinite if Continuous Mode is on)",
+  "settings-white-noise": "White noise",
+  "settings-white-noise-desc": "Play white noise while timer is active",
+  "settings-pomo-background-noise": "Background White Noise",
+  "settings-pomo-background-noise-desc": "Select an audio file for background white noise",
+  "settings-notification-sound": "Notification sound",
+  "settings-notification-sound-desc": "Play a sound when timer ends",
+  "settings-use-system-notification": "System Notification",
+  "settings-use-system-notification-desc": "Use system notification when timer ends",
+  "pomo-status-bar-aria": "Click to toggle Pomodoro Timer",
+  "pomo-notice-start": "Starting {time} {unit} {mode}.",
+  "pomo-notice-restart": "Restarting {mode}.",
+  "pomo-notice-quit": "Quitting pomodoro timer.",
+  "pomo-mode-work": "pomodoro",
+  "pomo-mode-break": "break",
+  "pomo-unit-minute": "minute",
+  "pomo-unit-minute-plural": "minutes",
+  "pomo-unit-second": "second",
+  "pomo-unit-second-plural": "seconds",
+  "command-pomo-start": "Start pomodoro",
+  "command-pomo-pause": "Pause pomodoro",
+  "command-pomo-quit": "Quit pomodoro",
+  "calendar-tooltip-words": "Words",
+  "calendar-tooltip-pomo": "Pomos",
+
+  "pomo-notice-paused": "Timer paused.",
+  "pomo-sys-notif-pomo-end": "End of the pomodoro, time to take a break {emoji}",
+  "pomo-sys-notif-break-end": "End of the break, time for the next pomodoro {emoji}",
+  "pomo-sys-notif-title": "Obsidian Pomodoro {emoji}"
 };

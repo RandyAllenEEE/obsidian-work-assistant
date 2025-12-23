@@ -26,4 +26,13 @@ div.day:hover {
    Note: Heatmap colors are injected via inline styles (style attribute) 
    using dataAttributes in the JS logic. This ensures robustness without 
    complex CSS class selectors.
-*/
+
+.statusbar-pomo {
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.statusbar-pomo:hover {
+  background-color: var(--background-modifier-hover);
+}

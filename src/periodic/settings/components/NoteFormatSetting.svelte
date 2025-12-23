@@ -51,19 +51,6 @@
     </div>
     {#if error}
       <div class="has-error">{error}</div>
-    {:else if warning !== "valid"}
-      <div class="alert-warning">
-        {#if warning === "loose-parsing"}
-          {t("warning-loose-parsing").replace(
-            "{periodicity}",
-            displayConfigs[granularity].periodicity,
-          )}
-          <pre><code>{granularity}: {DEFAULT_FORMAT[granularity]}</code></pre>
-        {:else if warning === "fragile-basename"}
-          {t("warning-fragile-basename")}
-          <pre><code>{granularity}: {DEFAULT_FORMAT[granularity]}</code></pre>
-        {/if}
-      </div>
     {/if}
   </div>
   <div class="setting-item-control">

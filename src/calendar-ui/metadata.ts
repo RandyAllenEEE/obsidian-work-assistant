@@ -27,7 +27,9 @@ export function getDailyMetadata(
   ..._args: unknown[]
 ): Promise<IDayMetadata> {
   return metadataReducer(
-    sources.map((source) => source.getDailyMetadata(date))
+    sources
+      .filter((source) => !!source.getDailyMetadata)
+      .map((source) => source.getDailyMetadata!(date))
   );
 }
 
@@ -37,6 +39,8 @@ export function getWeeklyMetadata(
   ..._args: unknown[]
 ): Promise<IDayMetadata> {
   return metadataReducer(
-    sources.map((source) => source.getWeeklyMetadata(date))
+    sources
+      .filter((source) => !!source.getWeeklyMetadata)
+      .map((source) => source.getWeeklyMetadata!(date))
   );
 }

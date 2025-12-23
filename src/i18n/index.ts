@@ -36,7 +36,6 @@ export interface Translation {
 
   // Settings - Weekly Note
   "settings-weekly-note-title": string;
-  "settings-weekly-note-warning": string;
   "settings-weekly-note-format": string;
   "settings-weekly-note-format-desc": string;
   "settings-weekly-note-template": string;
@@ -52,7 +51,6 @@ export interface Translation {
   "settings-reset-ranges-desc": string;
 
   // Settings - Advanced
-  "settings-advanced-title": string;
   "settings-override-locale": string;
   "settings-override-locale-desc": string;
   "settings-heatmap-refresh-interval": string;
@@ -69,6 +67,7 @@ export interface Translation {
   "modal-create-note-text": string;
   "settings-timeline-title": string;
   "settings-timeline-desc": string;
+  "settings-periodic-notes-title": string;
 
   "modal-create-note-cta": string;
   "modal-cancel": string;
@@ -103,10 +102,8 @@ export interface Translation {
   "folder-desc-quarter": string;
   "folder-desc-year": string;
 
-  // Warnings
-  "warning-loose-parsing": string;
-  "warning-fragile-basename": string;
   "status-bar-words-today": string;
+  "status-bar-words-today-detail": string;
 
   // Calendar UI
   "calendar-week": string;
@@ -118,6 +115,49 @@ export interface Translation {
   "word-count-range-750": string;
   "word-count-range-1500": string;
   "word-count-range-infinity": string;
+
+  // Pomodoro
+  "pomo-title": string;
+  "settings-pomo-duration": string;
+  "settings-pomo-duration-desc": string;
+  "settings-short-break": string;
+  "settings-short-break-desc": string;
+  "settings-long-break": string;
+  "settings-long-break-desc": string;
+  "settings-long-break-interval": string;
+  "settings-long-break-interval-desc": string;
+  "settings-continuous-mode": string;
+  "settings-continuous-mode-desc": string;
+  "settings-pomo-num-auto-cycles": string;
+  "settings-pomo-num-auto-cycles-desc": string;
+  "settings-white-noise": string;
+  "settings-white-noise-desc": string;
+  "settings-pomo-background-noise": string;
+  "settings-pomo-background-noise-desc": string;
+  "settings-notification-sound": string;
+  "settings-notification-sound-desc": string;
+  "settings-use-system-notification": string;
+  "settings-use-system-notification-desc": string;
+  "pomo-status-bar-aria": string;
+  "pomo-notice-start": string;
+  "pomo-notice-restart": string;
+  "pomo-notice-quit": string;
+  "pomo-mode-work": string;
+  "pomo-mode-break": string;
+  "pomo-unit-minute": string;
+  "pomo-unit-minute-plural": string;
+  "pomo-unit-second": string;
+  "pomo-unit-second-plural": string;
+  "command-pomo-start": string;
+  "command-pomo-pause": string;
+  "command-pomo-quit": string;
+  "calendar-tooltip-words": string;
+  "calendar-tooltip-pomo": string;
+
+  "pomo-notice-paused": string;
+  "pomo-sys-notif-pomo-end": string;
+  "pomo-sys-notif-break-end": string;
+  "pomo-sys-notif-title": string;
 }
 
 export type Language = 'en' | 'zh-cn';

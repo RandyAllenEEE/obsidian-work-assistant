@@ -10,11 +10,13 @@ interface WordCount {
 interface DailyStatsSettings {
 	dayCounts: Record<string, number>;
 	todaysWordCount: Record<string, WordCount>;
+	pomoCounts: Record<string, number>;
 }
 
 const DEFAULT_SETTINGS: DailyStatsSettings = {
 	dayCounts: {},
-	todaysWordCount: {}
+	todaysWordCount: {},
+	pomoCounts: {}
 }
 
 export default class WordCountStats {
@@ -161,7 +163,7 @@ export default class WordCountStats {
 	}
 
 	updateDate(): void {
-		const newToday = window.moment().format("YYYY/M/D");
+		const newToday = window.moment().format("YYYY-MM-DD");
 		// If date has changed, clear the cache for better performance
 		if (newToday !== this.today) {
 			this.wordCountCache.clear();
@@ -174,45 +176,76 @@ export default class WordCountStats {
 		this.settings.dayCounts[this.today] = this.currentWordCount;
 	}
 
+	incrementPomoCount(date: string = this.today): void {
+		if (!this.settings.pomoCounts) {
+			this.settings.pomoCounts = {};
+		}
+
+		if (!this.settings.pomoCounts[date]) {
+			this.settings.pomoCounts[date] = 0;
+		}
+
+		this.settings.pomoCounts[date]++;
+		this.saveSettings();
+	}
+
+	getPomoCountForDate(dateStr: string): number {
+		return this.settings.pomoCounts?.[dateStr] || 0;
+	}
+
+	private getDataPath(): string {
+		const configDir = this.plugin.app.vault.configDir || ".obsidian";
+		const pluginId = this.plugin.manifest.id || "work-assistant";
+		return `${configDir}/plugins/${pluginId}/daily-count-data.json`;
+	}
+
 	async loadSettings(): Promise<void> {
-		// Load from separate word count data file
+		const dataPath = this.getDataPath();
 		try {
-			// Attempt to load existing data
-			const data = await this.plugin.app.vault.adapter.read(".obsidian/plugins/work-assistant/word-count-data.json");
+			if (!(await this.plugin.app.vault.adapter.exists(dataPath))) {
+				this.settings = Object.assign({}, DEFAULT_SETTINGS);
+				return;
+			}
+			const data = await this.plugin.app.vault.adapter.read(dataPath);
 			if (data) {
 				const parsedData = JSON.parse(data);
 				this.settings = Object.assign({}, DEFAULT_SETTINGS, parsedData);
+				if (!this.settings.pomoCounts) {
+					this.settings.pomoCounts = {};
+				}
 			} else {
 				this.settings = Object.assign({}, DEFAULT_SETTINGS);
 			}
 		} catch (e) {
-			console.log("Failed to load word count data, using defaults");
+			console.log("[Work Assistant] Failed to load daily count data, using defaults", e);
 			this.settings = Object.assign({}, DEFAULT_SETTINGS);
 		}
 	}
 
 	async saveSettings(): Promise<void> {
-		if (Object.keys(this.settings.dayCounts).length > 0) { //ensuring we never reset the data by accident
-			// Save to separate word count data file
-			const dataPath = ".obsidian/plugins/work-assistant/word-count-data.json";
+		if (Object.keys(this.settings.dayCounts).length > 0 || Object.keys(this.settings.pomoCounts).length > 0) {
+			const dataPath = this.getDataPath();
 			try {
-				// Create backup of existing data before writing new data
-				const backupPath = ".obsidian/plugins/work-assistant/word-count-data-backup.json";
+				const backupPath = dataPath.replace(".json", "-backup.json");
+
+				// Ensure directory exists
+				const dir = dataPath.substring(0, dataPath.lastIndexOf("/"));
+				if (!(await this.plugin.app.vault.adapter.exists(dir))) {
+					await this.plugin.app.vault.adapter.mkdir(dir);
+				}
+
 				if (await this.plugin.app.vault.adapter.exists(dataPath)) {
 					const existingData = await this.plugin.app.vault.adapter.read(dataPath);
 					await this.plugin.app.vault.adapter.write(backupPath, existingData);
 				}
 
-				// Write new data
 				await this.plugin.app.vault.adapter.write(dataPath, JSON.stringify(this.settings));
 
-				// If successful, remove backup
 				if (await this.plugin.app.vault.adapter.exists(backupPath)) {
 					await this.plugin.app.vault.adapter.remove(backupPath);
 				}
 			} catch (error) {
-				console.error("Failed to save word count data, keeping backup:", error);
-				// Don't throw the error as it would break the plugin
+				console.error("[Work Assistant] Failed to save daily count data, keeping backup:", error);
 			}
 		}
 	}
@@ -220,6 +253,12 @@ export default class WordCountStats {
 	// Get word count for a specific date
 	getWordCountForDate(dateStr: string): number {
 		return this.settings.dayCounts[dateStr] || 0;
+	}
+
+	getFileCountChange(filepath: string): number {
+		const fileData = this.settings.todaysWordCount[filepath];
+		if (!fileData) return 0;
+		return Math.max(0, fileData.current - fileData.initial);
 	}
 
 	getWeeklyWordCount(date: Moment): number {
@@ -231,8 +270,22 @@ export default class WordCountStats {
 		// Iterate through 7 days
 		for (let i = 0; i < 7; i++) {
 			const currentDay = startOfWeek.clone().add(i, 'days');
-			const dateStr = currentDay.format("YYYY/M/D");
+			const dateStr = currentDay.format("YYYY-MM-DD");
 			const count = this.getWordCountForDate(dateStr);
+			total += count;
+		}
+
+		return total;
+	}
+
+	getWeeklyPomoCount(date: Moment): number {
+		const startOfWeek = date.clone().startOf('week');
+		let total = 0;
+
+		for (let i = 0; i < 7; i++) {
+			const currentDay = startOfWeek.clone().add(i, 'days');
+			const dateStr = currentDay.format("YYYY-MM-DD");
+			const count = this.getPomoCountForDate(dateStr);
 			total += count;
 		}
 

@@ -17,7 +17,7 @@ import { DEFAULT_FORMAT } from "./constants";
 import type PeriodicNotesPlugin from "../main";
 import { getLooselyMatchedDate } from "./parser";
 import { getDateInput } from "./settings/validation";
-import { granularities, type Granularity, type PeriodicConfig } from "./types";
+import { granularities, type Granularity } from "./types";
 import { applyPeriodicTemplateToFile, getPossibleFormats } from "./utils";
 
 export type MatchType = "filename" | "frontmatter" | "date-prefixed";
@@ -64,7 +64,7 @@ export class PeriodicNotesCache extends Component {
     this.cachedFiles = new Map();
 
     this.app.workspace.onLayoutReady(() => {
-      console.info("[Periodic Notes] initializing cache");
+      console.info("[Work Assistant] initializing cache");
       this.initialize();
       this.registerEvent(this.app.vault.on("create", this.resolve, this));
       this.registerEvent(this.app.vault.on("rename", this.resolveRename, this));
@@ -78,7 +78,7 @@ export class PeriodicNotesCache extends Component {
   }
 
   public reset(): void {
-    console.info("[Periodic Notes] reseting cache");
+    console.info("[Work Assistant] reseting cache");
     this.cachedFiles.clear();
     this.initialize();
   }
@@ -100,9 +100,9 @@ export class PeriodicNotesCache extends Component {
     const activeGranularities = granularities.filter((g) => this.plugin.options[g]?.enabled);
     for (const granularity of activeGranularities) {
       const config = this.plugin.options[granularity];
-      const rootFolder = this.app.vault.getAbstractFileByPath(
-        config.folder || "/"
-      ) as TFolder;
+      const folderPath = config.folder || "/";
+      const rootFolder = this.app.vault.getAbstractFileByPath(folderPath) as TFolder;
+      console.debug(`[Work Assistant] Initializing cache for ${granularity}, folder: ${folderPath}, exists: ${!!rootFolder}`);
 
       // Scan for filename matches
       memoizedRecurseChildren(rootFolder, (file: TAbstractFile) => {
@@ -201,6 +201,7 @@ export class PeriodicNotesCache extends Component {
           },
         } as PeriodicNoteCachedMetadata;
         this.cachedFiles.set(file.path, metadata);
+        console.debug(`[Calendar] Resolved ${granularity} note: ${file.path} (date: ${metadata.canonicalDateStr})`);
 
         if (reason === "create" && file.stat.size === 0) {
           applyPeriodicTemplateToFile(this.app, file, this.plugin.options, metadata);
@@ -239,18 +240,33 @@ export class PeriodicNotesCache extends Component {
    *
    * Get a periodic note from the cache
    *
-   * @param granularity
+   * @param granularityOrSetId
+   * @param dateOrGranularity
    * @param targetDate
    */
   public getPeriodicNote(
-    granularity: Granularity,
-    targetDate: Moment
+    granularityOrSetId: string | Granularity,
+    dateOrGranularity: Moment | Granularity,
+    targetDate?: Moment
   ): TFile | null {
+    let granularity: Granularity;
+    let date: Moment;
+
+    if (targetDate) {
+      // 3 arguments version: (calendarSetId, granularity, targetDate)
+      granularity = dateOrGranularity as Granularity;
+      date = targetDate;
+    } else {
+      // 2 arguments version: (granularity, targetDate)
+      granularity = granularityOrSetId as Granularity;
+      date = dateOrGranularity as Moment;
+    }
+
     for (const [filePath, cacheData] of this.cachedFiles) {
       if (
         cacheData.granularity === granularity &&
         cacheData.matchData.exact === true &&
-        cacheData.date.isSame(targetDate, granularity)
+        cacheData.date.isSame(date, granularity)
       ) {
         return this.app.vault.getAbstractFileByPath(filePath) as TFile;
       }

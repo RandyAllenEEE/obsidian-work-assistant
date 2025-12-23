@@ -3,7 +3,7 @@ import type { App, Point } from "obsidian";
 import type PeriodicNotesPlugin from "src/main";
 
 import { displayConfigs } from "./commands";
-import { granularities, type Granularity } from "./types";
+import type { Granularity } from "./types";
 
 export function showFileMenu(
   _app: App,

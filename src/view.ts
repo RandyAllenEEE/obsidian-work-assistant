@@ -9,13 +9,14 @@ import type { ISettings } from "src/settings";
 import Calendar from "./ui/Calendar.svelte";
 import { mount, unmount } from "svelte";
 import { showFileMenu } from "./ui/fileMenu";
-import { activeFile, dailyNotes, weeklyNotes, settings } from "./ui/stores";
+import { activeFile, settings } from "./ui/stores";
 import {
   customTagsSource,
   streakSource,
   wordCountSource,
   tasksSource,
   createWordCountBackgroundSource,
+  createDailyStatsSource,
 } from "./ui/sources";
 import WordCountStats from "./wordCountStats";
 import type CalendarPlugin from "./main";
@@ -160,6 +161,7 @@ export default class CalendarView extends ItemView {
       wordCountSource,
       tasksSource,
       createWordCountBackgroundSource(this.wordCountStats),
+      createDailyStatsSource(this.wordCountStats),
     ];
   }
 
@@ -236,20 +238,12 @@ export default class CalendarView extends ItemView {
   }
 
   private onNoteSettingsUpdate(): void {
-    dailyNotes.reindex();
-    weeklyNotes.reindex();
     this.updateActiveFile();
   }
 
   private async onFileDeleted(file: TFile): Promise<void> {
     const meta = this.plugin.cache.find(file.path);
     if (meta) {
-      if (meta.granularity === "day") {
-        dailyNotes.reindex();
-      }
-      if (meta.granularity === "week") {
-        weeklyNotes.reindex();
-      }
       this.updateActiveFile();
     }
   }
@@ -265,8 +259,6 @@ export default class CalendarView extends ItemView {
     if (this.app.workspace.layoutReady && this.calendar) {
       const meta = this.plugin.cache.find(file.path);
       if (meta) {
-        if (meta.granularity === "day") dailyNotes.reindex();
-        if (meta.granularity === "week") weeklyNotes.reindex();
         this.calendar.tick();
       }
     }
