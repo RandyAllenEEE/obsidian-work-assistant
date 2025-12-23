@@ -11,6 +11,18 @@ export interface Translation {
   "command-open-weekly-note": string;
   "command-reveal-active-note": string;
 
+  "command-open-note": string;
+  "command-next-note": string;
+  "command-prev-note": string;
+  "command-open-next-note": string;
+  "command-open-prev-note": string;
+
+  "label-periodicity-daily": string;
+  "label-periodicity-weekly": string;
+  "label-periodicity-monthly": string;
+  "label-periodicity-quarterly": string;
+  "label-periodicity-yearly": string;
+
   // Settings - General
   "settings-general-title": string;
   "settings-words-per-dot": string;
@@ -43,6 +55,8 @@ export interface Translation {
   "settings-advanced-title": string;
   "settings-override-locale": string;
   "settings-override-locale-desc": string;
+  "settings-heatmap-refresh-interval": string;
+  "settings-heatmap-refresh-interval-desc": string;
 
   // Settings - Placeholders
   "placeholder-min-value": string;
@@ -53,10 +67,45 @@ export interface Translation {
   // Modals
   "modal-create-note-title": string;
   "modal-create-note-text": string;
+  "settings-timeline-title": string;
+  "settings-timeline-desc": string;
+
   "modal-create-note-cta": string;
   "modal-cancel": string;
 
-  // Status Bar
+
+  // Periodic Notes Details
+  "periodic-note-heading-day": string;
+  "periodic-note-heading-week": string;
+  "periodic-note-heading-month": string;
+  "periodic-note-heading-quarter": string;
+  "periodic-note-heading-year": string;
+
+  "settings-common-open-startup": string;
+  "settings-common-open-startup-desc": string;
+  "settings-common-format": string;
+  "settings-common-syntax-ref": string;
+  "settings-common-syntax-preview": string;
+  "settings-common-folder": string;
+  "settings-common-template-desc": string;
+  "settings-common-template-placeholder": string;
+  "settings-common-folder-placeholder": string;
+
+  "template-title-day": string;
+  "template-title-week": string;
+  "template-title-month": string;
+  "template-title-quarter": string;
+  "template-title-year": string;
+
+  "folder-desc-day": string;
+  "folder-desc-week": string;
+  "folder-desc-month": string;
+  "folder-desc-quarter": string;
+  "folder-desc-year": string;
+
+  // Warnings
+  "warning-loose-parsing": string;
+  "warning-fragile-basename": string;
   "status-bar-words-today": string;
 
   // Calendar UI

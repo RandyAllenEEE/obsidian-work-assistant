@@ -1,29 +1,62 @@
-<svelte:options immutable />
-
 <script lang="ts">
   import type { Moment } from "moment";
   import {
     Calendar as CalendarBase,
-    ICalendarSource,
     configureGlobalMomentLocale,
-  } from "obsidian-calendar-ui";
+  } from "../calendar-ui";
+  import type { ICalendarSource } from "../calendar-ui";
   import { onDestroy } from "svelte";
+  import type { Locale } from "moment";
 
   import type { ISettings } from "src/settings";
   import { dailyNotes, settings, weeklyNotes } from "./stores";
 
-  let today: Moment;
+  export let today: Moment = window.moment();
+  export let localeData: Locale = today.localeData();
 
-  $: today = getToday($settings);
+  $: if (!today) {
+    today = getToday($settings);
+  }
 
-  export let displayedMonth: Moment = today;
-  export let sources: ICalendarSource[];
-  export let onHoverDay: (date: Moment, targetEl: EventTarget) => boolean;
-  export let onHoverWeek: (date: Moment, targetEl: EventTarget) => boolean;
-  export let onClickDay: (date: Moment, isMetaPressed: boolean) => boolean;
-  export let onClickWeek: (date: Moment, isMetaPressed: boolean) => boolean;
-  export let onContextMenuDay: (date: Moment, event: MouseEvent) => boolean;
-  export let onContextMenuWeek: (date: Moment, event: MouseEvent) => boolean;
+  export let displayedMonth: Moment = undefined;
+  export let sources: ICalendarSource[] = [];
+  export let onHoverDay: (
+    date: Moment,
+    targetEl: EventTarget,
+    isMetaPressed: boolean,
+  ) => void = () => {};
+  export let onHoverWeek: (
+    date: Moment,
+    targetEl: EventTarget,
+    isMetaPressed: boolean,
+  ) => void = () => {};
+  export let onClickDay: (
+    date: Moment,
+    isMetaPressed: boolean,
+  ) => void = () => {};
+  export let onClickWeek: (
+    date: Moment,
+    isMetaPressed: boolean,
+  ) => void = () => {};
+  export let onContextMenuDay: (
+    date: Moment,
+    event: MouseEvent,
+  ) => void = () => {};
+  export let onContextMenuWeek: (
+    date: Moment,
+    event: MouseEvent,
+  ) => void = () => {};
+
+  export let onClickMonth: (
+    e: MouseEvent | KeyboardEvent,
+    date: Moment,
+  ) => void = () => {};
+  export let onClickYear: (
+    e: MouseEvent | KeyboardEvent,
+    date: Moment,
+  ) => void = () => {};
+
+  $: showWeekNums = true;
 
   export function tick() {
     today = window.moment();
@@ -64,6 +97,8 @@
   {onClickDay}
   {onClickWeek}
   bind:displayedMonth
-  localeData={today.localeData()}
-  showWeekNums={$settings.showWeeklyNote}
+  localeData={localeData || today.localeData()}
+  {showWeekNums}
+  {onClickMonth}
+  {onClickYear}
 />

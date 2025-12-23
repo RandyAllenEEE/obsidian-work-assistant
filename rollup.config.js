@@ -16,6 +16,9 @@ export default {
   plugins: [
     svelte({
       emitCss: false,
+      compilerOptions: {
+        css: "external",
+      },
       preprocess: autoPreprocess(),
     }),
     typescript({ sourceMap: env.env === "DEV" }),

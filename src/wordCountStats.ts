@@ -1,4 +1,6 @@
-import { Plugin, MarkdownView, debounce, Debouncer, TFile } from 'obsidian';
+import { Plugin, MarkdownView, debounce, TFile } from 'obsidian';
+import type { Debouncer } from 'obsidian';
+import type { Moment } from "moment";
 
 interface WordCount {
 	initial: number;
@@ -206,7 +208,7 @@ export default class WordCountStats {
 
 				// If successful, remove backup
 				if (await this.plugin.app.vault.adapter.exists(backupPath)) {
-					await this.plugin.app.vault.adapter.trash(backupPath);
+					await this.plugin.app.vault.adapter.remove(backupPath);
 				}
 			} catch (error) {
 				console.error("Failed to save word count data, keeping backup:", error);

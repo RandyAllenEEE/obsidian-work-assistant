@@ -101,14 +101,9 @@ export class WordCountBackgroundSource {
 
   getWeeklyMetadata: (date: Moment) => Promise<IDayMetadata> = async (date: Moment) => {
     const file = getWeeklyNote(date, get(weeklyNotes));
-    const showWeeklyNote = get(settings).showWeeklyNote;
 
-    let wordCount = 0;
-    if (showWeeklyNote) {
-      wordCount = this.wordCountStats.getWeeklyWordCount(date);
-    } else {
-      wordCount = 0;
-    }
+    // Always calculate word count; visibility is controlled by the view
+    const wordCount = this.wordCountStats.getWeeklyWordCount(date);
 
     const classes = file ? ["has-note"] : [];
     // Use the new weekly level calculation which scales ranges by 7

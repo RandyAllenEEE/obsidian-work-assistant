@@ -1,22 +1,33 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
-import { appHasDailyNotesPluginLoaded } from "obsidian-daily-notes-interface";
+import { PluginSettingTab, Setting } from "obsidian";
+import type { App } from "obsidian";
 import type { IWeekStartOption } from "obsidian-calendar-ui";
-
-import { DEFAULT_WEEK_FORMAT, DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
+import { DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
 import { t, getLanguage } from "./i18n";
+import type { Language } from "./i18n";
+import type { PeriodicConfig } from "src/periodic/types";
+import SettingsRouter from "./periodic/settings/pages/Router.svelte";
+import { mount } from "svelte";
 
 import type CalendarPlugin from "./main";
+import { DEFAULT_PERIODIC_CONFIG } from "./periodic/constants";
 
 export interface ISettings {
   wordsPerDot: number;
   weekStart: IWeekStartOption;
   shouldConfirmBeforeCreate: boolean;
 
-  // Weekly Note settings
-  showWeeklyNote: boolean;
-  weeklyNoteFormat: string;
-  weeklyNoteTemplate: string;
-  weeklyNoteFolder: string;
+  // Periodic Notes settings
+  day: PeriodicConfig;
+  week: PeriodicConfig;
+  month: PeriodicConfig;
+  quarter: PeriodicConfig;
+  year: PeriodicConfig;
+
+  hasMigratedDailyNoteSettings: boolean;
+  hasMigratedWeeklyNoteSettings: boolean;
+  installedVersion: string;
+  enableTimelineComplication: boolean;
+  localeOverride: string;
 
   // Word count background settings
   wordCountColorRanges: Array<{ min: number; max: number; opacity: number }>;
@@ -41,10 +52,17 @@ export const defaultSettings = Object.freeze({
 
   wordsPerDot: DEFAULT_WORDS_PER_DOT,
 
-  showWeeklyNote: false,
-  weeklyNoteFormat: "",
-  weeklyNoteTemplate: "",
-  weeklyNoteFolder: "",
+  day: { ...DEFAULT_PERIODIC_CONFIG, enabled: true },
+  week: { ...DEFAULT_PERIODIC_CONFIG },
+  month: { ...DEFAULT_PERIODIC_CONFIG },
+  quarter: { ...DEFAULT_PERIODIC_CONFIG },
+  year: { ...DEFAULT_PERIODIC_CONFIG },
+
+  hasMigratedDailyNoteSettings: false,
+  hasMigratedWeeklyNoteSettings: false,
+  installedVersion: "1.0.0",
+  enableTimelineComplication: true,
+  localeOverride: "system-default",
 
   // Default word count color ranges
   wordCountColorRanges: [
@@ -78,43 +96,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
     // Get the current language from Obsidian
     const lang = getLanguage();
 
-    if (!appHasDailyNotesPluginLoaded()) {
-      this.containerEl.createDiv("settings-banner", (banner) => {
-        banner.createEl("h3", {
-          text: `⚠️ ${t('plugin-name', lang)} plugin not enabled`,
-        });
-        banner.createEl("p", {
-          cls: "setting-item-description",
-          text:
-            t('settings-weekly-note-warning', lang),
-        });
-      });
-    }
-
     this.containerEl.createEl("h3", {
       text: t('settings-general-title', lang),
     });
     this.addDotThresholdSetting(lang);
     this.addWeekStartSetting(lang);
     this.addConfirmCreateSetting(lang);
-    this.addShowWeeklyNoteSetting(lang);
-
-    if (
-      this.plugin.options.showWeeklyNote &&
-      !appHasPeriodicNotesPluginLoaded()
-    ) {
-      this.containerEl.createEl("h3", {
-        text: t('settings-weekly-note-title', lang),
-      });
-      this.containerEl.createEl("p", {
-        cls: "setting-item-description",
-        text:
-          t('settings-weekly-note-warning', lang),
-      });
-      this.addWeeklyNoteFormatSetting(lang);
-      this.addWeeklyNoteTemplateSetting(lang);
-      this.addWeeklyNoteFolderSetting(lang);
-    }
 
     // Add word count background settings
     this.containerEl.createEl("h3", {
@@ -126,7 +113,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
       text: t('settings-advanced-title', lang),
     });
     this.addHeatmapRefreshIntervalSetting(lang);
-    // Locale override setting has been removed as it's now handled by i18n detection
+
+    // Calendar Sets
+    mount(SettingsRouter, {
+      target: this.containerEl,
+      props: {
+        app: this.app,
+        settings: this.plugin.settings,
+      },
+    });
   }
 
   addDotThresholdSetting(lang: Language): void {
@@ -149,7 +144,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const { moment } = window;
 
     const localizedWeekdays = moment.weekdays();
-    const localeWeekStartNum = window._bundledLocaleWeekSpec.dow;
+    const localeWeekStartNum = window._bundledLocaleWeekSpec?.dow ?? (moment.localeData() as any)._week?.dow ?? 0;
     const localeWeekStart = moment.weekdays()[localeWeekStartNum];
 
     new Setting(this.containerEl)
@@ -185,57 +180,63 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addShowWeeklyNoteSetting(lang: Language): void {
-    new Setting(this.containerEl)
-      .setName(t('settings-show-week-number', lang))
-      .setDesc(t('settings-show-week-number-desc', lang))
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.options.showWeeklyNote);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({ showWeeklyNote: value }));
-          this.display(); // show/hide weekly settings
+  /*
+    addShowWeeklyNoteSetting(lang: Language): void {
+      new Setting(this.containerEl)
+        .setName(t('settings-show-week-number', lang))
+        .setDesc(t('settings-show-week-number-desc', lang))
+        .addToggle((toggle) => {
+          toggle.setValue(this.plugin.options.showWeeklyNote);
+          toggle.onChange(async (value) => {
+            this.plugin.writeOptions(() => ({ showWeeklyNote: value }));
+            this.display(); // show/hide weekly settings
+          });
         });
-      });
-  }
+    }
+  */
 
-  addWeeklyNoteFormatSetting(lang: Language): void {
-    new Setting(this.containerEl)
-      .setName(t('settings-weekly-note-format', lang))
-      .setDesc(t('settings-weekly-note-format-desc', lang))
-      .addText((textfield) => {
-        textfield.setValue(this.plugin.options.weeklyNoteFormat);
-        textfield.setPlaceholder(DEFAULT_WEEK_FORMAT);
-        textfield.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({ weeklyNoteFormat: value }));
+  /*
+    addWeeklyNoteFormatSetting(lang: Language): void {
+      new Setting(this.containerEl)
+        .setName(t('settings-weekly-note-format', lang))
+        .setDesc(t('settings-weekly-note-format-desc', lang))
+        .addText((textfield) => {
+          textfield.setValue(this.plugin.options.weeklyNoteFormat);
+          textfield.setPlaceholder(DEFAULT_WEEK_FORMAT);
+          textfield.onChange(async (value) => {
+            this.plugin.writeOptions(() => ({ weeklyNoteFormat: value }));
+          });
         });
-      });
-  }
+    }
+  */
 
-  addWeeklyNoteTemplateSetting(lang: Language): void {
-    new Setting(this.containerEl)
-      .setName(t('settings-weekly-note-template', lang))
-      .setDesc(
-        t('settings-weekly-note-template-desc', lang)
-      )
-      .addText((textfield) => {
-        textfield.setValue(this.plugin.options.weeklyNoteTemplate);
-        textfield.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({ weeklyNoteTemplate: value }));
+  /*
+    addWeeklyNoteTemplateSetting(lang: Language): void {
+      new Setting(this.containerEl)
+        .setName(t('settings-weekly-note-template', lang))
+        .setDesc(
+          t('settings-weekly-note-template-desc', lang)
+        )
+        .addText((textfield) => {
+          textfield.setValue(this.plugin.options.weeklyNoteTemplate);
+          textfield.onChange(async (value) => {
+            this.plugin.writeOptions(() => ({ weeklyNoteTemplate: value }));
+          });
         });
-      });
-  }
-
-  addWeeklyNoteFolderSetting(lang: Language): void {
-    new Setting(this.containerEl)
-      .setName(t('settings-weekly-note-folder', lang))
-      .setDesc(t('settings-weekly-note-folder-desc', lang))
-      .addText((textfield) => {
-        textfield.setValue(this.plugin.options.weeklyNoteFolder);
-        textfield.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({ weeklyNoteFolder: value }));
+    }
+  
+    addWeeklyNoteFolderSetting(lang: Language): void {
+      new Setting(this.containerEl)
+        .setName(t('settings-weekly-note-folder', lang))
+        .setDesc(t('settings-weekly-note-folder-desc', lang))
+        .addText((textfield) => {
+          textfield.setValue(this.plugin.options.weeklyNoteFolder);
+          textfield.onChange(async (value) => {
+            this.plugin.writeOptions(() => ({ weeklyNoteFolder: value }));
+          });
         });
-      });
-  }
+    }
+  */
 
 
   addWordCountColorRangeSettings(lang: Language): void {
@@ -300,7 +301,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
 
       // Opacity input
-      const opacityInput = inputsContainer.createEl('input', { type: 'number', step: '0.01', placeholder: t('placeholder-opacity', lang) });
+      const opacityInput = inputsContainer.createEl('input', { type: 'number', placeholder: t('placeholder-opacity', lang) });
+      opacityInput.setAttr('step', '0.01');
       opacityInput.style.width = '80px';
       opacityInput.value = String(range.opacity);
       opacityInput.addEventListener('change', (e) => {

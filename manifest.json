@@ -1,8 +1,8 @@
 {
   "id": "work-assistant",
   "name": "Work Assistant",
-  "description": "Calendar view with word count statistics for your daily notes",
-  "version": "1.0.0",
+  "description": "A comprehensive productivity companion combining Calendar, Periodic Notes, and Word Count Heatmap features.",
+  "version": "2.0.0",
   "author": "Liam Cain & Dhruvik Parikh & Randy",
   "authorUrl": "https://github.com/liamcain/",
   "fundingUrl": "https://www.buymeacoffee.com/liamcain",

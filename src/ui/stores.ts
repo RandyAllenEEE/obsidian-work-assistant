@@ -5,13 +5,14 @@ import {
 } from "obsidian-daily-notes-interface";
 import { writable } from "svelte/store";
 
-import { defaultSettings, ISettings } from "src/settings";
+import { defaultSettings } from "src/settings";
+import type { ISettings } from "src/settings";
 
 import { getDateUIDFromFile } from "./utils";
 
 function createDailyNotesStore() {
   let hasError = false;
-  const store = writable<Record<string, TFile>>(null);
+  const store = writable<Record<string, TFile>>({});
   return {
     reindex: () => {
       try {
@@ -33,7 +34,7 @@ function createDailyNotesStore() {
 
 function createWeeklyNotesStore() {
   let hasError = false;
-  const store = writable<Record<string, TFile>>(null);
+  const store = writable<Record<string, TFile>>({});
   return {
     reindex: () => {
       try {
