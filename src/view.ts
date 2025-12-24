@@ -144,6 +144,7 @@ export default class CalendarView extends ItemView {
         localeData: window.moment().localeData(),
         displayedMonth: window.moment(),
       },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     }) as any;
   }
 

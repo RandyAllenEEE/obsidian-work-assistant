@@ -98,7 +98,7 @@ export default class WordCountStats extends Component {
 
 		// Initialize status bar based on initial state? We'll let main.ts call updateStatusBar.
 		// this.statusBarEl = this.plugin.addStatusBarItem();
-		this.startStatusBarUpdates();
+		this.registerStatusBarUpdates();
 	}
 
 	public updateStatusBar(enabled: boolean) {
@@ -122,32 +122,47 @@ export default class WordCountStats extends Component {
 		return 'en';
 	}
 
-	startStatusBarUpdates() {
-		// Register interval to update status bar
-		this.registerInterval(
-			window.setInterval(() => {
-				if (!this.statusBarEl) return;
-
-				const lang = this.getObsidianLanguage();
-				const currentWordCount = this.currentWordCount || 0;
-
-				let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
-
-				const activeFile = this.app.workspace.getActiveFile();
-				if (activeFile && activeFile.extension === 'md') {
-					const fileChange = this.getFileCountChange(activeFile.path);
-					const detailText = t('status-bar-words-today-detail', lang)
-						.replace('{file}', fileChange.toString())
-						.replace('{total}', currentWordCount.toString());
-
-					if (detailText !== 'status-bar-words-today-detail') {
-						text = detailText;
-					}
-				}
-
-				this.statusBarEl.setText(text);
-			}, 200)
+	registerStatusBarUpdates() {
+		// Update when active leaf changes (to show file-specific counts)
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', () => {
+				this.refreshStatusBar();
+			})
 		);
+
+		// Update when editor changes (live counting)
+		// Note: We leverage the existing debouncedUpdate for the heavy lifting
+		this.registerEvent(
+			this.app.workspace.on('editor-change', (editor, view) => {
+				if (view instanceof MarkdownView && view.file) {
+					const content = editor.getValue();
+					this.debouncedUpdate(content, view.file.path);
+				}
+			})
+		);
+	}
+
+	refreshStatusBar() {
+		if (!this.statusBarEl) return;
+
+		const lang = this.getObsidianLanguage();
+		const currentWordCount = this.currentWordCount || 0;
+
+		let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
+
+		const activeFile = this.app.workspace.getActiveFile();
+		if (activeFile && activeFile.extension === 'md') {
+			const fileChange = this.getFileCountChange(activeFile.path);
+			const detailText = t('status-bar-words-today-detail', lang)
+				.replace('{file}', fileChange.toString())
+				.replace('{total}', currentWordCount.toString());
+
+			if (detailText !== 'status-bar-words-today-detail') {
+				text = detailText;
+			}
+		}
+
+		this.statusBarEl.setText(text);
 	}
 
 	onQuickPreview(file: TFile, contents: string): void {
@@ -243,6 +258,7 @@ export default class WordCountStats extends Component {
 	updateCounts(): void {
 		this.currentWordCount = Object.values(this.settings.todaysWordCount).map((wordCount) => Math.max(0, wordCount.current - wordCount.initial)).reduce((a, b) => a + b, 0);
 		this.settings.dayCounts[this.today] = this.currentWordCount;
+		this.refreshStatusBar();
 	}
 
 	incrementPomoCount(date: string = this.today): void {

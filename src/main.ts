@@ -176,7 +176,7 @@ export default class CalendarPlugin extends Plugin {
           const text = await this.timer.setStatusBarText();
           this.pomoStatusBarEl.setText(text);
         }
-      }, 100)
+      }, 1000)
     );
 
     // Removed locale change listener due to unsupported event type

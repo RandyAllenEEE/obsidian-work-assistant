@@ -83,37 +83,91 @@ export class PeriodicNotesCache extends Component {
     this.initialize();
   }
 
-  public initialize(): void {
-    const memoizedRecurseChildren = memoize(
-      (rootFolder: TFolder, cb: (file: TAbstractFile) => void) => {
-        if (!rootFolder) return;
-        for (const c of rootFolder.children) {
-          if (c instanceof TFile) {
-            cb(c);
-          } else if (c instanceof TFolder) {
-            memoizedRecurseChildren(c, cb);
-          }
-        }
-      }
-    );
+  public initialize(lazy = true): void {
+    if (lazy) {
+      this.fastScan();
+      // Defer full scan
+      window.setTimeout(() => {
+        console.info("[Work Assistant] Starting deferred full cache scan");
+        this.fullScan();
+      }, 2000);
+    } else {
+      this.fullScan();
+    }
+  }
 
+  private fastScan(): void {
+    const today = window.moment();
+    const currentMonth = today.format("YYYY-MM");
+
+    // We want to prioritize files that look like they belong to this month or nearby
+    const priorityFiles = this.app.vault.getMarkdownFiles().filter(file => {
+      // Very basic filter: does path contain current year/month?
+      // This is efficient and catches "2023-10-01.md" or "2023/10/01.md"
+      return file.path.includes(currentMonth);
+    });
+
+    console.debug(`[Work Assistant] Fast Scanning ${priorityFiles.length} priority files`);
+    this.scanFiles(priorityFiles);
+  }
+
+  private fullScan(): void {
+    // Scan all markdown files, but filter by configured folders inside scanFiles logic
+    const allFiles = this.app.vault.getMarkdownFiles();
+    console.debug(`[Work Assistant] Full Scanning ${allFiles.length} files`);
+    this.scanFiles(allFiles);
+  }
+
+  private scanFiles(files: TFile[]): void {
     const activeGranularities = granularities.filter((g) => this.plugin.options[g]?.enabled);
+    if (!activeGranularities.length) return;
+
+    // Optimization: Pre-calculate folder paths to avoid repeating logic inside the loop
+    const configFolders: Record<string, string> = {};
     for (const granularity of activeGranularities) {
       const config = this.plugin.options[granularity];
-      const folderPath = config.folder || "/";
-      const rootFolder = this.app.vault.getAbstractFileByPath(folderPath) as TFolder;
-      console.debug(`[Work Assistant] Initializing cache for ${granularity}, folder: ${folderPath}, exists: ${!!rootFolder}`);
+      // Normalize folder path: ensure no leading slash if simple check, 
+      // but Obsidian paths usually don't have leading slash.
+      // config.folder might be "/" or "Journal"
+      let folder = config.folder || "";
+      if (folder === "/") folder = "";
+      if (folder.startsWith("/")) folder = folder.slice(1);
+      configFolders[granularity] = folder;
+    }
 
-      // Scan for filename matches
-      memoizedRecurseChildren(rootFolder, (file: TAbstractFile) => {
-        if (file instanceof TFile) {
-          this.resolve(file, "initialize");
-          const metadata = this.app.metadataCache.getFileCache(file);
-          if (metadata) {
-            this.resolveChangedMetadata(file, "", metadata);
-          }
+    for (const file of files) {
+      // Skip if already cached with high confidence (frontmatter)
+      // logic is handled inside resolve, but we can quick check here to avoid overhead
+      const existing = this.cachedFiles.get(file.path);
+      if (existing && existing.matchData.matchType === "frontmatter") continue;
+
+      // Pass to resolve. resolve checks folders internally too, but doing it here might be faster?
+      // resolve() iterates granularities again.
+      // Let's trust resolve() to be reasonably fast if we just feed it files.
+      // But we should at least check if the file is in ONE of the active folders to avoid 
+      // passing standard Zettelkasten files to resolve() if periodic notes are in "Journal/"
+      let isInWatchedFolder = false;
+      for (const granularity of activeGranularities) {
+        const folder = configFolders[granularity];
+        if (!folder || file.path.startsWith(folder)) {
+          isInWatchedFolder = true;
+          break;
         }
-      });
+      }
+
+      if (isInWatchedFolder) {
+        this.resolve(file, "initialize");
+        // Metadata check is expensive, maybe skip for fast scan? 
+        // Or only do if resolve didn't find filename match?
+        // Original code did: resolve(), then resolveChangedMetadata()
+
+        // For fast scan, maybe we skip deep metadata check unless needed?
+        // Let's keep original behavior for correctness:
+        const metadata = this.app.metadataCache.getFileCache(file);
+        if (metadata) {
+          this.resolveChangedMetadata(file, "", metadata);
+        }
+      }
     }
   }
 
