@@ -1,24 +1,28 @@
 import { Component } from 'obsidian';
 import type CalendarPlugin from '../../main';
 
+export interface ISmtcPlayer {
+    setPlaybackState(state: 'playing' | 'paused' | 'none'): void;
+}
+
 export class WhiteNoiseService extends Component {
     plugin: CalendarPlugin;
     private audio: HTMLAudioElement;
     private isPlaying = false;
     private currentUrl = '';
 
-    private smtc: any; // Type 'BrowserSMTC' to be defined or keep loose for now to avoid circular deps if they exist, but better to use interface.
+    private smtc: ISmtcPlayer | null = null;
 
     constructor(plugin: CalendarPlugin) {
         super();
         this.plugin = plugin;
     }
 
-    setSMTC(smtc: any) {
+    setSMTC(smtc: ISmtcPlayer | null): void {
         this.smtc = smtc;
     }
 
-    initialize(url: string) {
+    initialize(url: string): void {
         if (this.audio) return;
 
         this.currentUrl = url;
@@ -31,7 +35,7 @@ export class WhiteNoiseService extends Component {
         };
     }
 
-    setUrl(url: string) {
+    setUrl(url: string): void {
         if (this.currentUrl === url) return;
 
         const wasPlaying = this.isPlaying;
@@ -45,7 +49,7 @@ export class WhiteNoiseService extends Component {
         }
     }
 
-    play() {
+    play(): void {
         if (!this.audio) return;
 
         this.audio.play().then(() => {
@@ -56,7 +60,7 @@ export class WhiteNoiseService extends Component {
         });
     }
 
-    pause() {
+    pause(): void {
         if (!this.audio) return;
 
         this.audio.pause();
@@ -64,7 +68,7 @@ export class WhiteNoiseService extends Component {
         if (this.smtc) this.smtc.setPlaybackState('paused');
     }
 
-    stop() {
+    stop(): void {
         if (!this.audio) return;
 
         this.audio.pause();
@@ -77,8 +81,8 @@ export class WhiteNoiseService extends Component {
         return this.isPlaying;
     }
 
-    onunload() {
+    onunload(): void {
         this.stop();
-        this.audio = null;
+        this.audio = null as any;
     }
 }

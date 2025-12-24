@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { moment } from "obsidian";
+
   import type {
     QWeatherService,
     WeatherData,
@@ -19,12 +19,12 @@
   $: hourlyRaw = weatherCache?.hourlyData || [];
   $: dailyRaw = weatherCache?.dailyData || [];
   // Simple language check based on moment locale which Obsidian manages
-  $: isChinese = moment.locale().toLowerCase().startsWith("zh");
+  $: isChinese = window.moment.locale().toLowerCase().startsWith("zh");
 
   // Filter Hourly: Show from current hour onwards
   $: hourlyFiltered = hourlyRaw.filter((h: HourlyForecast) => {
-    const hTime = moment(h.fxTime);
-    const now = moment();
+    const hTime = window.moment(h.fxTime);
+    const now = window.moment();
     return hTime.isSameOrAfter(now, "hour");
   });
 
@@ -41,7 +41,7 @@
         },
         ...hourlyFiltered.map((h: HourlyForecast) => ({
           type: "hourly",
-          time: moment(h.fxTime).format("HH:mm"),
+          time: window.moment(h.fxTime).format("HH:mm"),
           temp: h.temp,
           icon: h.icon,
           text: h.text, // Ensure interface has text
@@ -54,17 +54,22 @@
   $: tomorrow = dailyRaw.find((d: DailyForecast) => {
     // Find the entry that matches tomorrow roughly
     if (!d.fxDate) return false;
-    return moment(d.fxDate).isSame(moment().add(1, "d"), "day");
+    return window.moment(d.fxDate).isSame(window.moment().add(1, "d"), "day");
   });
+
+  let visible = true; // Default true, update on mount
+  let bannerEl: HTMLElement;
 
   export async function refresh() {
     if (!weatherService) return;
     if (
-      !$settings.enableWeather ||
-      !$settings.qweatherToken ||
-      !$settings.weatherCity
+      !$settings.assistant.weather.enabled ||
+      !$settings.assistant.weather.token ||
+      !$settings.assistant.weather.city
     )
       return;
+    // Only fetch if visible
+    if (!visible) return;
 
     loading = true;
     await weatherService.getWeather(false);
@@ -93,14 +98,47 @@
   }
 
   onMount(() => {
-    refresh();
+    // Visibility Observer
+    const observer = new IntersectionObserver((entries) => {
+      const isVisible = entries[0].isIntersecting;
+      if (isVisible && !visible) {
+        // Became visible, trigger refresh if needed?
+        // Weather service handles throttling internally, so just calling refresh() is safe.
+        visible = true;
+        refresh();
+      } else {
+        visible = isVisible;
+      }
+    });
+    if (bannerEl) observer.observe(bannerEl);
+
+    refresh(); // Initial fetch
+
+    return () => {
+      observer.disconnect();
+      if (refreshTimer) clearInterval(refreshTimer);
+    };
   });
 
-  $: $settings.weatherCity, $settings.qweatherToken, refresh();
+  let refreshTimer: number;
+
+  // React to settings changes for interval
+  $: if ($settings.assistant.weather.refreshInterval) {
+    if (refreshTimer) clearInterval(refreshTimer);
+    const intervalMs =
+      ($settings.assistant.weather.refreshInterval || 60) * 60 * 1000;
+    refreshTimer = window.setInterval(() => {
+      refresh();
+    }, intervalMs);
+  }
+
+  $: $settings.assistant.weather.city,
+    $settings.assistant.weather.token,
+    refresh();
 </script>
 
-{#if $settings.enableWeather && current}
-  <div class="weather-banner compact">
+{#if $settings.assistant.weather.enabled && current}
+  <div class="weather-banner compact" bind:this={bannerEl}>
     <!-- Left: Horizontal Scroll (Now + Hourly) -->
     <div class="weather-scroll-area">
       {#each displayList as item}
@@ -116,8 +154,8 @@
     <!-- Right: City + Tomorrow -->
     {#if tomorrow}
       <div class="weather-side-compact">
-        <div class="side-city" title={$settings.weatherCity}>
-          {$settings.weatherCity}
+        <div class="side-city" title={$settings.assistant.weather.city}>
+          {$settings.assistant.weather.city}
         </div>
         <div class="side-content">
           <div class="side-icon-sm" bind:this={tomorrowIconEl}></div>

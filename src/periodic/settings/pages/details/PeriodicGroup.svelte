@@ -25,10 +25,11 @@
 
   let config: Writable<PeriodicConfig> = writableDerived(
     settings,
-    ($settings) => $settings[granularity] ?? DEFAULT_PERIODIC_CONFIG,
+    ($settings) =>
+      $settings.periodicNotes[granularity] ?? DEFAULT_PERIODIC_CONFIG,
     (reflecting, $settings) => {
       // @ts-ignore
-      $settings[granularity] = reflecting;
+      $settings.periodicNotes[granularity] = reflecting;
       return $settings;
     },
   );
@@ -55,17 +56,23 @@
         {/if}
       </h3>
     </div>
-    <div class="setting-item-control">
+    <div
+      class="setting-item-control"
+      on:click|stopPropagation
+      on:keydown|stopPropagation
+      role="presentation"
+    >
+      <input
+        type="checkbox"
+        id="periodic-enabled-{granularity}"
+        bind:checked={$config.enabled}
+        style="display: none;"
+      />
       <label
+        for="periodic-enabled-{granularity}"
         class="checkbox-container"
         class:is-enabled={$config.enabled}
-        on:click|stopPropagation
       >
-        <input
-          type="checkbox"
-          bind:checked={$config.enabled}
-          style="display: none;"
-        />
       </label>
     </div>
   </div>

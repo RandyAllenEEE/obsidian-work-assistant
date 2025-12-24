@@ -22,6 +22,24 @@ div.day:hover {
   background-color: transparent !important;
 }
 
+
+/* 针对“今日”格子的增强显示 */
+.day.today {
+  /* 1. 强制显示内边框：像个相框一样勾勒边缘 */
+  box-shadow: inset 0 0 0 2px var(--interactive-accent) !important;
+  
+  /* 2. 让数字更醒目 */
+  font-weight: 700 !important;
+  
+  /* 3. 确保文字颜色在绿色背景下也能看清 */
+  color: var(--text-normal) !important;
+}
+/* 如果今日刚好有热力分布，微调背景色透明度，让边框更出挑 */
+.day.today[data-heatmap-level] {
+  filter: brightness(1.1); /* 稍微提亮一点点 */
+}
+
+
 /* SMTC Status Bar */
 .smtc-status-bar {
   display: flex !important; /* Force flex as it might be hidden by default logic initially */

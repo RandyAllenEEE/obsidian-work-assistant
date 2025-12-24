@@ -33,9 +33,9 @@
   >
     <Toggle
       slot="control"
-      isEnabled={$settings.enableTimelineComplication}
+      isEnabled={$settings.periodicNotes.timelineComplication}
       onChange={(val) => {
-        $settings.enableTimelineComplication = val;
+        $settings.periodicNotes.timelineComplication = val;
       }}
     />
   </SettingItem>

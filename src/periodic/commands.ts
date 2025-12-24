@@ -94,7 +94,7 @@ export function getCommands(
 ): Command[] {
   const config = displayConfigs[granularity];
 
-  const localizedPeriodicity = t(`label-periodicity-${config.periodicity}` as any);
+  const localizedPeriodicity = t(`label-periodicity-${config.periodicity}` as Parameters<typeof t>[0]);
 
   return [
     {

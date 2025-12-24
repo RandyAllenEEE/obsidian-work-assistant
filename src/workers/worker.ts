@@ -5,6 +5,15 @@ export const WORKER_CODE = `
   self.onmessage = function(e) {
     const { id, text } = e.data;
     
+    // Hash function to detect changes
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+        const char = text.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    const hashStr = hash.toString();
+
     // Perform word count logic
     // Credit: better-word-count by Luke Leppan (https://github.com/lukeleppan/better-word-count)
     let words = 0;
@@ -23,6 +32,6 @@ export const WORKER_CODE = `
     }
 
     // Send back the result with the same ID
-    self.postMessage({ id, count: words });
+    self.postMessage({ id, count: words, hash: hashStr });
   };
 `;

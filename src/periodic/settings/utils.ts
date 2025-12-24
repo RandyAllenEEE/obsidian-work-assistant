@@ -1,6 +1,7 @@
 import {
   granularities,
   type Granularity,
+  type PeriodicNotesConfig,
 } from "src/periodic/types";
 import { get, type Updater, type Writable } from "svelte/store";
 
@@ -8,7 +9,7 @@ import type { ISettings } from ".";
 
 export const clearStartupNote: Updater<ISettings> = (settings: ISettings) => {
   for (const granularity of granularities) {
-    const config = (settings as any)[granularity];
+    const config = (settings.periodicNotes as PeriodicNotesConfig)[granularity];
     if (config && config.openAtStartup) {
       config.openAtStartup = false;
     }
@@ -29,7 +30,7 @@ export const findStartupNoteConfig: FindStartupNoteConfigFunc = (
 ) => {
   const $settings = get(settings);
   for (const granularity of granularities) {
-    const config = ($settings as any)[granularity];
+    const config = ($settings.periodicNotes as PeriodicNotesConfig)[granularity];
     if (config && config.openAtStartup) {
       return {
         granularity,

@@ -24,7 +24,7 @@
   let relativeDataStr: string;
 
   let settings = plugin.settings;
-  let showComplication = $settings.enableTimelineComplication;
+  let showComplication = $settings.periodicNotes.timelineComplication;
 
   $: {
     periodicData = cache.find(view.file?.path);
@@ -63,7 +63,7 @@
   }
 
   function updateComplicationVisibility() {
-    showComplication = $settings.enableTimelineComplication;
+    showComplication = $settings.periodicNotes.timelineComplication;
   }
 
   function toggleCalendarVisibility() {

@@ -1,4 +1,4 @@
-import { Notice, moment } from 'obsidian';
+import { Notice } from 'obsidian';
 import { notificationUrl } from './audio_urls';
 import { WhiteNoiseService } from '../services/audio/WhiteNoiseService';
 import type CalendarPlugin from '../main'; // Import type to avoid circular dependency issues at runtime if possible, or just import class
@@ -6,7 +6,7 @@ import type CalendarPlugin from '../main'; // Import type to avoid circular depe
 import { t } from '../i18n';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const electron = require("electron");
+// const electron = require("electron");
 
 const MILLISECS_IN_MINUTE = 60 * 1000;
 
@@ -40,20 +40,21 @@ export class Timer {
         this.whiteNoiseService = new WhiteNoiseService(plugin);
         plugin.addChild(this.whiteNoiseService); // Register lifecycle
 
-        if (this.plugin.options?.whiteNoise === true) {
+        if (this.plugin.options.media?.whiteNoise === true) {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { whiteNoiseUrl } = require('./audio_urls');
-            const url = this.plugin.options.pomoBackgroundNoiseFile || whiteNoiseUrl;
+            const url = this.plugin.options.media.backgroundNoiseFile || whiteNoiseUrl;
             this.whiteNoiseService.initialize(url);
         }
+        this.loadState();
     }
 
     // Initialize white noise player properly if needed
-    initWhiteNoise() {
-        if (this.plugin.options?.whiteNoise === true) {
+    initWhiteNoise(): void {
+        if (this.plugin.options.media?.whiteNoise === true) {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { whiteNoiseUrl } = require('./audio_urls');
-            const url = this.plugin.options.pomoBackgroundNoiseFile || whiteNoiseUrl;
+            const url = this.plugin.options.media.backgroundNoiseFile || whiteNoiseUrl;
             this.whiteNoiseService.initialize(url);
         }
     }
@@ -78,7 +79,7 @@ export class Timer {
         }
     }
 
-    async handleTimerEnd() {
+    async handleTimerEnd(): Promise<void> {
         if (this.mode === Mode.Pomo) { //completed another pomo
             this.pomosSinceStart += 1;
 
@@ -89,15 +90,15 @@ export class Timer {
             this.cyclesSinceLastAutoStop += 1;
         }
 
-        if (this.plugin.options.notificationSound === true) { //play sound end of timer
+        if (this.plugin.options.pomodoro.notification.sound === true) { //play sound end of timer
             playNotification();
         }
-        if (this.plugin.options.useSystemNotification === true) { //show system notification end of timer
+        if (this.plugin.options.pomodoro.notification.system === true) { //show system notification end of timer
             showSystemNotification(this.mode);
         }
 
-        const autostart = this.plugin.options.continuousMode === true;
-        const numAutoCycles = this.plugin.options.numAutoCycles || 0;
+        const autostart = this.plugin.options.pomodoro.continuous === true;
+        const numAutoCycles = this.plugin.options.pomodoro.autoCycles || 0;
 
         if (autostart === false && numAutoCycles <= this.cyclesSinceLastAutoStop) {
             this.setupTimer();
@@ -108,6 +109,7 @@ export class Timer {
         } else {
             this.startTimer();
         }
+        this.saveState();
     }
 
     async quitTimer(): Promise<void> {
@@ -117,26 +119,64 @@ export class Timer {
         this.paused = false;
         this.pomosSinceStart = 0;
 
-        if (this.plugin.options.whiteNoise === true) {
+        if (this.plugin.options.media.whiteNoise === true) {
             this.whiteNoiseService.stop();
         }
+        // Clear cache
+        await this.plugin.cacheManager.updateTimer(undefined);
     }
 
     pauseTimer(): void {
         this.paused = true;
         this.pausedTime = this.getCountdown();
 
-        if (this.plugin.options.whiteNoise === true) {
+        if (this.plugin.options.media.whiteNoise === true) {
             this.whiteNoiseService.stop(); // or pause() if we want it to resume
         }
+        this.saveState();
     }
 
-    togglePause() {
+    togglePause(): void {
         if (this.paused === true) {
             this.restartTimer();
         } else if (this.mode !== Mode.NoTimer) { //if some timer running
             this.pauseTimer();
             new Notice(t("pomo-notice-paused"));
+        }
+    }
+
+    async saveState(): Promise<void> {
+        await this.plugin.cacheManager.updateTimer({
+            mode: this.mode,
+            startTime: this.startTime.valueOf(),
+            endTime: this.endTime.valueOf(),
+            paused: this.paused,
+            pausedTime: this.pausedTime,
+            pomosSinceStart: this.pomosSinceStart,
+            cyclesSinceLastAutoStop: this.cyclesSinceLastAutoStop
+        });
+    }
+
+    async loadState(): Promise<void> {
+        const state = this.plugin.cacheManager.getTimer();
+        if (!state || state.mode === Mode.NoTimer) return;
+
+        // Restore state
+        this.mode = state.mode;
+        this.startTime = window.moment(state.startTime);
+        this.endTime = window.moment(state.endTime);
+        this.paused = state.paused;
+        this.pausedTime = state.pausedTime;
+        this.pomosSinceStart = state.pomosSinceStart;
+        this.cyclesSinceLastAutoStop = state.cyclesSinceLastAutoStop;
+
+        // Logic to handle expiration while closed
+        if (!this.paused && this.mode !== Mode.NoTimer) {
+            const now = window.moment();
+            if (now.isAfter(this.endTime)) {
+                await this.handleTimerEnd();
+                return;
+            }
         }
     }
 
@@ -146,10 +186,11 @@ export class Timer {
         this.modeRestartingNotification();
         this.paused = false;
 
-        if (this.plugin.options.whiteNoise === true) {
+        if (this.plugin.options.media.whiteNoise === true) {
             this.initWhiteNoise();
             this.whiteNoiseService.play();
         }
+        this.saveState();
     }
 
     startTimer(mode: Mode = null): void {
@@ -158,16 +199,17 @@ export class Timer {
 
         this.modeStartingNotification();
 
-        if (this.plugin.options.whiteNoise === true) {
+        if (this.plugin.options.media.whiteNoise === true) {
             this.initWhiteNoise(); // Ensure URL is latest
             this.whiteNoiseService.play();
         }
+        this.saveState();
     }
 
-    private setupTimer(mode: Mode = null) {
+    private setupTimer(mode: Mode | null = null): void {
         if (mode === null) { //no arg -> start next mode in cycle
             if (this.mode === Mode.Pomo) {
-                if (this.pomosSinceStart % this.plugin.options.longBreakInterval === 0) {
+                if (this.pomosSinceStart % this.plugin.options.pomodoro.longBreakInterval === 0) {
                     this.mode = Mode.LongBreak;
                 } else {
                     this.mode = Mode.ShortBreak;
@@ -196,13 +238,13 @@ export class Timer {
     getTotalModeMillisecs(): number {
         switch (this.mode) {
             case Mode.Pomo: {
-                return this.plugin.options.pomo * MILLISECS_IN_MINUTE;
+                return this.plugin.options.pomodoro.work * MILLISECS_IN_MINUTE;
             }
             case Mode.ShortBreak: {
-                return this.plugin.options.shortBreak * MILLISECS_IN_MINUTE;
+                return this.plugin.options.pomodoro.shortBreak * MILLISECS_IN_MINUTE;
             }
             case Mode.LongBreak: {
-                return this.plugin.options.longBreak * MILLISECS_IN_MINUTE;
+                return this.plugin.options.pomodoro.longBreak * MILLISECS_IN_MINUTE;
             }
             case Mode.NoTimer: {
                 throw new Error("Mode NoTimer does not have an associated time value");

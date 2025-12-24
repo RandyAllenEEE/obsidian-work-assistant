@@ -47,7 +47,7 @@
   export let displayedMonth = today;
 
   let month: IMonth;
-  let daysOfWeek: string[];
+  let daysOfWeek: { full: string; short: string }[];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let isMobile = (window.app as any).isMobile;
@@ -94,7 +94,10 @@
           <th>W</th>
         {/if}
         {#each daysOfWeek as dayOfWeek}
-          <th>{dayOfWeek}</th>
+          <th>
+            <span class="day-full">{dayOfWeek.full}</span>
+            <span class="day-short">{dayOfWeek.short}</span>
+          </th>
         {/each}
       </tr>
     </thead>
@@ -145,6 +148,8 @@
     --color-text-day: var(--text-normal);
     --color-text-today: var(--interactive-accent);
     --color-text-weeknum: var(--text-muted);
+
+    container-type: inline-size;
   }
 
   .container {
@@ -175,5 +180,18 @@
     letter-spacing: 1px;
     padding: 4px;
     text-transform: uppercase;
+  }
+
+  .day-short {
+    display: none;
+  }
+
+  @container (max-width: 280px) {
+    .day-full {
+      display: none;
+    }
+    th .day-short {
+      display: inline;
+    }
   }
 </style>

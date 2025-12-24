@@ -168,12 +168,10 @@ export function applyTemplateTransformations(
 
 export function getFormat(settings: ISettings | PeriodicConfig, granularity?: Granularity): string {
   // If granularity provided, assume first arg is ISettings
-  if (granularity && 'day' in settings) {
-    return (settings as ISettings)[granularity]?.format || DEFAULT_FORMAT[granularity];
+  if (granularity && 'periodicNotes' in settings) {
+    return (settings as ISettings).periodicNotes[granularity]?.format || DEFAULT_FORMAT[granularity];
   }
   // Otherwise assume it is PeriodicConfig
-  // Fallback if granularity not provided but it should be for defaults lookup
-  // Actually we can just check if it has 'format' prop.
   const config = settings as PeriodicConfig;
   return config.format || (granularity ? DEFAULT_FORMAT[granularity] : "");
 }
@@ -187,7 +185,7 @@ export function getPossibleFormats(
   settings: ISettings,
   granularity: Granularity
 ): string[] {
-  const format = settings[granularity]?.format;
+  const format = settings.periodicNotes[granularity]?.format;
   if (!format) return [DEFAULT_FORMAT[granularity]];
 
   const partialFormatExp = /[^/]*$/.exec(format);
@@ -199,14 +197,14 @@ export function getPossibleFormats(
 }
 
 export function getFolder(settings: ISettings, granularity: Granularity): string {
-  return settings[granularity]?.folder || "/";
+  return settings.periodicNotes[granularity]?.folder || "/";
 }
 
 export function getConfig(
   settings: ISettings,
   granularity: Granularity
 ): PeriodicConfig {
-  return settings[granularity] ?? DEFAULT_PERIODIC_CONFIG;
+  return settings.periodicNotes[granularity] ?? DEFAULT_PERIODIC_CONFIG;
 }
 
 export async function applyPeriodicTemplateToFile(
@@ -218,7 +216,7 @@ export async function applyPeriodicTemplateToFile(
   const format = getFormat(settings, metadata.granularity);
   const templateContents = await getTemplateContents(
     app,
-    settings[metadata.granularity]?.templatePath
+    settings.periodicNotes[metadata.granularity]?.templatePath
   );
   const renderedContents = applyTemplateTransformations(
     file.basename,

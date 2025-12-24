@@ -83,13 +83,18 @@ export const activeFile = createSelectedFileStore();
 export interface WeatherCache {
   locationId?: string;
   locationName?: string;
-  weatherData?: any;
+  weatherData?: {
+    temp: string;
+    icon: string;
+    text: string;
+    [key: string]: any;
+  };
   lastWeatherFetch?: number; // For "Now"
   hourlyData?: any[]; // For 24h
   lastHourlyFetch?: number;
   dailyData?: any[]; // For 3d
   lastDailyFetch?: number;
-  warningData?: any;
+  warningData?: any[];
   lastWarningFetch?: number;
   dismissedWarningIds?: string[];
 }
@@ -104,9 +109,20 @@ export interface MediaCache {
   lastUpdate?: number;
 }
 
+export interface TimerState {
+  mode: number; // Enum Mode
+  startTime: number; // Timestamp
+  endTime: number; // Timestamp
+  paused: boolean;
+  pausedTime: number;
+  pomosSinceStart: number;
+  cyclesSinceLastAutoStop: number;
+}
+
 export interface PluginCache {
   weather?: WeatherCache;
   media?: MediaCache;
+  timer?: TimerState;
 }
 
 export const pluginCache = writable<PluginCache>({});

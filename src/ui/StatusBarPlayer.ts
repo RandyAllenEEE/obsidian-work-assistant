@@ -1,5 +1,6 @@
 import { setIcon } from "obsidian";
 import type { SystemMediaMonitor } from "../smtc/SystemMediaMonitor";
+import type { MediaCache } from "../ui/stores";
 
 export class StatusBarPlayer {
     private container: HTMLElement;
@@ -8,7 +9,7 @@ export class StatusBarPlayer {
     private prevButton: HTMLElement;
     private nextButton: HTMLElement;
     private popover: HTMLElement | null = null;
-    private currentMedia: any = null;
+    private currentMedia: MediaCache | null = null;
     private unsubscribe: () => void;
 
     constructor(container: HTMLElement, monitor: SystemMediaMonitor) {
@@ -27,14 +28,14 @@ export class StatusBarPlayer {
         });
     }
 
-    public destroy() {
+    public destroy(): void {
         if (this.unsubscribe) {
             this.unsubscribe();
         }
         this.container.empty();
     }
 
-    private render() {
+    private render(): void {
         this.container.empty();
 
         // Previous Button
@@ -66,7 +67,7 @@ export class StatusBarPlayer {
         this.container.onmouseleave = () => this.hidePopover();
     }
 
-    private update(media: any) {
+    private update(media: MediaCache | null): void {
         if (!media || media.Status === 'Closed' || media.Status === 'Stopped') {
             this.container.style.display = 'flex';
             this.container.style.opacity = '0.5';
@@ -89,7 +90,7 @@ export class StatusBarPlayer {
         }
     }
 
-    private showPopover() {
+    private showPopover(): void {
         if (!this.currentMedia) return;
 
         if (this.popover) this.popover.remove();
@@ -113,7 +114,7 @@ export class StatusBarPlayer {
         info.createDiv({ cls: "smtc-artist", text: this.currentMedia.Artist });
     }
 
-    private hidePopover() {
+    private hidePopover(): void {
         if (this.popover) {
             this.popover.remove();
             this.popover = null;

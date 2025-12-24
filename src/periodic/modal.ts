@@ -3,7 +3,7 @@ import type { App, Point } from "obsidian";
 import type PeriodicNotesPlugin from "src/main";
 
 import { displayConfigs } from "./commands";
-import type { Granularity } from "./types";
+import type { Granularity, PeriodicNotesConfig } from "./types";
 
 export function showFileMenu(
   _app: App,
@@ -13,7 +13,7 @@ export function showFileMenu(
   const contextMenu = new Menu();
 
   const enabledGranularities = Object.keys(displayConfigs).filter(
-    (g) => plugin.options[g as keyof typeof displayConfigs]?.enabled
+    (g) => (plugin.options.periodicNotes as PeriodicNotesConfig)[g as keyof typeof displayConfigs]?.enabled
   ) as Granularity[];
 
   enabledGranularities.forEach((granularity) => {
@@ -38,12 +38,12 @@ export class PeriodicNoteCreateModal extends Modal {
     this.contentEl.createEl("h2", { text: "Open Periodic Note" });
 
     const enabledGranularities = Object.keys(displayConfigs).filter(
-      (g) => plugin.options[g as keyof typeof displayConfigs]?.enabled
+      (g) => (plugin.options.periodicNotes as PeriodicNotesConfig)[g as keyof typeof displayConfigs]?.enabled
     ) as Granularity[];
 
     enabledGranularities.forEach((granularity) => {
       const displayConfig = displayConfigs[granularity];
-      const config = plugin.options[granularity];
+      const config = (plugin.options.periodicNotes as PeriodicNotesConfig)[granularity];
 
       const noteExists = plugin.getPeriodicNote(granularity, window.moment());
       const template = config.templatePath;

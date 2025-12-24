@@ -11,14 +11,14 @@ export class BrowserSMTC extends Component {
         this.service = service;
     }
 
-    onload() {
+    onload(): void {
         if ('mediaSession' in navigator) {
             this.updateMetadata();
             this.setHandlers();
         }
     }
 
-    updateMetadata() {
+    updateMetadata(): void {
         if (!('mediaSession' in navigator)) return;
 
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -28,7 +28,7 @@ export class BrowserSMTC extends Component {
         });
     }
 
-    setPlaybackState(state: 'playing' | 'paused' | 'none') {
+    setPlaybackState(state: 'playing' | 'paused' | 'none'): void {
         if (!('mediaSession' in navigator)) return;
         navigator.mediaSession.playbackState = state;
     }
@@ -52,7 +52,7 @@ export class BrowserSMTC extends Component {
         });
     }
 
-    onunload() {
+    onunload(): void {
         if ('mediaSession' in navigator) {
             navigator.mediaSession.setActionHandler('play', null);
             navigator.mediaSession.setActionHandler('pause', null);

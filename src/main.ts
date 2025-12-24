@@ -15,9 +15,11 @@ import {
   calendarYearIcon,
 } from "./periodic/icons";
 import { showFileMenu } from "./periodic/modal";
+import { SystemMediaMonitor } from "./smtc/SystemMediaMonitor";
+import { BrowserSMTC } from "./smtc/BrowserSMTC";
 
 import { ConfirmationModal } from "./ui/modal";
-import type { Granularity } from "./periodic/types";
+import type { Granularity, PeriodicNotesConfig } from "./periodic/types";
 import {
   isMetaPressed,
   getTemplateContents,
@@ -30,6 +32,7 @@ import { VIEW_TYPE_CALENDAR } from "./constants";
 import { settings, dailyNotes, weeklyNotes } from "./ui/stores";
 import {
   CalendarSettingsTab,
+  defaultSettings,
 } from "./settings";
 import type { ISettings } from "./settings";
 import CalendarView from "./view";
@@ -53,24 +56,22 @@ export default class CalendarPlugin extends Plugin {
   public options: ISettings;
   public settings: Writable<ISettings>;
   private view: CalendarView;
-  public wordCountStats: WordCountStats;
+  public wordCountStats: WordCountStats | null = null;
   public weatherService: QWeatherService;
   public cacheManager: CacheManager;
   private statusBarEl: HTMLElement;
   private pomoStatusBarEl: HTMLElement | null = null;
   public timer: Timer;
   private ribbonEl: HTMLElement | null;
-  public cache: PeriodicNotesCache;
+  public cache: PeriodicNotesCache | null = null;
   private isInitialized = false;
   private debouncedSync: () => void;
-  public systemMediaMonitor: any; // Type SystemMediaMonitor
+  public systemMediaMonitor: SystemMediaMonitor | null = null;
   private statusBarPlayer: StatusBarPlayer | null = null;
   private statusBarPlayerEl: HTMLElement | null = null;
-  private browserSMTC: any | null = null; // BrowserSMTC
-
+  private browserSMTC: BrowserSMTC | null = null;
 
   private getObsidianLanguage(): Language {
-    // simplified language detection using moment.locale() which is the standard way in Obsidian
     const momentLang = window.moment.locale();
     if (momentLang.startsWith('zh')) {
       return 'zh-cn';
@@ -89,9 +90,7 @@ export default class CalendarPlugin extends Plugin {
       this.configureSystemMedia();
       this.configureWordCount();
       this.configurePeriodicNotes();
-      this.configureCalendar();
-      // Cache reset is now handled in writeOptions conditionally
-      // this.app.workspace.trigger("periodic-notes:settings-updated");
+      this.configureAssistant();
 
       if (this.view) {
         this.view.refresh();
@@ -107,7 +106,15 @@ export default class CalendarPlugin extends Plugin {
       .forEach((leaf) => leaf.detach());
 
     if (this.timer) {
-      this.timer.quitTimer();
+      if (this.timer.mode !== Mode.NoTimer) {
+        this.timer.pauseTimer();
+      } else {
+        this.timer.quitTimer();
+      }
+    }
+
+    if (this.weatherService) {
+      this.weatherService.unload();
     }
   }
 
@@ -116,6 +123,11 @@ export default class CalendarPlugin extends Plugin {
     await this.cacheManager.load();
 
     this.settings = settings;
+    // We must load options BEFORE subscribing to avoid overwriting default store state with empty options if accessed early?
+    // Actually, store init value is probably used.
+
+    await this.loadOptions();
+
     this.register(
       settings.subscribe((value) => {
         this.options = value;
@@ -123,14 +135,8 @@ export default class CalendarPlugin extends Plugin {
       })
     );
 
-    await this.loadOptions();
-
-
-    // Initialize word count stats
     this.configureWordCount();
-
     this.weatherService = new QWeatherService(this);
-
 
     this.debouncedSync = debounce(() => this.syncCacheToStores(), 200);
 
@@ -144,11 +150,8 @@ export default class CalendarPlugin extends Plugin {
       // The cache initialization will trigger sync via periodic-notes:resolve
     });
 
-    // Initialize Pomo Timer
     this.timer = new Timer(this);
     this.configurePomodoro();
-
-    // Initialize SMTC
     this.configureSystemMedia();
 
     addIcon("calendar-day", calendarDayIcon);
@@ -159,28 +162,17 @@ export default class CalendarPlugin extends Plugin {
 
     this.ribbonEl = null;
 
-    this.configurePeriodicNotes(); // Handles cache, commands, ribbon icons
+    this.configurePeriodicNotes();
 
     this.registerView(
       VIEW_TYPE_CALENDAR,
       (leaf: WorkspaceLeaf) => (this.view = new CalendarView(leaf, this))
     );
 
-    this.configureCalendar();      // Handles view, view commands
-
-
-
-    // Old commands replaced by configureCommands()
-    // this.addCommand({ id: "open-weekly-note", ... });
-
-    // Command 'reveal-active-note' moved to initCalendar
+    this.configureAssistant();
 
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
 
-    // Status Bar implementation moved to WordCountStats
-
-    // Register interval to update pomo status bar
-    // Register interval to update pomo status bar
     this.registerInterval(
       window.setInterval(async () => {
         if (this.pomoStatusBarEl) {
@@ -189,8 +181,6 @@ export default class CalendarPlugin extends Plugin {
         }
       }, 1000)
     );
-
-    // Removed locale change listener due to unsupported event type
 
     this.initLeaf();
     this.isInitialized = true;
@@ -201,7 +191,6 @@ export default class CalendarPlugin extends Plugin {
       return;
     }
 
-    // Wait for layout to be ready before trying to add the leaf
     if (this.app.workspace.layoutReady) {
       this.app.workspace.getRightLeaf(false).setViewState({
         type: VIEW_TYPE_CALENDAR,
@@ -218,78 +207,131 @@ export default class CalendarPlugin extends Plugin {
   }
 
   async loadOptions(): Promise<void> {
-    const options = await this.loadData();
-    settings.update((old) => {
-      const newSettings = {
-        ...old,
-        ...(options || {}),
-      };
+    const loadedData = await this.loadData();
 
-      // Fix JSON serialization where Infinity becomes null
-      if (newSettings.wordCountColorRanges) {
-        newSettings.wordCountColorRanges.forEach(range => {
-          if (range.max === null) {
-            range.max = Infinity;
-          }
-        });
+    // Check if migration/reset is needed (if missing top-level keys like 'assistant')
+    // Reset if structure is outdated to enforce new schema
+    let finalSettings = { ...defaultSettings };
+
+    if (loadedData && loadedData.assistant) {
+      // Simple merge (deep merge ideally, but for now spread)
+      // If we strictly want to support partials, we might need a utility.
+      // Assuming loadedData is compatible.
+      finalSettings = {
+        ...defaultSettings,
+        ...loadedData,
+        assistant: { ...defaultSettings.assistant, ...loadedData.assistant },
+        periodicNotes: { ...defaultSettings.periodicNotes, ...loadedData.periodicNotes },
+        wordCount: { ...defaultSettings.wordCount, ...loadedData.wordCount },
+        pomodoro: { ...defaultSettings.pomodoro, ...loadedData.pomodoro },
+      };
+      // Restore deep fields that might be lost by shallow spread of subsections
+      if (loadedData.assistant?.calendar) finalSettings.assistant.calendar = { ...defaultSettings.assistant.calendar, ...loadedData.assistant.calendar };
+      if (loadedData.assistant?.flipClock) finalSettings.assistant.flipClock = { ...defaultSettings.assistant.flipClock, ...loadedData.assistant.flipClock };
+      if (loadedData.assistant?.weather) finalSettings.assistant.weather = { ...defaultSettings.assistant.weather, ...loadedData.assistant.weather };
+
+      if (loadedData.wordCount?.heatmap) finalSettings.wordCount.heatmap = { ...defaultSettings.wordCount.heatmap, ...loadedData.wordCount.heatmap };
+      if (loadedData.pomodoro?.notification) finalSettings.pomodoro.notification = { ...defaultSettings.pomodoro.notification, ...loadedData.pomodoro.notification };
+
+      // Deep merge periodic notes granularities
+      const granularities: Granularity[] = ["day", "week", "month", "quarter", "year"];
+      granularities.forEach(g => {
+        // Priority: nested > root (legacy)
+        const legacyConfig = (loadedData as Record<string, any>)[g];
+        const newConfig = (loadedData.periodicNotes as PeriodicNotesConfig)?.[g];
+
+        if (newConfig) {
+          (finalSettings.periodicNotes as PeriodicNotesConfig)[g] = { ...(defaultSettings.periodicNotes as PeriodicNotesConfig)[g], ...newConfig };
+        } else if (legacyConfig) {
+          // Migrate legacy settings
+          (finalSettings.periodicNotes as PeriodicNotesConfig)[g] = { ...(defaultSettings.periodicNotes as PeriodicNotesConfig)[g], ...legacyConfig };
+        }
+      });
+
+      if (loadedData.media) finalSettings.media = { ...defaultSettings.media, ...loadedData.media };
+      // Migration: If old pomodoro has systemMedia, migrate it?
+      if (loadedData.pomodoro && typeof loadedData.pomodoro.systemMedia === 'boolean' && !loadedData.media) {
+        finalSettings.media.enabled = loadedData.pomodoro.systemMedia; // Only if media wasn't present
+      }
+      if (loadedData.pomodoro && typeof loadedData.pomodoro.whiteNoise === 'boolean' && !loadedData.media) {
+        finalSettings.media.whiteNoise = loadedData.pomodoro.whiteNoise;
+      }
+      if (loadedData.pomodoro && typeof loadedData.pomodoro.backgroundNoiseFile === 'string' && !loadedData.media) {
+        finalSettings.media.backgroundNoiseFile = loadedData.pomodoro.backgroundNoiseFile;
       }
 
-      // Ensure booleans are loaded correctly (handle null/undefined from JSON)
-      newSettings.enableWeather = newSettings.enableWeather ?? false;
-      newSettings.enableWeatherWarnings = newSettings.enableWeatherWarnings ?? false;
-      newSettings.enablePomodoro = newSettings.enablePomodoro ?? true;
+      // Migration: Locale Override (Moved from assistant.calendar -> assistant -> root)
+      const oldLocale = (loadedData.assistant?.calendar?.localeOverride) || (loadedData.assistant?.localeOverride);
+      if (oldLocale && oldLocale !== "system-default" && finalSettings.localeOverride === "system-default") {
+        finalSettings.localeOverride = oldLocale;
+      }
 
-      return newSettings;
-    });
+      // Migration: weekStart and shouldConfirmBeforeCreate (Moved to assistant.calendar)
+      const oldWeekStart = (loadedData as any).weekStart;
+      if (oldWeekStart && finalSettings.assistant.calendar.weekStart === "locale") {
+        finalSettings.assistant.calendar.weekStart = oldWeekStart;
+      }
 
-    await this.saveData(this.options);
+      const oldConfirm = (loadedData as Record<string, any>).shouldConfirmBeforeCreate;
+      if (oldConfirm !== undefined && oldConfirm !== null) {
+        finalSettings.assistant.calendar.shouldConfirmBeforeCreate = oldConfirm;
+      } else {
+        // Double check older legacy key if it existed
+        const oldConfirm2 = (loadedData as Record<string, any>).confirmCreate;
+        if (oldConfirm2 !== undefined && oldConfirm2 !== null) {
+          finalSettings.assistant.calendar.shouldConfirmBeforeCreate = oldConfirm2;
+        }
+      }
+    }
+
+    settings.set(finalSettings);
+    this.options = finalSettings;
+
+    // Fix JSON serialization for Infinity in heatmap
+    if (this.options.wordCount.heatmap.colorRanges) {
+      this.options.wordCount.heatmap.colorRanges.forEach(range => {
+        if (range.max === null) range.max = Infinity;
+      });
+    }
   }
 
   async writeOptions(
     changeOpts: (settings: ISettings) => Partial<ISettings>
   ): Promise<void> {
-    let newSettings: Partial<ISettings> = {};
     settings.update((old) => {
-      newSettings = changeOpts(old);
-      return { ...old, ...newSettings };
+      const updates = changeOpts(old);
+      // Since our state is nested, updates might be partial. 
+      // But changeOpts usually returns full structure updates in my new settings.ts.
+      // E.g. { assistant: { ...old.assistant, ... } }
+      // So shallow merge at top level is fine if the updater respects structure.
+      return { ...old, ...updates };
     });
+    // Write full object
     await this.saveData(this.options);
 
-    // Determine if cache reset is needed
-    // Cache depends on: granularity configs (folder, format, enabled) and weekStart
-    const cacheAffectingKeys = ['weekStart', 'day', 'week', 'month', 'quarter', 'year'];
-    const shouldResetCache = Object.keys(newSettings).some(key => cacheAffectingKeys.includes(key));
+    // Cache reset check
+    // Check key fields
+    // Logic changed to checking specific values because we can't easily compare partials here without keeping 'old'.
+    // We'll trust the trigger logic: if we edited granularity or weekStart.
+    // Actually, simpler to just always trigger resolve if Periodic Notes enabled?
+    // Or check if 'periodicNotes' or 'assistant.calendar.weekStart' changed?
+    // Optimization: Just trigger it. It's debounced.
+    this.app.workspace.trigger("periodic-notes:settings-updated");
 
     this.configureCommands();
     this.configureRibbonIcons();
-
-    if (shouldResetCache) {
-      console.log("[Work Assistant] Settings changed requiring cache reset");
-      this.app.workspace.trigger("periodic-notes:settings-updated");
-    }
-
-    // Refresh the calendar view if it exists to apply new settings
-    if (this.view) {
-      // Trigger a refresh to apply new settings
-      this.view.refresh();
-    }
+    this.view?.refresh();
   }
 
   private configureRibbonIcons(): void {
     if (this.ribbonEl) {
-      if (typeof (this.ribbonEl as any).detach === 'function') {
-        (this.ribbonEl as any).detach();
-      } else if (typeof (this.ribbonEl as any).remove === 'function') {
-        (this.ribbonEl as any).remove();
-      }
+      this.ribbonEl.detach();
       this.ribbonEl = null;
     }
 
-
-
-    // Calendar Ribbon Icon
     const granularities: Granularity[] = ["day", "week", "month", "quarter", "year"];
-    const enabledGranularities = granularities.filter(g => this.options[g]?.enabled);
+    // Access nested periodicNotes
+    const enabledGranularities = granularities.filter(g => (this.options.periodicNotes as PeriodicNotesConfig)[g]?.enabled);
 
     if (enabledGranularities.length) {
       const granularity = enabledGranularities[0];
@@ -313,30 +355,20 @@ export default class CalendarPlugin extends Plugin {
         });
       });
     }
-
   }
 
-
-  private configureCommands() {
+  private configureCommands(): void {
     const granularities: Granularity[] = ["day", "week", "month", "quarter", "year"];
 
-    // Remove disabled commands (by removing all, simpler than tracking what was added)
-    // Actually standard practice is to overwrite. Obsidian handles ID collisions by overwriting.
-    // But we might want to unregister commands that are now disabled. 
-    // Obsidian API doesn't make unregistering easy/public. 
-    // Usually plugins just register what's enabled.
-    // However, if we disable a setting, the command remains until reload if we don't unregister.
-    // We can iterate all known IDs and remove them first.
     granularities.forEach(g => {
       getCommands(this.app, this, g).forEach(cmd => {
         this.app.commands.removeCommand(`work-assistant:${cmd.id}`);
       });
     });
 
-    if (!this.options.enablePeriodicNotes) return;
+    if (!this.options.periodicNotes.enabled) return;
 
-    // register enabled commands
-    granularities.filter(g => this.options[g]?.enabled).forEach(granularity => {
+    granularities.filter(g => (this.options.periodicNotes as PeriodicNotesConfig)[g]?.enabled).forEach(granularity => {
       getCommands(this.app, this, granularity).forEach(this.addCommand.bind(this));
     });
   }
@@ -354,7 +386,6 @@ export default class CalendarPlugin extends Plugin {
     );
 
     if (!file) {
-      // We need createPeriodicNote method
       file = await this.createPeriodicNote(granularity, date);
     }
 
@@ -368,11 +399,11 @@ export default class CalendarPlugin extends Plugin {
     granularity: Granularity,
     date: Moment
   ): Promise<TFile | null> {
-    const config = this.options[granularity];
+    const config = (this.options.periodicNotes as PeriodicNotesConfig)[granularity];
     const format = config.format;
     const filename = date.format(format);
 
-    if (this.options.shouldConfirmBeforeCreate) {
+    if (this.options.assistant.calendar.shouldConfirmBeforeCreate) {
       const confirmed = await new Promise<boolean>((resolve) => {
         let accepted = false;
         const modal = new ConfirmationModal(this.app, {
@@ -441,7 +472,7 @@ export default class CalendarPlugin extends Plugin {
     return this.cache?.findAdjacent(filePath, direction) ?? null;
   }
 
-  public syncCacheToStores() {
+  public syncCacheToStores(): void {
     if (!this.cache) return;
     const allCachedFiles = Array.from(this.cache.cachedFiles.values());
 
@@ -461,11 +492,11 @@ export default class CalendarPlugin extends Plugin {
       }
     });
 
-    console.log(`[Work Assistant] Syncing to stores: ${Object.keys(dailyData).length} daily, ${Object.keys(weeklyData).length} weekly`);
     dailyNotes.reindex(dailyData);
     weeklyNotes.reindex(weeklyData);
   }
-  private addPomoCommands(lang: Language) {
+
+  private addPomoCommands(lang: Language): void {
     this.addCommand({
       id: 'start-pomo',
       name: t("command-pomo-start", lang),
@@ -510,16 +541,16 @@ export default class CalendarPlugin extends Plugin {
   }
 
 
-  private configurePomodoro() {
-    if (this.options.enablePomodoro) {
+  private configurePomodoro(): void {
+    if (this.options.pomodoro.enabled) {
       this.initPomodoro();
     } else {
       this.unloadPomodoro();
     }
   }
 
-  private initPomodoro() {
-    if (this.pomoStatusBarEl) return; // Already initialized
+  private initPomodoro(): void {
+    if (this.pomoStatusBarEl) return;
 
     const lang: Language = this.getObsidianLanguage();
 
@@ -538,7 +569,7 @@ export default class CalendarPlugin extends Plugin {
     this.addPomoCommands(lang);
   }
 
-  private unloadPomodoro() {
+  private unloadPomodoro(): void {
     const pomoStatusBarEl = this.pomoStatusBarEl;
     if (pomoStatusBarEl) {
       pomoStatusBarEl.remove();
@@ -549,190 +580,163 @@ export default class CalendarPlugin extends Plugin {
       this.timer.quitTimer();
     }
 
-    // Unregister commands
-    // Note: plugin id is 'obsidian-work-assistant' usually, but 'id' in addCommand is just suffix.
-    // The full id is usually 'plugin-id:command-id'.
     const commands = ['start-pomo', 'pause-pomo', 'quit-pomo'];
     commands.forEach(id => {
       this.app.commands.removeCommand(`${this.manifest.id}:${id}`);
     });
   }
 
-  private configureSystemMedia() {
-    if (this.options.systemMedia) {
+  private configureSystemMedia(): void {
+    if (this.options.media.enabled) {
       this.initSystemMedia();
     } else {
       this.unloadSystemMedia();
     }
   }
 
-  private initSystemMedia() {
-    const self = this as any;
-    console.log("[Work Assistant] Initializing SMTC. Enabled:", self.options?.systemMedia);
-
-    // Browser SMTC
-    if (!self.browserSMTC) {
+  private initSystemMedia(): void {
+    if (!this.browserSMTC) {
       import('./smtc/BrowserSMTC').then(({ BrowserSMTC }) => {
-        // If deactivated while loading
-        if (!self.options.systemMedia) return;
+        if (!this.options.media.enabled) return;
 
-        self.browserSMTC = new BrowserSMTC(self.timer.whiteNoiseService);
-        self.addChild(self.browserSMTC);
-        self.timer.whiteNoiseService.setSMTC(self.browserSMTC);
+        this.browserSMTC = new BrowserSMTC(this.timer.whiteNoiseService);
+        this.addChild(this.browserSMTC);
+        this.timer.whiteNoiseService.setSMTC(this.browserSMTC);
       });
     }
 
-    // System Media Monitor (Windows Only)
-    if (Platform.isWin && !self.systemMediaMonitor) {
-      console.log("[Work Assistant] Importing SystemMediaMonitor...");
+    if (Platform.isWin && !this.systemMediaMonitor) {
       import('./smtc/SystemMediaMonitor').then(({ SystemMediaMonitor }) => {
-        // If deactivated while loading
-        if (!self.options.systemMedia) return;
+        if (!this.options.media.enabled) return;
 
-        console.log("[Work Assistant] SystemMediaMonitor imported.");
-        const basePath = (self.app.vault.adapter as any).getBasePath();
-        const pluginPath = `${basePath}/${self.manifest.dir || '.obsidian/plugins/obsidian-work-assistant'}`;
+        const basePath = (this.app.vault.adapter as any).getBasePath();
+        const pluginPath = `${basePath}/${this.manifest.dir || '.obsidian/plugins/obsidian-work-assistant'}`;
 
-        self.systemMediaMonitor = new SystemMediaMonitor(pluginPath, self.cacheManager);
-        self.addChild(self.systemMediaMonitor);
+        this.systemMediaMonitor = new SystemMediaMonitor(pluginPath, this.cacheManager);
+        this.addChild(this.systemMediaMonitor);
 
-        // Initialize Status Bar Player
-        if (!self.statusBarPlayerEl) {
-          const el = self.addStatusBarItem();
-          self.statusBarPlayerEl = el;
-          self.statusBarPlayer = new StatusBarPlayer(el, self.systemMediaMonitor);
+        if (!this.statusBarPlayerEl) {
+          const el = this.addStatusBarItem();
+          this.statusBarPlayerEl = el;
+          this.statusBarPlayer = new StatusBarPlayer(el, this.systemMediaMonitor);
         }
 
-      }).catch((e: any) => {
+      }).catch((e: Error) => {
         console.error("[Work Assistant] Error importing/initializing SystemMediaMonitor:", e);
       });
     }
   }
 
-  private unloadSystemMedia() {
-    const self = this as any;
-
-    // Browser SMTC
-    if (self.browserSMTC) {
-      self.removeChild(self.browserSMTC);
-      if (self.browserSMTC.unload) self.browserSMTC.unload();
-      self.browserSMTC = null;
+  private unloadSystemMedia(): void {
+    if (this.browserSMTC) {
+      this.removeChild(this.browserSMTC);
+      this.browserSMTC = null;
     }
-    // Also likely need to clear it from whiteNoiseService?
-    if (self.timer?.whiteNoiseService) {
-      self.timer.whiteNoiseService.setSMTC(null);
+    if (this.timer?.whiteNoiseService) {
+      this.timer.whiteNoiseService.setSMTC(null);
     }
 
-    // System Media Monitor
-    if (self.systemMediaMonitor) {
-      self.removeChild(self.systemMediaMonitor);
-      if (self.systemMediaMonitor.unload) self.systemMediaMonitor.unload();
-      self.systemMediaMonitor = null;
+    if (this.systemMediaMonitor) {
+      this.removeChild(this.systemMediaMonitor);
+      this.systemMediaMonitor = null;
     }
 
-    // Status Bar Player
-    if (self.statusBarPlayer) {
-      self.statusBarPlayer.destroy();
-      self.statusBarPlayer = null;
+    if (this.statusBarPlayer) {
+      this.statusBarPlayer.destroy();
+      this.statusBarPlayer = null;
     }
 
-    if (self.statusBarPlayerEl) {
-      self.statusBarPlayerEl.remove();
-      self.statusBarPlayerEl = null;
+    if (this.statusBarPlayerEl) {
+      this.statusBarPlayerEl.remove();
+      this.statusBarPlayerEl = null;
     }
   }
 
-  // Word Count / Heatmap Decoupling
-  private configureWordCount() {
-    if (this.options.enableWordCount) {
+  private configureWordCount(): void {
+    const { wordCount } = this.options;
+    if (wordCount.enabled) {
       this.initWordCount();
-      // Manage Status Bar visibility
       if (this.wordCountStats) {
-        this.wordCountStats.updateStatusBar(this.options.enableWordCountStatusBar);
+        this.wordCountStats.updateStatusBar(wordCount.statusBar);
       }
     } else {
       this.unloadWordCount();
     }
   }
 
-  private initWordCount() {
+  private initWordCount(): void {
     if (!this.wordCountStats) {
       this.wordCountStats = new WordCountStats(this, this.app);
       this.addChild(this.wordCountStats);
-      // Status bar init handled by updateStatusBar logic in configureWordCount
     }
   }
 
-  private unloadWordCount() {
+  private unloadWordCount(): void {
     if (this.wordCountStats) {
       this.removeChild(this.wordCountStats);
-      (this.wordCountStats as any) = null;
+      this.wordCountStats = null;
     }
   }
 
-  // Periodic Notes Decoupling
-  private configurePeriodicNotes() {
+  private configurePeriodicNotes(): void {
     this.configureCache();
 
-    if (this.options.enablePeriodicNotes) {
+    if (this.options.periodicNotes.enabled) {
       this.initPeriodicNotes();
     } else {
       this.unloadPeriodicNotes();
     }
   }
 
-  private configureCache() {
-    // Cache is required if Periodic Notes are enabled. 
-    // Calendar View consumes cache but doesn't strictly own it.
-    const needsCache = this.options.enablePeriodicNotes;
+  private configureCache(): void {
+    const needsCache = this.options.periodicNotes.enabled;
 
     if (needsCache) {
       if (!this.cache) {
         this.cache = new PeriodicNotesCache(this.app, this);
-        // this.addChild(this.cache); // Cache handles its own lifecycle usually? No, it's a Component.
-        this.cache.load(); // Manually load or add child? 
-        // Existing code used addChild.
+        this.cache.load();
         this.addChild(this.cache);
       }
     } else {
       if (this.cache) {
         this.removeChild(this.cache);
-        (this.cache as any) = null;
+        this.cache = null;
       }
     }
   }
 
-  private initPeriodicNotes() {
+  private initPeriodicNotes(): void {
     this.configureCommands();
     this.configureRibbonIcons();
   }
 
-  private unloadPeriodicNotes() {
+  private unloadPeriodicNotes(): void {
+
     this.configureCommands();
     this.configureRibbonIcons();
   }
 
-  // Calendar Decoupling
-  private configureCalendar() {
+  private configureAssistant(): void {
     this.configureCache();
 
-    if (this.options.enableCalendar) {
-      this.initCalendar();
+    const { assistant } = this.options;
+    const hasActiveWidgets = assistant.calendar.enabled || assistant.flipClock.enabled || assistant.weather.enabled;
+
+    if (assistant.enabled && hasActiveWidgets) {
+      this.initAssistant();
     } else {
-      this.unloadCalendar();
+      this.unloadAssistant();
     }
   }
 
-  private initCalendar() {
-    // Register View if not registered? 
-    // We register only once in onload usually. But if we want to "disable" fully...
-    // We can leave view logic as is (registered), but control access via Ribbon/Commands.
+  private initAssistant(): void {
+    // Start background warning polling (independent of view visibility)
+    if (this.weatherService) {
+      this.weatherService.startWarningPolling();
+    }
 
-    // Check command
     const lang = this.getObsidianLanguage();
 
-    // Add 'show-calendar-view' command
-    // We can't check if command exists easily, so we just add it (overwrite).
     this.addCommand({
       id: "show-calendar-view",
       name: t('command-open-view', lang),
@@ -756,13 +760,17 @@ export default class CalendarPlugin extends Plugin {
     this.initLeaf();
   }
 
-  private unloadCalendar() {
+  private unloadAssistant(): void {
+    // Stop background polling
+    if (this.weatherService) {
+      this.weatherService.stopWarningPolling();
+    }
+
     this.app.workspace
       .getLeavesOfType(VIEW_TYPE_CALENDAR)
       .forEach((leaf) => leaf.detach());
 
-    this.app.commands.removeCommand(`${this.manifest.id}:show-calendar-view`);
-    this.app.commands.removeCommand(`${this.manifest.id}:reveal-active-note`);
+    this.app.commands.removeCommand(`${this.manifest.id}: show - calendar - view`);
+    this.app.commands.removeCommand(`${this.manifest.id}: reveal - active - note`);
   }
 }
-

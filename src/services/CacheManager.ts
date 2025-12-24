@@ -1,5 +1,5 @@
 import type { Plugin } from "obsidian";
-import { pluginCache, type PluginCache, type WeatherCache, type MediaCache } from "../ui/stores";
+import { pluginCache, type PluginCache, type WeatherCache, type MediaCache, type TimerState } from "../ui/stores";
 
 const CACHE_FILENAME = "cache.json";
 
@@ -11,7 +11,7 @@ export class CacheManager {
         this.plugin = plugin;
     }
 
-    async load() {
+    async load(): Promise<void> {
         try {
             const adapter = this.plugin.app.vault.adapter;
             const path = `${this.plugin.manifest.dir}/${CACHE_FILENAME}`;
@@ -24,7 +24,6 @@ export class CacheManager {
                 if (!this.cache.media) this.cache.media = {};
 
                 pluginCache.set(this.cache);
-                console.log("[Work Assistant] Cache loaded.");
             } else {
                 this.cache = { weather: {}, media: {} };
                 pluginCache.set(this.cache);
@@ -37,7 +36,7 @@ export class CacheManager {
         }
     }
 
-    async save() {
+    async save(): Promise<void> {
         try {
             const adapter = this.plugin.app.vault.adapter;
             const path = `${this.plugin.manifest.dir}/${CACHE_FILENAME}`;
@@ -53,7 +52,7 @@ export class CacheManager {
         return this.cache.weather;
     }
 
-    async updateWeather(data: WeatherCache) {
+    async updateWeather(data: WeatherCache): Promise<void> {
         this.cache.weather = data;
         pluginCache.update(c => ({ ...c, weather: data }));
         await this.save();
@@ -63,9 +62,19 @@ export class CacheManager {
         return this.cache.media;
     }
 
-    async updateMedia(data: MediaCache) {
+    async updateMedia(data: MediaCache): Promise<void> {
         this.cache.media = data;
         pluginCache.update(c => ({ ...c, media: data }));
+        await this.save();
+    }
+
+    getTimer(): TimerState | undefined {
+        return this.cache.timer;
+    }
+
+    async updateTimer(data: TimerState | undefined): Promise<void> {
+        this.cache.timer = data;
+        pluginCache.update(c => ({ ...c, timer: data }));
         await this.save();
     }
 }

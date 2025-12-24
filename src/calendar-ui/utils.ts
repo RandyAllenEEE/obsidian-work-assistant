@@ -10,8 +10,10 @@ export function isMetaPressed(e: MouseEvent | KeyboardEvent): boolean {
   return isMacOS() ? e.metaKey : e.ctrlKey;
 }
 
-export function getDaysOfWeek(..._args: unknown[]): string[] {
-  return window.moment.weekdaysShort(true);
+export function getDaysOfWeek(..._args: unknown[]): { full: string; short: string }[] {
+  const full = window.moment.weekdaysShort(true);
+  const short = window.moment.weekdaysMin(true);
+  return full.map((f, i) => ({ full: f, short: short[i] }));
 }
 
 export function isWeekend(date: Moment): boolean {

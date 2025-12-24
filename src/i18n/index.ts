@@ -119,18 +119,18 @@ export interface Translation {
 
   // Pomodoro
   "pomo-title": string;
-  "settings-pomo-duration": string;
-  "settings-pomo-duration-desc": string;
-  "settings-short-break": string;
-  "settings-short-break-desc": string;
-  "settings-long-break": string;
-  "settings-long-break-desc": string;
-  "settings-long-break-interval": string;
-  "settings-long-break-interval-desc": string;
-  "settings-continuous-mode": string;
-  "settings-continuous-mode-desc": string;
-  "settings-pomo-num-auto-cycles": string;
-  "settings-pomo-num-auto-cycles-desc": string;
+  "settings-pomo-work": string;
+  "settings-pomo-work-desc": string;
+  "settings-pomo-short-break": string;
+  "settings-pomo-short-break-desc": string;
+  "settings-pomo-long-break": string;
+  "settings-pomo-long-break-desc": string;
+  "settings-pomo-long-break-interval": string;
+  "settings-pomo-long-break-interval-desc": string;
+  "settings-pomo-continuous": string;
+  "settings-pomo-continuous-desc": string;
+  "settings-pomo-auto-cycles": string;
+  "settings-pomo-auto-cycles-desc": string;
   "settings-white-noise": string;
   "settings-white-noise-desc": string;
   "settings-pomo-background-noise": string;
@@ -141,7 +141,15 @@ export interface Translation {
   "settings-use-system-notification-desc": string;
 
   // Settings - Hierarchy Sections
+  "view-name-assistant": string;
+  "settings-assistant-panel-title": string;
+  "settings-widgets-title": string;
+  "settings-widget-order": string;
+  "settings-widget-order-desc": string;
+
   "settings-calendar-view-title": string;
+  "settings-show-flip-clock": string;
+  "settings-show-flip-clock-desc": string;
   "settings-periodic-notes-section": string;
   "settings-calendar-linkage-title": string;
   "settings-calendar-linkage-desc": string;

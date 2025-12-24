@@ -12,7 +12,8 @@ import { clamp, getWordCount } from "../utils";
 const NUM_MAX_DOTS = 5;
 
 export async function getWordLengthAsDots(note: TFile): Promise<number> {
-  const { wordsPerDot = DEFAULT_WORDS_PER_DOT } = get(settings);
+  const settingsVal = get(settings);
+  const wordsPerDot = settingsVal?.periodicNotes?.wordsPerDot ?? DEFAULT_WORDS_PER_DOT;
   if (!note || wordsPerDot <= 0) {
     return 0;
   }

@@ -4,13 +4,13 @@ import { Component, Platform, debounce } from 'obsidian';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { CacheManager } from "../services/CacheManager";
-import { pluginCache, type MediaCache } from "../ui/stores";
+import { type MediaCache } from "../ui/stores";
 
-interface MediaInfo extends MediaCache { }
+// interface MediaInfo extends MediaCache { }
 
 export class SystemMediaMonitor extends Component {
     private process: ChildProcessWithoutNullStreams | null = null;
-    public mediaStore: Writable<MediaInfo | null> = writable(null);
+    public mediaStore: Writable<MediaCache | null> = writable(null);
     private buffer = '';
     private bridgePath: string;
     private setupScriptPath: string;
@@ -35,7 +35,7 @@ export class SystemMediaMonitor extends Component {
         }
     }
 
-    onload() {
+    onload(): void {
         if (!Platform.isWin) return;
         this.startMonitoring();
     }
@@ -70,7 +70,7 @@ export class SystemMediaMonitor extends Component {
         });
     }
 
-    async startMonitoring() {
+    async startMonitoring(): Promise<void> {
         this.stopMonitoring();
 
         const ready = await this.ensureBridge();
@@ -128,7 +128,7 @@ export class SystemMediaMonitor extends Component {
                     // Usually if session ends, we verify that. Let's keep last played in UI if preferred,
                     // but 'null' implies nothing to control.
                 } else {
-                    const data = JSON.parse(jsonStr) as MediaInfo;
+                    const data = JSON.parse(jsonStr) as MediaCache;
 
                     // Optimization: Check if meaningful change before update?
                     // Store set triggers subscribers.
@@ -150,7 +150,7 @@ export class SystemMediaMonitor extends Component {
     }
 
     // Debounce save to avoid disk I/O on every second update (if any)
-    private debouncedSave = debounce((data: MediaInfo) => {
+    private debouncedSave = debounce((data: MediaCache) => {
         if (!data) return;
         // Sanitize: Pick only allowed fields to prevent cache bloat (garbage properties from JSON)
         // and ensure we overwrite cleanly.
@@ -166,14 +166,14 @@ export class SystemMediaMonitor extends Component {
         this.cacheManager.updateMedia(cleanData);
     }, 2000, true);
 
-    stopMonitoring() {
+    stopMonitoring(): void {
         if (this.process) {
             this.process.kill();
             this.process = null;
         }
     }
 
-    controlMedia(action: 'PlayPause' | 'Next' | 'Previous') {
+    controlMedia(action: 'PlayPause' | 'Next' | 'Previous'): void {
         if (!Platform.isWin) return;
 
         const cmd = action.toLowerCase();
@@ -198,7 +198,7 @@ export class SystemMediaMonitor extends Component {
         }
     }
 
-    onunload() {
+    onunload(): void {
         this.stopMonitoring();
     }
 }

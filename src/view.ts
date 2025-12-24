@@ -5,6 +5,7 @@ import type { TFile, WorkspaceLeaf } from "obsidian";
 
 import { TRIGGER_ON_OPEN, VIEW_TYPE_CALENDAR, DEFAULT_REFRESH_INTERVAL } from "src/constants";
 import type { ISettings } from "src/settings";
+import { t } from "./i18n";
 
 import Calendar from "./ui/Calendar.svelte";
 import { mount, unmount } from "svelte";
@@ -21,7 +22,8 @@ import {
 import WordCountStats from "./wordCountStats";
 import type CalendarPlugin from "./main";
 import { isMetaPressed } from "./periodic/utils";
-import type { Granularity } from "./periodic/types";
+import type { Granularity, PeriodicNotesConfig } from "./periodic/types";
+import type { ICalendarSource } from "obsidian-calendar-ui";
 
 export default class CalendarView extends ItemView {
   private calendar: Calendar;
@@ -79,13 +81,13 @@ export default class CalendarView extends ItemView {
     });
   }
 
-  private resetRefreshInterval() {
+  private resetRefreshInterval(): void {
     this.stopRefreshInterval();
     this.startRefreshInterval();
   }
 
-  private startRefreshInterval() {
-    const intervalTime = this.settings?.heatmapRefreshInterval || DEFAULT_REFRESH_INTERVAL;
+  private startRefreshInterval(): void {
+    const intervalTime = this.settings?.wordCount.heatmap.refreshInterval || DEFAULT_REFRESH_INTERVAL;
     if (this.refreshInterval) {
       window.clearInterval(this.refreshInterval);
     }
@@ -96,7 +98,7 @@ export default class CalendarView extends ItemView {
     }, intervalTime);
   }
 
-  private stopRefreshInterval() {
+  private stopRefreshInterval(): void {
     if (this.refreshInterval) {
       window.clearInterval(this.refreshInterval);
       this.refreshInterval = undefined;
@@ -107,8 +109,9 @@ export default class CalendarView extends ItemView {
     return VIEW_TYPE_CALENDAR;
   }
 
+
   getDisplayText(): string {
-    return "Calendar";
+    return t("view-name-assistant");
   }
 
   getIcon(): string {
@@ -128,8 +131,7 @@ export default class CalendarView extends ItemView {
     this.app.workspace.trigger(TRIGGER_ON_OPEN, sources);
 
     this.calendar = mount(Calendar, {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      target: (this as any).contentEl,
+      target: this.contentEl,
       props: {
         onClickDay: this.openOrCreateDailyNote,
         onClickWeek: this.openOrCreateWeeklyNote,
@@ -144,19 +146,18 @@ export default class CalendarView extends ItemView {
         localeData: window.moment().localeData(),
         displayedMonth: window.moment(),
         weatherService: this.plugin.weatherService,
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    }) as any;
+      }
+    }) as unknown as Calendar;
   }
 
-  private updateHeatmapStyles() {
-    if (!this.settings || !this.settings.wordCountColorRanges) return;
-    this.settings.wordCountColorRanges.forEach((range, index) => {
+  private updateHeatmapStyles(): void {
+    if (!this.settings || !this.settings.wordCount.heatmap.colorRanges) return;
+    this.settings.wordCount.heatmap.colorRanges.forEach((range, index) => {
       this.containerEl.style.setProperty(`--heatmap-opacity-${index}`, range.opacity.toString());
     });
   }
 
-  private createSources() {
+  private createSources(): ICalendarSource[] {
     const sources = [
       customTagsSource,
       streakSource,
@@ -164,7 +165,7 @@ export default class CalendarView extends ItemView {
       tasksSource,
     ];
 
-    if (this.settings?.enableHeatmap && this.wordCountStats) {
+    if (this.settings?.wordCount.heatmap.enabled && this.wordCountStats) {
       sources.push(createWordCountBackgroundSource(this.wordCountStats));
     }
 
@@ -183,7 +184,7 @@ export default class CalendarView extends ItemView {
     if (!isMetaPressed) {
       return;
     }
-    const { format } = this.plugin.options["day"];
+    const { format } = this.plugin.options.periodicNotes.day;
     const note = this.plugin.cache.getPeriodicNote("day", date);
     this.app.workspace.trigger(
       "link-hover",
@@ -203,7 +204,7 @@ export default class CalendarView extends ItemView {
       return;
     }
     const note = this.plugin.cache.getPeriodicNote("week", date);
-    const { format } = this.plugin.options["week"];
+    const { format } = this.plugin.options.periodicNotes.week;
     this.app.workspace.trigger(
       "link-hover",
       this,
@@ -213,13 +214,13 @@ export default class CalendarView extends ItemView {
     );
   }
 
-  private onClickMonth(e: MouseEvent | KeyboardEvent, date: Moment) {
+  private onClickMonth(e: MouseEvent | KeyboardEvent, date: Moment): void {
     if (date) {
       this.tryOpenPeriodicNote("month", date, isMetaPressed(e));
     }
   }
 
-  private onClickYear(e: MouseEvent | KeyboardEvent, date: Moment) {
+  private onClickYear(e: MouseEvent | KeyboardEvent, date: Moment): void {
     if (date) {
       this.tryOpenPeriodicNote("year", date, isMetaPressed(e));
     }
@@ -328,11 +329,11 @@ export default class CalendarView extends ItemView {
     inNewSplit: boolean
   ): Promise<void> {
     // Check Linkage setting first
-    if (!this.plugin.options.enablePeriodicNotesCalendarLinkage) {
+    if (!this.plugin.options.periodicNotes.calendarLinkage) {
       return;
     }
 
-    const { enabled } = this.plugin.options[granularity];
+    const { enabled } = (this.plugin.options.periodicNotes as unknown as PeriodicNotesConfig)[granularity];
     if (enabled) {
       await this.plugin.openPeriodicNote(granularity, date, { inNewSplit });
     }

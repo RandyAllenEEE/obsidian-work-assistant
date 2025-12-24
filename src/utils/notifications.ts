@@ -9,11 +9,16 @@ export function sendSystemNotification(title: string, body: string, silent = tru
 
     try {
         const Notification = (electron as any).remote.Notification;
+        interface IElectronNotification {
+            on(event: string, cb: () => void): void;
+            show(): void;
+            close(): void;
+        }
         const n = new Notification({
             title: title,
             body: body,
             silent: silent
-        });
+        }) as IElectronNotification;
         n.on("click", () => {
             n.close();
         });

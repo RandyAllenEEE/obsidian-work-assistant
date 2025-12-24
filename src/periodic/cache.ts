@@ -1,11 +1,10 @@
-import memoize from "lodash/memoize";
+// import memoize from "lodash/memoize";
 import sortBy from "lodash/sortBy";
 import type { Moment } from "moment";
 import {
   Component,
   parseFrontMatterEntry,
   TFile,
-  TFolder,
 } from "obsidian";
 import type {
   App,
@@ -17,7 +16,7 @@ import { DEFAULT_FORMAT } from "./constants";
 import type PeriodicNotesPlugin from "../main";
 import { getLooselyMatchedDate } from "./parser";
 import { getDateInput } from "./settings/validation";
-import { granularities, type Granularity } from "./types";
+import { granularities, type Granularity, type PeriodicNotesConfig } from "./types";
 import { applyPeriodicTemplateToFile, getPossibleFormats } from "./utils";
 
 export type MatchType = "filename" | "frontmatter" | "date-prefixed";
@@ -58,10 +57,13 @@ function getCanonicalDateString(_granularity: Granularity, date: Moment): string
 export class PeriodicNotesCache extends Component {
   // Map the full filename to metadata
   public cachedFiles: Map<string, PeriodicNoteCachedMetadata>;
+  private deferredTimer: number | null = null;
+  private unloaded = false;
 
   constructor(readonly app: App, readonly plugin: PeriodicNotesPlugin) {
     super();
     this.cachedFiles = new Map();
+    this.unloaded = false;
 
     this.app.workspace.onLayoutReady(() => {
       console.info("[Work Assistant] initializing cache");
@@ -77,6 +79,15 @@ export class PeriodicNotesCache extends Component {
     });
   }
 
+  public onunload(): void {
+    this.unloaded = true;
+    if (this.deferredTimer) {
+      window.clearTimeout(this.deferredTimer);
+      this.deferredTimer = null;
+    }
+    this.cachedFiles.clear();
+  }
+
   public reset(): void {
     console.info("[Work Assistant] reseting cache");
     this.cachedFiles.clear();
@@ -87,9 +98,12 @@ export class PeriodicNotesCache extends Component {
     if (lazy) {
       this.fastScan();
       // Defer full scan
-      window.setTimeout(() => {
+      if (this.deferredTimer) window.clearTimeout(this.deferredTimer);
+      this.deferredTimer = window.setTimeout(() => {
+        if (this.unloaded) return;
         console.info("[Work Assistant] Starting deferred full cache scan");
         this.fullScan();
+        this.deferredTimer = null;
       }, 2000);
     } else {
       this.fullScan();
@@ -115,20 +129,36 @@ export class PeriodicNotesCache extends Component {
     // Scan all markdown files, but filter by configured folders inside scanFiles logic
     const allFiles = this.app.vault.getMarkdownFiles();
     console.debug(`[Work Assistant] Full Scanning ${allFiles.length} files`);
-    this.scanFiles(allFiles);
+    // Use async scan for full scan to prevent UI freeze
+    this.scanFilesAsync(allFiles);
   }
 
   private scanFiles(files: TFile[]): void {
-    const activeGranularities = granularities.filter((g) => this.plugin.options[g]?.enabled);
+    // Legacy synchronous scan for small batches (like fastScan)
+    this.processFileBatch(files);
+  }
+
+  private async scanFilesAsync(files: TFile[]): Promise<void> {
+    const CHUNK_SIZE = 200;
+
+    // Process in chunks
+    for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+      const chunk = files.slice(i, i + CHUNK_SIZE);
+      this.processFileBatch(chunk);
+
+      // Yield to event loop
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+
+  private processFileBatch(files: TFile[]): void {
+    const activeGranularities = granularities.filter((g) => (this.plugin.options.periodicNotes as PeriodicNotesConfig)[g]?.enabled);
     if (!activeGranularities.length) return;
 
     // Optimization: Pre-calculate folder paths to avoid repeating logic inside the loop
     const configFolders: Record<string, string> = {};
     for (const granularity of activeGranularities) {
-      const config = this.plugin.options[granularity];
-      // Normalize folder path: ensure no leading slash if simple check, 
-      // but Obsidian paths usually don't have leading slash.
-      // config.folder might be "/" or "Journal"
+      const config = (this.plugin.options.periodicNotes as PeriodicNotesConfig)[granularity];
       let folder = config.folder || "";
       if (folder === "/") folder = "";
       if (folder.startsWith("/")) folder = folder.slice(1);
@@ -137,15 +167,9 @@ export class PeriodicNotesCache extends Component {
 
     for (const file of files) {
       // Skip if already cached with high confidence (frontmatter)
-      // logic is handled inside resolve, but we can quick check here to avoid overhead
       const existing = this.cachedFiles.get(file.path);
       if (existing && existing.matchData.matchType === "frontmatter") continue;
 
-      // Pass to resolve. resolve checks folders internally too, but doing it here might be faster?
-      // resolve() iterates granularities again.
-      // Let's trust resolve() to be reasonably fast if we just feed it files.
-      // But we should at least check if the file is in ONE of the active folders to avoid 
-      // passing standard Zettelkasten files to resolve() if periodic notes are in "Journal/"
       let isInWatchedFolder = false;
       for (const granularity of activeGranularities) {
         const folder = configFolders[granularity];
@@ -157,12 +181,6 @@ export class PeriodicNotesCache extends Component {
 
       if (isInWatchedFolder) {
         this.resolve(file, "initialize");
-        // Metadata check is expensive, maybe skip for fast scan? 
-        // Or only do if resolve didn't find filename match?
-        // Original code did: resolve(), then resolveChangedMetadata()
-
-        // For fast scan, maybe we skip deep metadata check unless needed?
-        // Let's keep original behavior for correctness:
         const metadata = this.app.metadataCache.getFileCache(file);
         if (metadata) {
           this.resolveChangedMetadata(file, "", metadata);
@@ -176,11 +194,11 @@ export class PeriodicNotesCache extends Component {
     _data: string,
     cache: CachedMetadata
   ): void {
-    const activeGranularities = granularities.filter((g) => this.plugin.options[g]?.enabled);
+    const activeGranularities = granularities.filter((g) => (this.plugin.options.periodicNotes as PeriodicNotesConfig)[g]?.enabled);
     if (activeGranularities.length === 0) return;
 
     for (const granularity of activeGranularities) {
-      const config = this.plugin.options[granularity];
+      const config = (this.plugin.options.periodicNotes as PeriodicNotesConfig)[granularity];
       const folder = config.folder || "";
       if (!file.path.startsWith(folder)) continue;
 
@@ -220,7 +238,7 @@ export class PeriodicNotesCache extends Component {
     file: TFile,
     reason: "create" | "rename" | "initialize" = "create"
   ): void {
-    const activeGranularities = granularities.filter((g) => this.plugin.options[g].enabled);
+    const activeGranularities = granularities.filter((g) => (this.plugin.options.periodicNotes as PeriodicNotesConfig)[g]?.enabled);
     if (activeGranularities.length === 0) return;
 
     // 'frontmatter' entries should supercede 'filename'
@@ -230,7 +248,7 @@ export class PeriodicNotesCache extends Component {
     }
 
     for (const granularity of activeGranularities) {
-      const config = this.plugin.options[granularity];
+      const config = (this.plugin.options.periodicNotes as PeriodicNotesConfig)[granularity];
       const folder = config.folder || "";
       if (!file.path.startsWith(folder)) continue;
 

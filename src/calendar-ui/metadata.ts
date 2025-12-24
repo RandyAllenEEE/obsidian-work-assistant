@@ -21,7 +21,7 @@ async function metadataReducer(
   );
 }
 
-export function getDailyMetadata(
+export async function getDailyMetadata(
   sources: ICalendarSource[],
   date: Moment,
   ..._args: unknown[]
@@ -29,11 +29,11 @@ export function getDailyMetadata(
   return metadataReducer(
     sources
       .filter((source) => !!source.getDailyMetadata)
-      .map((source) => source.getDailyMetadata!(date))
+      .map((source) => source.getDailyMetadata ? source.getDailyMetadata(date) : Promise.resolve({ dots: [], classes: [] }))
   );
 }
 
-export function getWeeklyMetadata(
+export async function getWeeklyMetadata(
   sources: ICalendarSource[],
   date: Moment,
   ..._args: unknown[]
@@ -41,6 +41,6 @@ export function getWeeklyMetadata(
   return metadataReducer(
     sources
       .filter((source) => !!source.getWeeklyMetadata)
-      .map((source) => source.getWeeklyMetadata!(date))
+      .map((source) => source.getWeeklyMetadata ? source.getWeeklyMetadata(date) : Promise.resolve({ dots: [], classes: [] }))
   );
 }

@@ -1,5 +1,5 @@
-import { Plugin, MarkdownView, debounce, TFile, Component, App } from 'obsidian';
-import type { Debouncer } from 'obsidian';
+import { Plugin, MarkdownView, debounce, TFile, Component } from 'obsidian';
+import type { Debouncer, App } from 'obsidian';
 import type { Moment } from "moment";
 import { t } from "./i18n";
 import { WORKER_CODE } from "./workers/worker";
@@ -34,25 +34,18 @@ export default class WordCountStats extends Component {
 	private worker: Worker | null = null;
 	private lastNonce = 0;
 	private nonces = new Map<string, number>();
-	private pendingHashes = new Map<number, string>();
+	private pendingHashes = new Map<number, string>(); // Deprecated: Hash computed in worker now
+	private dirty = false; // Check for unsaved changes
 
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
-	// Simple hash function for content comparison
-	private simpleHash(str: string): string {
-		let hash = 0;
-		for (let i = 0; i < str.length; i++) {
-			const char = str.charCodeAt(i);
-			hash = ((hash << 5) - hash) + char;
-			hash = hash & hash; // Convert to 32-bit integer
-		}
-		return hash.toString();
-	}
 
 	constructor(plugin: Plugin, app: App) {
 		super();
 		this.plugin = plugin;
 		this.app = app;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS);
+		this.today = window.moment().format("YYYY-MM-DD");
 	}
 
 	onload(): void {
@@ -75,8 +68,8 @@ export default class WordCountStats extends Component {
 			this.worker = new Worker(url);
 
 			this.worker.onmessage = (e: MessageEvent) => {
-				const { id, count } = e.data;
-				this.handleWorkerMessage(id, count);
+				const { id, count, hash } = e.data;
+				this.handleWorkerMessage(id, count, hash);
 			};
 
 			// Clean up the URL object
@@ -94,12 +87,17 @@ export default class WordCountStats extends Component {
 		}
 	}
 
-	private handleWorkerMessage(nonce: number, count: number): void {
+	private handleWorkerMessage(nonce: number, count: number, hash: string): void {
 		// Find which file this nonce belongs to
-		// This is O(N) but map size is small (number of active files being edited concurrently)
 		for (const [filepath, storedNonce] of this.nonces.entries()) {
 			if (storedNonce === nonce) {
-				// Found the matching request
+				// Update cache with the HASH from worker
+				this.wordCountCache.set(filepath, {
+					contentHash: hash,
+					wordCount: count,
+					timestamp: Date.now()
+				});
+
 				this.updateStore(filepath, count);
 				break;
 			}
@@ -152,34 +150,30 @@ export default class WordCountStats extends Component {
 	}
 
 	private updateStore(filepath: string, count: number): void {
-		// Handle cache update if coming from worker
-		// If we are here, we have a count.
+		// We rely on handleWorkerMessage to update the cache now.
 
-		// If coming from worker, we might have a pending hash
-		const nonce = this.nonces.get(filepath);
-		if (nonce && this.pendingHashes.has(nonce)) {
-			const hash = this.pendingHashes.get(nonce);
-			this.wordCountCache.set(filepath, {
-				contentHash: hash || "",
-				wordCount: count,
-				timestamp: Date.now()
-			});
-			this.pendingHashes.delete(nonce);
-		}
-
+		let changed = false;
 		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
-			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {//updating existing file
-				this.settings.todaysWordCount[filepath].current = count;
-			} else {//created new file during session
+			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
+				if (this.settings.todaysWordCount[filepath].current !== count) {
+					this.settings.todaysWordCount[filepath].current = count;
+					changed = true;
+				}
+			} else {
 				this.settings.todaysWordCount[filepath] = { initial: count, current: count };
+				changed = true;
 			}
-		} else {//new day, flush the cache
+		} else {
 			this.settings.todaysWordCount = {};
 			this.settings.todaysWordCount[filepath] = { initial: count, current: count };
-			// Clear cache on new day since old files are no longer relevant
 			this.wordCountCache.clear();
+			changed = true;
 		}
-		this.updateCounts();
+
+		if (changed) {
+			this.dirty = true;
+			this.updateCounts();
+		}
 	}
 
 	public updateStatusBar(enabled: boolean): void {
@@ -273,26 +267,56 @@ export default class WordCountStats extends Component {
 	}
 
 	updateWordCount(contents: string, filepath: string): void {
-		// Use cache to avoid recalculating word count for unchanged content
-		const contentHash = this.simpleHash(contents);
-		const cached = this.wordCountCache.get(filepath);
-
-		// Optimization: Check cache FIRST on main thread. 
-		if (cached && cached.contentHash === contentHash && cached.timestamp > Date.now() - 60000) { // Cache for 1 minute
-			// Use cached word count if content hasn't changed
-			this.updateStore(filepath, cached.wordCount);
-			return;
-		}
-
-		// Not cached or stale. Send to worker.
 		if (this.worker) {
 			const nonce = ++this.lastNonce;
 			this.nonces.set(filepath, nonce);
-			this.pendingHashes.set(nonce, contentHash);
 			this.worker.postMessage({ id: nonce, text: contents });
 		} else {
-			console.warn("[Work Assistant] Worker not initialized, skipping word count update.");
+			// Fallback to main thread
+			this.fallbackUpdateWordCount(contents, filepath);
 		}
+	}
+
+	private fallbackUpdateWordCount(text: string, filepath: string): void {
+		const hash = this.computeHash(text);
+		const count = this.countWords(text);
+
+		// Simulate worker message handling
+		this.wordCountCache.set(filepath, {
+			contentHash: hash,
+			wordCount: count,
+			timestamp: Date.now()
+		});
+
+		this.updateStore(filepath, count);
+	}
+
+	private computeHash(text: string): string {
+		let hash = 0;
+		for (let i = 0; i < text.length; i++) {
+			const char = text.charCodeAt(i);
+			hash = ((hash << 5) - hash) + char;
+			hash = hash & hash;
+		}
+		return hash.toString();
+	}
+
+	private countWords(text: string): number {
+		let words = 0;
+		const matches = text.match(
+			/[a-zA-Z0-9_\u0392-\u03c9\u00c0-\u00ff\u0600-\u06ff]+|[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\uac00-\ud7af]+/gm
+		);
+
+		if (matches) {
+			for (let i = 0; i < matches.length; i++) {
+				if (matches[i].charCodeAt(0) > 19968) {
+					words += matches[i].length;
+				} else {
+					words += 1;
+				}
+			}
+		}
+		return words;
 	}
 
 	updateDate(): void {
@@ -320,6 +344,7 @@ export default class WordCountStats extends Component {
 		}
 
 		this.settings.pomoCounts[date]++;
+		this.dirty = true;
 		this.saveSettings();
 	}
 
@@ -343,10 +368,17 @@ export default class WordCountStats extends Component {
 			const data = await this.plugin.app.vault.adapter.read(dataPath);
 			if (data) {
 				const parsedData = JSON.parse(data);
-				this.settings = Object.assign({}, DEFAULT_SETTINGS, parsedData);
-				if (!this.settings.pomoCounts) {
-					this.settings.pomoCounts = {};
+				const mergedSettings = Object.assign({}, DEFAULT_SETTINGS, parsedData);
+
+				// Preserve early pomo counts if any happened before load finished
+				if (this.settings && this.settings.pomoCounts) {
+					if (!mergedSettings.pomoCounts) mergedSettings.pomoCounts = {};
+					for (const [date, count] of Object.entries(this.settings.pomoCounts)) {
+						mergedSettings.pomoCounts[date] = (mergedSettings.pomoCounts[date] || 0) + count;
+					}
 				}
+
+				this.settings = mergedSettings;
 			} else {
 				this.settings = Object.assign({}, DEFAULT_SETTINGS);
 			}
@@ -357,6 +389,8 @@ export default class WordCountStats extends Component {
 	}
 
 	async saveSettings(): Promise<void> {
+		if (!this.dirty) return; // Optimization: Skip if no changes
+
 		if (Object.keys(this.settings.dayCounts).length > 0 || Object.keys(this.settings.pomoCounts).length > 0) {
 			const dataPath = this.getDataPath();
 			try {
@@ -374,6 +408,7 @@ export default class WordCountStats extends Component {
 				}
 
 				await this.plugin.app.vault.adapter.write(dataPath, JSON.stringify(this.settings));
+				this.dirty = false;
 
 				if (await this.plugin.app.vault.adapter.exists(backupPath)) {
 					await this.plugin.app.vault.adapter.remove(backupPath);

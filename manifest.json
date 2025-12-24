@@ -2,10 +2,9 @@
   "id": "work-assistant",
   "name": "Work Assistant",
   "description": "A comprehensive productivity companion combining Calendar, Periodic Notes, and Word Count Heatmap features.",
-  "version": "3.1.0",
-  "author": "Liam Cain & Dhruvik Parikh & Randy",
-  "authorUrl": "https://github.com/liamcain/",
-  "fundingUrl": "https://www.buymeacoffee.com/liamcain",
+  "version": "3.2.0",
+  "author": "Randy RandyAllen",
+  "authorUrl": "https://github.com/RandyAllenEEE",
   "isDesktopOnly": false,
   "minAppVersion": "0.9.11"
 }

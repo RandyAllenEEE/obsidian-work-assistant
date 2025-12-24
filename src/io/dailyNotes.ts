@@ -27,11 +27,11 @@ export async function tryToCreateDailyNote(
       ? workspace.splitActiveLeaf()
       : workspace.getUnpinnedLeaf();
 
-    await leaf.openFile(dailyNote, { active : true });
+    await leaf.openFile(dailyNote, { active: true });
     cb?.(dailyNote);
   };
 
-  if (settings.shouldConfirmBeforeCreate) {
+  if (settings.assistant.calendar.shouldConfirmBeforeCreate) {
     createConfirmationDialog({
       cta: "Create",
       onAccept: createFile,

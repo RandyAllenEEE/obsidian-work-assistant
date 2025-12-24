@@ -1,4 +1,5 @@
-import { App, Modal } from "obsidian";
+import { Modal } from "obsidian";
+import type { App } from "obsidian";
 import { t } from "../i18n";
 import type { Language } from "../i18n";
 

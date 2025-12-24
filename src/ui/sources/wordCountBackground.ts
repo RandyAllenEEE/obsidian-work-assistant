@@ -26,8 +26,8 @@ export class WordCountBackgroundSource {
 
     // Subscribe to settings changes to update color mapping dynamically
     settings.subscribe((settings) => {
-      if (settings && settings.wordCountColorRanges) {
-        this.colorMapping = settings.wordCountColorRanges;
+      if (settings && settings.wordCount.heatmap.colorRanges) {
+        this.colorMapping = settings.wordCount.heatmap.colorRanges;
       }
     });
   }

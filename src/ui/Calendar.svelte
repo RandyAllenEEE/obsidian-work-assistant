@@ -12,6 +12,7 @@
   import { dailyNotes, settings, weeklyNotes } from "./stores";
   import WeatherBanner from "../weather/WeatherBanner.svelte";
   import WeatherWarningBanner from "../weather/WeatherWarningBanner.svelte";
+  import FlipClock from "./FlipClock.svelte";
   import type { QWeatherService } from "../weather/QWeatherService";
 
   export let today: Moment = window.moment();
@@ -67,8 +68,14 @@
   }
 
   function getToday(settings: ISettings) {
-    // Removed localeOverride since it's no longer in ISettings
-    configureGlobalMomentLocale(null, settings.weekStart);
+    const localeOverride =
+      settings.localeOverride === "system-default"
+        ? null
+        : settings.localeOverride;
+    configureGlobalMomentLocale(
+      localeOverride,
+      settings.assistant.calendar.weekStart,
+    );
     dailyNotes.reindex();
     weeklyNotes.reindex();
     return window.moment();
@@ -91,23 +98,54 @@
   });
 </script>
 
-<CalendarBase
-  {sources}
-  {today}
-  {onHoverDay}
-  {onHoverWeek}
-  {onContextMenuDay}
-  {onContextMenuWeek}
-  {onClickDay}
-  {onClickWeek}
-  bind:displayedMonth
-  localeData={localeData || today.localeData()}
-  {showWeekNums}
-  {onClickMonth}
-  {onClickYear}
-/>
+{#each $settings.assistant.widgetOrder || ["flipClock", "calendar", "weather"] as widget (widget)}
+  <div class="widget-container">
+    {#if widget === "calendar"}
+      {#if $settings.assistant.calendar.enabled}
+        <CalendarBase
+          {sources}
+          {today}
+          {onHoverDay}
+          {onHoverWeek}
+          {onContextMenuDay}
+          {onContextMenuWeek}
+          {onClickDay}
+          {onClickWeek}
+          bind:displayedMonth
+          localeData={localeData || today.localeData()}
+          {showWeekNums}
+          {onClickMonth}
+          {onClickYear}
+        />
+      {/if}
+    {:else if widget === "flipClock"}
+      {#if $settings.assistant.flipClock.enabled}
+        <FlipClock />
+      {/if}
+    {:else if widget === "weather"}
+      {#if $settings.assistant.weather.enabled}
+        <div class="weather-container">
+          <WeatherWarningBanner {weatherService} />
+          <WeatherBanner {weatherService} />
+        </div>
+      {/if}
+    {/if}
+  </div>
+{/each}
 
-{#if $settings.enableWeather}
-  <WeatherWarningBanner {weatherService} />
-  <WeatherBanner {weatherService} />
-{/if}
+<style>
+  .widget-container {
+    margin-bottom: 16px; /* Consistent spacing */
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+  }
+  .widget-container:last-child {
+    margin-bottom: 0;
+  }
+  .weather-container {
+    width: 100%;
+  }
+</style>

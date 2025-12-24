@@ -23,6 +23,13 @@ export interface PeriodicConfig {
   templatePath?: string;
 }
 
+export type PeriodicNotesConfig = Record<Granularity, PeriodicConfig> & {
+  enabled: boolean;
+  calendarLinkage: boolean;
+  wordsPerDot: number;
+  timelineComplication: boolean;
+};
+
 
 
 

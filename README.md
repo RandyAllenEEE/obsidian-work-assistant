@@ -1,71 +1,78 @@
-# Work Assistant Plugin
+# Work Assistant (工作助手) Plugin
 
-A comprehensive productivity hub for [Obsidian](https://obsidian.md/), unifying **Calendar**, **Periodic Notes**, **Word Count Heatmap**, **Pomodoro**, and **System Media Control** into a single, high-performance ecosystem.
+这是为 [Obsidian](https://obsidian.md/) 打造的一站式生产力中心，将 **日历 (Calendar)**、**周期笔记 (Periodic Notes)**、**字数热力图 (Word Count Heatmap)**、**番茄钟 (Pomodoro)** 和 **系统媒体控制 (System Media Control)** 完美融合，构建了一个高性能、模块化的效率生态系统。
 
 ![screenshot-hero](https://raw.githubusercontent.com/liamcain/obsidian-calendar-plugin/master/images/screenshot-full.png)
-*(Note: Screenshot represents the foundational Calendar view; actual interface includes enhanced periodic note integrations)*
+*(注：由于功能丰富，实际界面包含增强的周期笔记集成和热力图显示)*
 
-## 🚀 Release 3.0.0: The Architectural Evolution
+## 🚀 3.2.0 版本更新：性能与稳定性的飞跃
 
-Version 3.0.0 represents a complete paradigm shift, moving from a collection of features to a **strictly hierarchical, modular system**. Every feature is now isolated, ensuring zero performance overhead when disabled.
+本次更新专注于核心体验的打磨，为您带来更流畅、更可靠的工作流：
 
-### 🌟 Key Features
-
-#### 📅 1. Modular Calendar View (The Hub)
-The central navigation pillar.
--   **Strict Master Control**: Toggling "Calendar View" completely registers/unregisters the underlying view components.
--   **Active Dependency Management**: Disabling the calendar automatically locks and disables dependent features (Heatmap, Linkage) to prevent configuration errors.
-
-#### 🔁 2. Periodic Notes System
--   **Granular Control**: Manage Day, Week, Month, Quarter, and Year notes with independent templates and folders.
--   **Calendar Linkage**: Smart integration allowing you to create/open notes by clicking dates.
-    -   *Logic*: Interaction handlers are physically removed if this feature is disabled.
--   **Smart Caching**: The file cache is exclusively loaded when Periodic Notes are active, ensuring zero overhead for non-users.
-
-#### 📊 3. Word Count & Heatmap
--   **Split Architecture**:
-    -   **Status Bar**: Lightweight "Words Today" tracking.
-    -   **Heatmap**: Visualizes productivity on the calendar.
--   **Performance**: Heatmap rendering logic is dormant if the Calendar or Heatmap toggle is off, effectively eliminating efficient calculation waste.
-
-#### 🍅 4. Pomodoro Timer
--   **Integrated Workflow**: Seamless timer in your status bar (`🍅 25:00`).
--   **Auto-Logging**: Automatically records completed sessions to your daily notes.
-
-#### 🎵 5. Native Media Control (Windows)
--   **SMTC Bridge**: A high-performance, native C# bridge that integrates Windows System Media Transport Controls directly into Obsidian.
--   **Zero-Config**: No manual installation required. The plugin handles the native bridge setup.
--   **Performance**: Improved polling and thumbnail caching compared to legacy PowerShell implementations.
+*   **🍅 智能番茄钟**：新增**退出自动暂停**功能。关闭 Obsidian 时，正在进行的番茄钟会自动暂停并保存状态，下次打开时无缝继续，不再白白流失时间。
+*   **⚡ 极致性能**：字数统计核心重构，迁移至后台 **Worker 线程** 并引入 I/O 防抖，彻底消除打字卡顿，硬盘写入量减少 99%。
+*   **🛡️ 系统稳健性**：重写了天气服务和缓存系统的生命周期管理，杜绝内存泄露和僵尸定时器，资源占用更低。
 
 ---
 
-## 🛠️ Configuration & Hierarchy
+## 🌟 核心功能
 
-The settings panel has been rebuilt to reflect the strict architectural hierarchy:
+### 📅 1. 模块化日历视图 (核心枢纽)
+您的时间管理指挥塔。
+-   **主控开关**：不仅是显示日历，更是整个插件的开关。关闭日历会自动卸载相关联的子功能，确保零资源占用。
+-   **智能联动**：禁用日历时，热力图等依赖功能会自动锁定，防止配置冲突。
 
-1.  **Calendar View** (Master Switch)
-    *   Controls the sidebar view.
-    *   *If OFF*: Heatmap and Calendar Linkage are strictly disabled.
+### 🔁 2. 周期笔记系统 (Periodic Notes)
+-   **全维度管理**：支持 **日、周、月、季、年** 维度的笔记管理。
+-   **日历交互**：点击日历日期直接创建或跳转对应笔记。
+-   **按需加载**：文件缓存系统仅在启用此功能时激活，不使用则不消耗任何内存。
 
-2.  **Periodic Notes** (Master Switch)
-    *   **Calendar Linkage**: Sub-feature for calendar interaction.
-        *   *Words Per Dot*: Visualization setting.
-        *   *Confirm Creation*: Safety check before creating new notes.
-    *   **Granularity Config**: Set up your daily/weekly note paths.
+### 📊 3. 字数统计与热力图 (Word Count & Heatmap)
+-   **双重架构**：
+    -   **状态栏**：实时显示“今日字数”，轻量无感。
+    -   **日历热力图**：直观展示您的创作习惯，颜色越深，产出越多。
+-   **后台计算**：计算逻辑完全在独立线程运行，从不阻塞主界面。
 
-3.  **Word Count** (Master Switch)
-    *   **Status Bar**: Toggles the widget.
-    *   **Heatmap**: Toggles the calendar background visualization.
-        *   *Color Ranges*: Customize intensity steps.
+### 🍅 4. 番茄钟 (Pomodoro Timer)
+-   **沉浸式体验**：状态栏常驻显示 (`🍅 25:00`)，不占用屏幕空间。
+-   **自动记录**：完成番茄钟后，自动在当天的日记中记录成果。
+-   **状态持久化**：无论是重启软件还是电脑休眠，您的专注进度都会被安全保存。
+
+### 🎵 5. 原生媒体控制 (Windows 专用)
+-   **SMTC 桥接**：内置高性能 C# 桥接器，将 Windows 系统媒体控制直接集成到 Obsidian。
+-   **零配置**：无需手动安装任何依赖，插件自动处理所有环境配置。
+-   **极速响应**：优化的缩略图缓存与轮询机制，比传统方案快数倍。
 
 ---
 
-## 🤝 Credits & Acknowledgements
+## 🛠️ 配置与架构
 
-Built upon the incredible work of the Obsidian community:
--   **Liam Cain**: Creator of the original Calendar and Periodic Notes plugins.
--   **Dhruvik Parikh**: Inspiration for Daily Stats word counting logic.
+设置面板经过重构，以反映严格的层级关系：
 
-## 📜 License
+1.  **日历视图 (Calendar View) - 总开关**
+    *   控制侧边栏视图。
+    *   *关闭后*：热力图和日历联动功能将被禁用。
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+2.  **周期笔记 (Periodic Notes)**
+    *   **日历联动**：允许通过点击日历操作笔记。
+    *   **粒度配置**：自定义各级笔记（日/周/月等）的路径和模板。
+
+3.  **字数统计 (Word Count)**
+    *   **状态栏组件**：开关底部状态显示。
+    *   **热力图**：开关日历背景渲染。
+        *   *颜色阈值*：自定义您的努力程度颜色。
+
+---
+
+## 🤝 致敬与鸣谢
+
+本项目站在巨人的肩膀上，特别致敬 Obsidian 社区的先驱者：
+
+*   **Liam Cain**：原版 Calendar 和 Periodic Notes 插件的创作者。本插件的日历核心逻辑深深受益于他的开创性工作。
+*   **Dhruvik Parikh**：Daily Stats 插件的作者，为日益精进的字数统计逻辑提供了灵感。
+
+正是他们的开源精神，让这个工具成为可能。
+
+## 📜 许可证
+
+本项目采用 MIT 许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。

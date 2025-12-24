@@ -1,8 +1,7 @@
 import { requestUrl } from "obsidian";
-import type { ISettings } from "../settings";
 import type CalendarPlugin from "../main";
 import { sendSystemNotification } from "../utils/notifications";
-import { pluginCache, type WeatherCache } from "../ui/stores";
+import { type WeatherCache } from "../ui/stores";
 
 export interface WeatherWarning {
     id: string;
@@ -58,8 +57,8 @@ export class QWeatherService {
         this.plugin = plugin;
     }
 
-    private getApiUrls() {
-        const { qweatherApiHost } = this.plugin.options;
+    private getApiUrls(): { geo: string; weather: string; weather24h: string; weather3d: string; warning: string } {
+        const { host: qweatherApiHost } = this.plugin.options.assistant.weather;
 
         let host = (qweatherApiHost || "").trim().replace(/\/$/, "");
         if (host && !host.startsWith("http")) host = "https://" + host;
@@ -79,22 +78,58 @@ export class QWeatherService {
 
     private resolvePromise: Promise<WeatherData | null> | null = null;
 
+    // Polling handles
+    private warningIntervalId: number | null = null;
+
     async getWeather(forceRefresh = false): Promise<WeatherData | null> {
-        if (this.resolvePromise) {
-            return this.resolvePromise;
-        }
-
-        this.resolvePromise = this._getWeatherInternal(forceRefresh)
-            .finally(() => {
-                this.resolvePromise = null;
-            });
-
-        return this.resolvePromise;
+        return this.fetchData(forceRefresh, 'all');
     }
 
-    private async _getWeatherInternal(forceRefresh: boolean): Promise<WeatherData | null> {
-        const { enableWeather, enableWeatherWarnings, qweatherToken, weatherCity, weatherRefreshInterval, dailyWeatherRefreshInterval, qweatherApiHost } = this.plugin.options;
+    async getWarnings(forceRefresh = false): Promise<WeatherData | null> {
+        return this.fetchData(forceRefresh, 'warnings-only');
+    }
 
+    startWarningPolling(): void {
+        // Strict check: only start if BOTH weather and warnings are enabled
+        const { enabled, warnings } = this.plugin.options.assistant.weather;
+        if (!enabled || !warnings) {
+            this.stopWarningPolling();
+            return;
+        }
+
+        if (this.warningIntervalId) {
+            window.clearInterval(this.warningIntervalId);
+            this.warningIntervalId = null;
+        }
+
+        // Default check every 15 minutes for background warnings
+        const interval = 15 * 60 * 1000;
+
+        console.log("[Work Assistant] Starting background weather warning polling.");
+        this.warningIntervalId = window.setInterval(() => {
+            this.getWarnings(false);
+        }, interval);
+
+        // Initial fetch
+        this.getWarnings(false);
+    }
+
+    unload(): void {
+        this.stopWarningPolling();
+    }
+
+    stopWarningPolling(): void {
+        if (this.warningIntervalId) {
+            window.clearInterval(this.warningIntervalId);
+            this.warningIntervalId = null;
+        }
+    }
+
+    private async fetchData(forceRefresh: boolean, type: 'all' | 'warnings-only'): Promise<WeatherData | null> {
+        const { enabled: enableWeather, warnings: enableWeatherWarnings, token: qweatherToken, city: weatherCity, refreshInterval: weatherRefreshInterval, dailyRefreshInterval: dailyWeatherRefreshInterval, host: qweatherApiHost } = this.plugin.options.assistant.weather;
+
+        // If getting warnings only, allow even if weather disabled? 
+        // No, master weather switch usually controls tokens etc.
         if (!enableWeather || !qweatherToken || !weatherCity || !qweatherApiHost) {
             return null;
         }
@@ -147,7 +182,9 @@ export class QWeatherService {
                     return null;
                 }
             } catch (e) {
-                console.error("[Work Assistant] GeoAPI Network Error:", e);
+                if (navigator.onLine) {
+                    console.error("[Work Assistant] GeoAPI Network Error:", e);
+                }
                 return null;
             }
         }
@@ -160,15 +197,32 @@ export class QWeatherService {
         // Settings: Now/Hourly interval (mins), Daily interval (hours)
         const nowIntervalMs = (weatherRefreshInterval || 60) * 60 * 1000;
         const dailyIntervalMs = (dailyWeatherRefreshInterval || 4) * 60 * 60 * 1000;
+        const warningIntervalMs = 15 * 60 * 1000;
 
         const timeSinceLastNow = now - (cache.lastWeatherFetch || 0);
         const timeSinceLastDaily = now - (cache.lastDailyFetch || 0);
+        const timeSinceLastWarning = now - (cache.lastWarningFetch || 0);
 
-        const shouldFetchNow = forceRefresh || timeSinceLastNow > nowIntervalMs;
-        const shouldFetchDaily = forceRefresh || timeSinceLastDaily > dailyIntervalMs;
+        let shouldFetchNow = false;
+        let shouldFetchDaily = false;
+        let shouldFetchWarning = false;
+
+        if (type === 'all') {
+            shouldFetchNow = forceRefresh || timeSinceLastNow > nowIntervalMs;
+            shouldFetchDaily = forceRefresh || timeSinceLastDaily > dailyIntervalMs;
+        }
+
+        // Warnings logic: Check regardless of type, but respect enableWeatherWarnings
+        // If type is warnings-only, we ONLY check warnings.
+        // If type is all, we check warnings if enabled.
+        if (enableWeatherWarnings) {
+            if (type === 'warnings-only' || type === 'all') {
+                shouldFetchWarning = forceRefresh || timeSinceLastWarning > warningIntervalMs;
+            }
+        }
 
         // If nothing needs update, return cache
-        if (!shouldFetchNow && !shouldFetchDaily) {
+        if (!shouldFetchNow && !shouldFetchDaily && !shouldFetchWarning) {
             return {
                 ...cache.weatherData,
                 warning: cache.warningData,
@@ -178,27 +232,27 @@ export class QWeatherService {
         }
 
         // Prepare fetches
-        const promises: Promise<any>[] = [];
+        interface RequestResult { json: any; status: number }
+        const promises: Promise<RequestResult | { error: any }>[] = [];
         // Map indices to result types
         let fetchNowIndex = -1, fetchWarningIndex = -1, fetchHourlyIndex = -1, fetchDailyIndex = -1;
         let pIndex = 0;
 
         if (shouldFetchNow) {
-            console.log("[Work Assistant] Fetching Current & Hourly Weather...");
             promises.push(requestUrl({ url: `${API.weather}?location=${locationId}&key=${trimmedToken}&lang=en` }));
             fetchNowIndex = pIndex++;
 
             promises.push(requestUrl({ url: `${API.weather24h}?location=${locationId}&key=${trimmedToken}&lang=en` }));
             fetchHourlyIndex = pIndex++;
+        }
 
-            if (enableWeatherWarnings) {
-                promises.push(requestUrl({ url: `${API.warning}?location=${locationId}&key=${trimmedToken}&lang=en` }));
-                fetchWarningIndex = pIndex++;
-            }
+        if (shouldFetchWarning) {
+            // Fetch warnings decoupled from Now
+            promises.push(requestUrl({ url: `${API.warning}?location=${locationId}&key=${trimmedToken}&lang=en` }));
+            fetchWarningIndex = pIndex++;
         }
 
         if (shouldFetchDaily) {
-            console.log("[Work Assistant] Fetching Daily Forecast...");
             promises.push(requestUrl({ url: `${API.weather3d}?location=${locationId}&key=${trimmedToken}&lang=en` }));
             fetchDailyIndex = pIndex++;
         }
@@ -206,13 +260,13 @@ export class QWeatherService {
         try {
             const results = await Promise.all(promises.map(p => p.catch(e => ({ error: e }))));
 
-            let newTask: Partial<WeatherCache> = {};
+            const newTask: Partial<WeatherCache> = {};
             let hasUpdates = false;
 
             // Process Now
             if (fetchNowIndex !== -1) {
                 const res = results[fetchNowIndex];
-                if (res && res.json && res.json.code === "200") {
+                if (res && 'json' in res && res.json && res.json.code === "200") {
                     newTask.weatherData = res.json.now;
                     newTask.lastWeatherFetch = now;
                     hasUpdates = true;
@@ -222,7 +276,7 @@ export class QWeatherService {
             // Process Hourly
             if (fetchHourlyIndex !== -1) {
                 const res = results[fetchHourlyIndex];
-                if (res && res.json && res.json.code === "200") {
+                if (res && 'json' in res && res.json && res.json.code === "200") {
                     newTask.hourlyData = res.json.hourly; // list of 24 objects
                     newTask.lastHourlyFetch = now;
                     hasUpdates = true;
@@ -232,7 +286,7 @@ export class QWeatherService {
             // Process Warning
             if (fetchWarningIndex !== -1) {
                 const res = results[fetchWarningIndex];
-                if (res && res.json && res.json.code === "200") {
+                if (res && 'json' in res && res.json && res.json.code === "200") {
                     const warnings = res.json.warning || [];
                     newTask.warningData = warnings;
                     newTask.lastWarningFetch = now;
@@ -251,17 +305,13 @@ export class QWeatherService {
                     const activeWarningIds = new Set(warnings.map((w: WeatherWarning) => w.id));
                     newTask.dismissedWarningIds = currentDismissed.filter(id => activeWarningIds.has(id));
                     hasUpdates = true;
-                } else if (res && res.json && res.json.code === "200" && !res.json.warning) {
-                    newTask.warningData = [];
-                    newTask.lastWarningFetch = now;
-                    hasUpdates = true;
                 }
             }
 
             // Process Daily
             if (fetchDailyIndex !== -1) {
                 const res = results[fetchDailyIndex];
-                if (res && res.json && res.json.code === "200") {
+                if (res && 'json' in res && res.json && res.json.code === "200") {
                     newTask.dailyData = res.json.daily;
                     newTask.lastDailyFetch = now;
                     hasUpdates = true;
@@ -287,7 +337,10 @@ export class QWeatherService {
             } as WeatherData;
 
         } catch (e) {
-            console.error("[Work Assistant] Weather Fetch Error:", e);
+            // Only log if online. If offline, it's expected.
+            if (navigator.onLine) {
+                console.error("[Work Assistant] Weather Fetch Error:", e);
+            }
             // Return cached if fail
             return {
                 ...cache.weatherData,
@@ -298,7 +351,7 @@ export class QWeatherService {
         }
     }
 
-    async dismissWarning(id: string) {
+    async dismissWarning(id: string): Promise<void> {
         const cache = this.plugin.cacheManager.getWeather() || {};
         const dismissed = cache.dismissedWarningIds || [];
         if (!dismissed.includes(id)) {
