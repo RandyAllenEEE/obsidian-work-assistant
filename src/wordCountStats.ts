@@ -2,6 +2,7 @@ import { Plugin, MarkdownView, debounce, TFile, Component, App } from 'obsidian'
 import type { Debouncer } from 'obsidian';
 import type { Moment } from "moment";
 import { t } from "./i18n";
+import { WORKER_CODE } from "./workers/worker";
 
 interface WordCount {
 	initial: number;
@@ -29,6 +30,12 @@ export default class WordCountStats extends Component {
 	app: App;
 	statusBarEl: HTMLElement | null = null;
 
+	// Worker related
+	private worker: Worker | null = null;
+	private lastNonce = 0;
+	private nonces = new Map<string, number>();
+	private pendingHashes = new Map<number, string>();
+
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
 	// Simple hash function for content comparison
@@ -48,14 +55,54 @@ export default class WordCountStats extends Component {
 		this.app = app;
 	}
 
-	onload() {
+	onload(): void {
 		this.initialize();
 	}
 
-	onunload() {
+	onunload(): void {
 		if (this.statusBarEl) {
 			this.statusBarEl.remove();
 			this.statusBarEl = null;
+		}
+		this.terminateWorker();
+	}
+
+	private initWorker(): void {
+		if (this.worker) return;
+		try {
+			const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
+			const url = URL.createObjectURL(blob);
+			this.worker = new Worker(url);
+
+			this.worker.onmessage = (e: MessageEvent) => {
+				const { id, count } = e.data;
+				this.handleWorkerMessage(id, count);
+			};
+
+			// Clean up the URL object
+			URL.revokeObjectURL(url);
+			console.log("[Work Assistant] Word Count Worker initialized");
+		} catch (e) {
+			console.error("[Work Assistant] Failed to initialize worker, falling back to main thread:", e);
+		}
+	}
+
+	private terminateWorker(): void {
+		if (this.worker) {
+			this.worker.terminate();
+			this.worker = null;
+		}
+	}
+
+	private handleWorkerMessage(nonce: number, count: number): void {
+		// Find which file this nonce belongs to
+		// This is O(N) but map size is small (number of active files being edited concurrently)
+		for (const [filepath, storedNonce] of this.nonces.entries()) {
+			if (storedNonce === nonce) {
+				// Found the matching request
+				this.updateStore(filepath, count);
+				break;
+			}
 		}
 	}
 
@@ -68,6 +115,9 @@ export default class WordCountStats extends Component {
 		} else {
 			this.currentWordCount = 0;
 		}
+
+		// Initialize Worker if enabled
+		this.initWorker();
 
 		this.debouncedUpdate = debounce((contents: string, filepath: string) => {
 			this.updateWordCount(contents, filepath);
@@ -101,7 +151,38 @@ export default class WordCountStats extends Component {
 		this.registerStatusBarUpdates();
 	}
 
-	public updateStatusBar(enabled: boolean) {
+	private updateStore(filepath: string, count: number): void {
+		// Handle cache update if coming from worker
+		// If we are here, we have a count.
+
+		// If coming from worker, we might have a pending hash
+		const nonce = this.nonces.get(filepath);
+		if (nonce && this.pendingHashes.has(nonce)) {
+			const hash = this.pendingHashes.get(nonce);
+			this.wordCountCache.set(filepath, {
+				contentHash: hash || "",
+				wordCount: count,
+				timestamp: Date.now()
+			});
+			this.pendingHashes.delete(nonce);
+		}
+
+		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
+			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {//updating existing file
+				this.settings.todaysWordCount[filepath].current = count;
+			} else {//created new file during session
+				this.settings.todaysWordCount[filepath] = { initial: count, current: count };
+			}
+		} else {//new day, flush the cache
+			this.settings.todaysWordCount = {};
+			this.settings.todaysWordCount[filepath] = { initial: count, current: count };
+			// Clear cache on new day since old files are no longer relevant
+			this.wordCountCache.clear();
+		}
+		this.updateCounts();
+	}
+
+	public updateStatusBar(enabled: boolean): void {
 		if (enabled) {
 			if (!this.statusBarEl) {
 				this.statusBarEl = this.plugin.addStatusBarItem();
@@ -122,7 +203,7 @@ export default class WordCountStats extends Component {
 		return 'en';
 	}
 
-	registerStatusBarUpdates() {
+	registerStatusBarUpdates(): void {
 		// Update when active leaf changes (to show file-specific counts)
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
@@ -142,7 +223,7 @@ export default class WordCountStats extends Component {
 		);
 	}
 
-	refreshStatusBar() {
+	refreshStatusBar(): void {
 		if (!this.statusBarEl) return;
 
 		const lang = this.getObsidianLanguage();
@@ -191,59 +272,27 @@ export default class WordCountStats extends Component {
 		}
 	}
 
-	//Credit: better-word-count by Luke Leppan (https://github.com/lukeleppan/better-word-count)
-	getWordCount(text: string): number {
-		let words = 0;
-
-		const matches = text.match(
-			/[a-zA-Z0-9_\u0392-\u03c9\u00c0-\u00ff\u0600-\u06ff]+|[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\uac00-\ud7af]+/gm
-		);
-
-		if (matches) {
-			for (let i = 0; i < matches.length; i++) {
-				if (matches[i].charCodeAt(0) > 19968) {
-					words += matches[i].length;
-				} else {
-					words += 1;
-				}
-			}
-		}
-
-		return words;
-	}
-
 	updateWordCount(contents: string, filepath: string): void {
 		// Use cache to avoid recalculating word count for unchanged content
 		const contentHash = this.simpleHash(contents);
 		const cached = this.wordCountCache.get(filepath);
 
-		let curr: number;
+		// Optimization: Check cache FIRST on main thread. 
 		if (cached && cached.contentHash === contentHash && cached.timestamp > Date.now() - 60000) { // Cache for 1 minute
 			// Use cached word count if content hasn't changed
-			curr = cached.wordCount;
-		} else {
-			// Calculate new word count and update cache
-			curr = this.getWordCount(contents);
-			this.wordCountCache.set(filepath, {
-				contentHash,
-				wordCount: curr,
-				timestamp: Date.now()
-			});
+			this.updateStore(filepath, cached.wordCount);
+			return;
 		}
 
-		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
-			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {//updating existing file
-				this.settings.todaysWordCount[filepath].current = curr;
-			} else {//created new file during session
-				this.settings.todaysWordCount[filepath] = { initial: curr, current: curr };
-			}
-		} else {//new day, flush the cache
-			this.settings.todaysWordCount = {};
-			this.settings.todaysWordCount[filepath] = { initial: curr, current: curr };
-			// Clear cache on new day since old files are no longer relevant
-			this.wordCountCache.clear();
+		// Not cached or stale. Send to worker.
+		if (this.worker) {
+			const nonce = ++this.lastNonce;
+			this.nonces.set(filepath, nonce);
+			this.pendingHashes.set(nonce, contentHash);
+			this.worker.postMessage({ id: nonce, text: contents });
+		} else {
+			console.warn("[Work Assistant] Worker not initialized, skipping word count update.");
 		}
-		this.updateCounts();
 	}
 
 	updateDate(): void {

@@ -15,7 +15,7 @@ export function createDailyStatsSource(wordCountStats: WordCountStats): ICalenda
                 return {};
             }
 
-            const tooltipText = `${t("calendar-tooltip-words")}: ${wordCount} | ${t("calendar-tooltip-pomo")}: ${pomoCount}`;
+            const tooltipText = `${t("calendar-tooltip-words")}: ${wordCount}\n${t("calendar-tooltip-pomo")}: ${pomoCount}`;
 
             return {
                 dataAttributes: {
@@ -31,7 +31,7 @@ export function createDailyStatsSource(wordCountStats: WordCountStats): ICalenda
                 return {};
             }
 
-            const tooltipText = `${t("calendar-tooltip-words")}: ${wordCount} | ${t("calendar-tooltip-pomo")}: ${pomoCount}`;
+            const tooltipText = `${t("calendar-tooltip-words")}: ${wordCount}\n${t("calendar-tooltip-pomo")}: ${pomoCount}`;
 
             return {
                 dataAttributes: {

@@ -38,7 +38,7 @@ export class StatusBarPlayer {
         this.container.empty();
 
         // Previous Button
-        this.prevButton = this.container.createDiv({ cls: "smtc-control", attr: { "aria-label": "Previous" } });
+        this.prevButton = this.container.createDiv({ cls: "smtc-control" });
         setIcon(this.prevButton, "skip-back");
         this.prevButton.onclick = (e) => {
             e.stopPropagation();
@@ -46,7 +46,7 @@ export class StatusBarPlayer {
         };
 
         // Play/Pause Button
-        this.playButton = this.container.createDiv({ cls: "smtc-control", attr: { "aria-label": "Play/Pause" } });
+        this.playButton = this.container.createDiv({ cls: "smtc-control" });
         setIcon(this.playButton, "play");
         this.playButton.onclick = (e) => {
             e.stopPropagation();
@@ -54,7 +54,7 @@ export class StatusBarPlayer {
         };
 
         // Next Button
-        this.nextButton = this.container.createDiv({ cls: "smtc-control", attr: { "aria-label": "Next" } });
+        this.nextButton = this.container.createDiv({ cls: "smtc-control" });
         setIcon(this.nextButton, "skip-forward");
         this.nextButton.onclick = (e) => {
             e.stopPropagation();
