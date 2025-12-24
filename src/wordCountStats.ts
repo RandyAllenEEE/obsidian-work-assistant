@@ -26,6 +26,7 @@ export default class WordCountStats extends Component {
 	currentWordCount: number;
 	today: string;
 	debouncedUpdate: Debouncer<[string, string], void>;
+	private debouncedSave: Debouncer<[], Promise<void>>;
 	plugin: Plugin;
 	app: App;
 	statusBarEl: HTMLElement | null = null;
@@ -121,6 +122,10 @@ export default class WordCountStats extends Component {
 			this.updateWordCount(contents, filepath);
 		}, 400, false);
 
+		this.debouncedSave = debounce(async () => {
+			await this.saveSettings();
+		}, 2000, true);
+
 		// Register events
 		this.registerEvent(
 			this.app.workspace.on("quick-preview", this.onQuickPreview.bind(this))
@@ -137,11 +142,11 @@ export default class WordCountStats extends Component {
 			})
 		);
 
-		// Save settings periodically (every 30 seconds)
+		// Save settings periodically (every 30 seconds) as a safety measure
 		this.registerInterval(window.setInterval(() => {
 			this.updateDate();
-			this.saveSettings();
-		}, 30000)); // Save every 30 seconds
+			this.debouncedSave();
+		}, 30000)); // Trigger debounced save every 30 seconds
 
 
 		// Initialize status bar based on initial state? We'll let main.ts call updateStatusBar.
@@ -173,6 +178,7 @@ export default class WordCountStats extends Component {
 		if (changed) {
 			this.dirty = true;
 			this.updateCounts();
+			this.debouncedSave();
 		}
 	}
 
@@ -345,7 +351,7 @@ export default class WordCountStats extends Component {
 
 		this.settings.pomoCounts[date]++;
 		this.dirty = true;
-		this.saveSettings();
+		this.debouncedSave();
 	}
 
 	getPomoCountForDate(dateStr: string): number {

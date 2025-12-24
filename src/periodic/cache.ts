@@ -57,12 +57,15 @@ function getCanonicalDateString(_granularity: Granularity, date: Moment): string
 export class PeriodicNotesCache extends Component {
   // Map the full filename to metadata
   public cachedFiles: Map<string, PeriodicNoteCachedMetadata>;
+  // Map granularity-timestamp to metadata for O(1) lookup
+  private dateIndex: Map<string, PeriodicNoteCachedMetadata>;
   private deferredTimer: number | null = null;
   private unloaded = false;
 
   constructor(readonly app: App, readonly plugin: PeriodicNotesPlugin) {
     super();
     this.cachedFiles = new Map();
+    this.dateIndex = new Map();
     this.unloaded = false;
 
     this.app.workspace.onLayoutReady(() => {
@@ -86,12 +89,18 @@ export class PeriodicNotesCache extends Component {
       this.deferredTimer = null;
     }
     this.cachedFiles.clear();
+    this.dateIndex.clear();
   }
 
   public reset(): void {
     console.info("[Work Assistant] reseting cache");
     this.cachedFiles.clear();
+    this.dateIndex.clear();
     this.initialize();
+  }
+
+  private getIndexKey(granularity: Granularity, date: Moment): string {
+    return `${granularity}-${date.clone().startOf(granularity).valueOf()}`;
   }
 
   public initialize(lazy = true): void {
@@ -211,7 +220,7 @@ export class PeriodicNotesCache extends Component {
         // e.g. `day: 2022-02-02`
         date = window.moment(frontmatterEntry, format, true);
         if (date.isValid()) {
-          this.cachedFiles.set(file.path, {
+          const meta: PeriodicNoteCachedMetadata = {
             filePath: file.path,
             date,
             granularity,
@@ -220,7 +229,9 @@ export class PeriodicNotesCache extends Component {
               exact: true,
               matchType: "frontmatter",
             },
-          });
+          };
+          this.cachedFiles.set(file.path, meta);
+          this.dateIndex.set(this.getIndexKey(granularity, date), meta);
         }
         return;
       }
@@ -229,6 +240,10 @@ export class PeriodicNotesCache extends Component {
 
   private resolveRename(file: TAbstractFile, oldPath: string): void {
     if (file instanceof TFile) {
+      const existing = this.cachedFiles.get(oldPath);
+      if (existing) {
+        this.dateIndex.delete(this.getIndexKey(existing.granularity, existing.date));
+      }
       this.cachedFiles.delete(oldPath);
       this.resolve(file, "rename");
     }
@@ -261,32 +276,32 @@ export class PeriodicNotesCache extends Component {
       const dateInputStr = getDateInput(file, formats[0], granularity);
       const date = window.moment(dateInputStr, formats, true);
 
-      if (date.isValid()) {
-        const metadata = {
-          filePath: file.path,
-          date,
-          granularity,
-          canonicalDateStr: getCanonicalDateString(granularity, date),
-          matchData: {
-            exact: true,
-            matchType: "filename",
-          },
-        } as PeriodicNoteCachedMetadata;
-        this.cachedFiles.set(file.path, metadata);
-        console.debug(`[Calendar] Resolved ${granularity} note: ${file.path} (date: ${metadata.canonicalDateStr})`);
+      const metadata = {
+        filePath: file.path,
+        date,
+        granularity,
+        canonicalDateStr: getCanonicalDateString(granularity, date),
+        matchData: {
+          exact: true,
+          matchType: "filename",
+        },
+      } as PeriodicNoteCachedMetadata;
+      this.cachedFiles.set(file.path, metadata);
+      this.dateIndex.set(this.getIndexKey(granularity, date), metadata);
+      console.debug(`[Calendar] Resolved ${granularity} note: ${file.path} (date: ${metadata.canonicalDateStr})`);
 
-        if (reason === "create" && file.stat.size === 0) {
-          applyPeriodicTemplateToFile(this.app, file, this.plugin.options, metadata);
-        }
-
-        this.app.workspace.trigger("periodic-notes:resolve", granularity, file);
-        return;
+      if (reason === "create" && file.stat.size === 0) {
+        applyPeriodicTemplateToFile(this.app, file, this.plugin.options, metadata);
       }
+
+      this.app.workspace.trigger("periodic-notes:resolve", granularity, file);
+      return;
     }
+
 
     const nonStrictDate = getLooselyMatchedDate(file.basename);
     if (nonStrictDate) {
-      this.cachedFiles.set(file.path, {
+      const meta: PeriodicNoteCachedMetadata = {
         filePath: file.path,
         date: nonStrictDate.date,
         granularity: nonStrictDate.granularity,
@@ -298,7 +313,12 @@ export class PeriodicNotesCache extends Component {
           exact: false,
           matchType: "filename",
         },
-      });
+      };
+      this.cachedFiles.set(file.path, meta);
+      this.dateIndex.set(
+        this.getIndexKey(nonStrictDate.granularity, nonStrictDate.date),
+        meta
+      );
 
       this.app.workspace.trigger(
         "periodic-notes:resolve",
@@ -334,15 +354,11 @@ export class PeriodicNotesCache extends Component {
       date = dateOrGranularity as Moment;
     }
 
-    for (const [filePath, cacheData] of this.cachedFiles) {
-      if (
-        cacheData.granularity === granularity &&
-        cacheData.matchData.exact === true &&
-        cacheData.date.isSame(date, granularity)
-      ) {
-        return this.app.vault.getAbstractFileByPath(filePath) as TFile;
-      }
+    const cacheData = this.dateIndex.get(this.getIndexKey(granularity, date));
+    if (cacheData && cacheData.matchData.exact === true) {
+      return this.app.vault.getAbstractFileByPath(cacheData.filePath) as TFile;
     }
+
     return null;
   }
 
@@ -359,12 +375,19 @@ export class PeriodicNotesCache extends Component {
     targetDate: Moment,
     includeFinerGranularities = false
   ): PeriodicNoteCachedMetadata[] {
+    if (!includeFinerGranularities) {
+      const match = this.dateIndex.get(this.getIndexKey(granularity, targetDate));
+      return match ? [match] : [];
+    }
+
+    // Still need to iterate for finer granularities, but we can filter by date first to reduce the set?
+    // Actually, compareGranularity is used. For now, we'll keep the loop for 'includeFinerGranularities' 
+    // but optimize the common single-granularity case.
     const matches: PeriodicNoteCachedMetadata[] = [];
-    for (const [, cacheData] of this.cachedFiles) {
+    for (const [, cacheData] of this.dateIndex) {
       if (
-        (granularity === cacheData.granularity ||
-          (includeFinerGranularities &&
-            compareGranularity(cacheData.granularity, granularity) <= 0)) &&
+        includeFinerGranularities &&
+        compareGranularity(cacheData.granularity, granularity) <= 0 &&
         cacheData.date.isSame(targetDate, granularity)
       ) {
         matches.push(cacheData);
