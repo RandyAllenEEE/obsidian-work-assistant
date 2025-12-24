@@ -143,6 +143,7 @@ export default class CalendarView extends ItemView {
         today: window.moment(),
         localeData: window.moment().localeData(),
         displayedMonth: window.moment(),
+        weatherService: this.plugin.weatherService,
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     }) as any;

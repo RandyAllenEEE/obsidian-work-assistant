@@ -172,5 +172,22 @@ export default {
   "pomo-notice-paused": "Timer paused.",
   "pomo-sys-notif-pomo-end": "End of the pomodoro, time to take a break {emoji}",
   "pomo-sys-notif-break-end": "End of the break, time for the next pomodoro {emoji}",
-  "pomo-sys-notif-title": "Obsidian Pomodoro {emoji}"
+  "pomo-sys-notif-title": "Obsidian Pomodoro {emoji}",
+
+  // Weather
+  "settings-weather-title": "Weather (QWeather)",
+  "settings-weather-enable": "Enable Weather Banner",
+  "settings-weather-enable-desc": "Display a weather banner below the calendar.",
+  "settings-weather-warnings-enable": "Enable External Weather Warning Notifications",
+  "settings-weather-warnings-desc": "Fetch and alert for extreme weather warnings.",
+  "settings-weather-token": "QWeather API Token",
+  "settings-weather-token-desc": "Enter your API Key from QWeather Console.",
+  "settings-weather-city": "City / Location",
+  "settings-weather-city-desc": "Enter city name (e.g., Beijing, Shanghai).",
+  "settings-weather-host": "API Host (Required)",
+  "settings-weather-host-desc": "Your unique API Host from QWeather Console (e.g., abc.x.qweatherapi.com).",
+  "settings-weather-interval": "Refresh Interval (Minutes)",
+  "settings-weather-interval-desc": "Time between weather updates (default: 60 min). Applies to current and hourly weather.",
+  "settings-weather-daily-interval": "Daily Forecast Interval (Hours)",
+  "settings-weather-daily-interval-desc": "Time between fetching tomorrow's forecast (default: 4 hours) to save API quota.",
 };

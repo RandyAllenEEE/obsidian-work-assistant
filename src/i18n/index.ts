@@ -172,6 +172,23 @@ export interface Translation {
   "pomo-sys-notif-pomo-end": string;
   "pomo-sys-notif-break-end": string;
   "pomo-sys-notif-title": string;
+
+  // Weather
+  "settings-weather-title": string;
+  "settings-weather-enable": string;
+  "settings-weather-enable-desc": string;
+  "settings-weather-warnings-enable": string;
+  "settings-weather-warnings-desc": string;
+  "settings-weather-token": string;
+  "settings-weather-token-desc": string;
+  "settings-weather-city": string;
+  "settings-weather-city-desc": string;
+  "settings-weather-host": string;
+  "settings-weather-host-desc": string;
+  "settings-weather-interval": string;
+  "settings-weather-interval-desc": string;
+  "settings-weather-daily-interval": string;
+  "settings-weather-daily-interval-desc": string;
 }
 
 export type Language = 'en' | 'zh-cn';

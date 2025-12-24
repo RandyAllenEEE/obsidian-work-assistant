@@ -277,6 +277,8 @@ function playNotification(): void {
     audio.play();
 }
 
+import { sendSystemNotification } from "../utils/notifications";
+
 function showSystemNotification(mode: Mode): void {
     let text = "";
     const emojiStr = " 🍅";
@@ -299,14 +301,5 @@ function showSystemNotification(mode: Mode): void {
     }
     const title = t("pomo-sys-notif-title").replace("{emoji}", emojiStr);
 
-    const Notification = (electron as any).remote.Notification;
-    const n = new Notification({
-        title: title,
-        body: text,
-        silent: true
-    });
-    n.on("click", () => {
-        n.close();
-    });
-    n.show();
+    sendSystemNotification(title, text, true);
 }

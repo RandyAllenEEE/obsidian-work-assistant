@@ -171,5 +171,22 @@ export default {
   "pomo-notice-paused": "定时器已暂停。",
   "pomo-sys-notif-pomo-end": "番茄钟结束，该休息了 {emoji}",
   "pomo-sys-notif-break-end": "休息结束，开始下一个番茄钟吧 {emoji}",
-  "pomo-sys-notif-title": "Obsidian 番茄钟 {emoji}"
+  "pomo-sys-notif-title": "Obsidian 番茄钟 {emoji}",
+
+  // Weather
+  "settings-weather-title": "天气 (和风天气)",
+  "settings-weather-enable": "启用天气横幅",
+  "settings-weather-enable-desc": "在日历下方显示天气横幅。",
+  "settings-weather-warnings-enable": "启用外部天气预警通知",
+  "settings-weather-warnings-desc": "获取并提示极端天气预警。",
+  "settings-weather-token": "和风天气 API Token",
+  "settings-weather-token-desc": "输入来自和风天气控制台的 API Key。",
+  "settings-weather-city": "城市 / 地点",
+  "settings-weather-city-desc": "输入城市名称（例如：Beijing, Shanghai, 北京）。",
+  "settings-weather-host": "API Host 域名 (必填)",
+  "settings-weather-host-desc": "和风天气控制台中的专属 API Host (例如：abc.x.qweatherapi.com)。",
+  "settings-weather-interval": "刷新间隔 (分钟)",
+  "settings-weather-interval-desc": "天气更新的时间间隔（默认：60分钟）。适用于当前和逐小时天气。",
+  "settings-weather-daily-interval": "每日预报刷新间隔 (小时)",
+  "settings-weather-daily-interval-desc": "获取明日天气预报的时间间隔（默认：4小时），以节省API调用次数。",
 };

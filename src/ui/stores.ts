@@ -79,3 +79,34 @@ function createSelectedFileStore() {
 }
 
 export const activeFile = createSelectedFileStore();
+
+export interface WeatherCache {
+  locationId?: string;
+  locationName?: string;
+  weatherData?: any;
+  lastWeatherFetch?: number; // For "Now"
+  hourlyData?: any[]; // For 24h
+  lastHourlyFetch?: number;
+  dailyData?: any[]; // For 3d
+  lastDailyFetch?: number;
+  warningData?: any;
+  lastWarningFetch?: number;
+  dismissedWarningIds?: string[];
+}
+
+export interface MediaCache {
+  Title?: string;
+  Artist?: string;
+  AlbumTitle?: string;
+  Status?: 'Closed' | 'Opened' | 'Changing' | 'Stopped' | 'Playing' | 'Paused';
+  SourceAppId?: string;
+  Thumbnail?: string;
+  lastUpdate?: number;
+}
+
+export interface PluginCache {
+  weather?: WeatherCache;
+  media?: MediaCache;
+}
+
+export const pluginCache = writable<PluginCache>({});

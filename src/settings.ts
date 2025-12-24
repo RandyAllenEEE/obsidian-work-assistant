@@ -53,6 +53,15 @@ export interface ISettings {
   useSystemNotification: boolean;
   numAutoCycles: number;
   pomoBackgroundNoiseFile: string;
+
+  // Weather settings
+  enableWeather: boolean;
+  enableWeatherWarnings: boolean;
+  qweatherToken: string;
+  weatherCity: string;
+  weatherRefreshInterval: number;
+  dailyWeatherRefreshInterval: number; // For tomorrow's forecast
+  qweatherApiHost: string; // User-specific host (e.g. abc.def.qweatherapi.com)
 }
 
 const weekdays = [
@@ -111,6 +120,15 @@ export const defaultSettings = Object.freeze({
   useSystemNotification: false,
   numAutoCycles: 0,
   pomoBackgroundNoiseFile: "",
+
+  // Weather defaults
+  enableWeather: false,
+  enableWeatherWarnings: false,
+  qweatherToken: "",
+  weatherCity: "",
+  weatherRefreshInterval: 60, // Minutes
+  dailyWeatherRefreshInterval: 4, // Hours
+  qweatherApiHost: "",
 });
 
 
@@ -228,6 +246,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     );
 
     this.addMediaSettings(lang);
+    this.addWeatherSettings(lang);
     this.addPomodoroSettings(lang);
   }
 
@@ -669,7 +688,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
     title: string,
     enabled: boolean,
     onToggle: (value: boolean) => void,
-    renderContent: (container: HTMLElement) => void
+    renderContent: (container: HTMLElement) => void,
+    hasToggle: boolean = true
   ) {
     const details = container.createEl('details');
     details.style.marginBottom = '10px';
@@ -677,44 +697,36 @@ export class CalendarSettingsTab extends PluginSettingTab {
     details.style.borderRadius = '6px';
     details.style.padding = '10px';
 
-    // Default to open if enabled? Or remember state?
-    // Use enabled as default/initial state? User might want to close it while enabled.
-    // But if disabled, it should probably be closed.
-    details.open = enabled;
+    details.open = enabled || !hasToggle; // If no toggle, maybe default open? Or just respect enabled.
 
     const summary = details.createEl('summary');
     summary.style.display = 'flex';
     summary.style.justifyContent = 'space-between';
     summary.style.alignItems = 'center';
     summary.style.cursor = 'pointer';
-    summary.style.listStyle = 'none'; // Try to hide default marker? 
-    // Note: hiding default marker on details/summary varies by browser.
-    // Obsidian might have styles.
+    summary.style.listStyle = 'none';
 
     const titleEl = summary.createDiv();
     titleEl.setText(title);
     titleEl.style.fontWeight = 'bold';
     titleEl.style.fontSize = '1.1em';
 
-    const toggleDiv = summary.createDiv();
-    const toggle = new ToggleComponent(toggleDiv);
-    toggle.setValue(enabled);
-    toggle.onChange((value) => {
-      onToggle(value);
-      // If enabled, open. If disabled, close.
-      if (value) {
-        details.open = true;
-      } else {
-        details.open = false;
-      }
-    });
-    toggleDiv.addEventListener('click', (e) => {
-      e.stopPropagation(); // vital to prevent summary toggle
-    });
-
-    // Provide visual indicator for dropdown? 
-    // Default detail creates a marker. 
-    // We can rely on that or style it.
+    if (hasToggle) {
+      const toggleDiv = summary.createDiv();
+      const toggle = new ToggleComponent(toggleDiv);
+      toggle.setValue(enabled);
+      toggle.onChange((value) => {
+        onToggle(value);
+        if (value) {
+          details.open = true;
+        } else {
+          details.open = false;
+        }
+      });
+      toggleDiv.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+    }
 
     const content = details.createDiv();
     content.style.marginTop = '10px';
@@ -722,6 +734,134 @@ export class CalendarSettingsTab extends PluginSettingTab {
     content.style.borderLeft = '2px solid var(--background-modifier-border)';
 
     renderContent(content);
+  }
+
+  addWeatherSettings(lang: Language): void {
+    const title = t("settings-weather-title", lang);
+
+    this.addCollapsibleSection(
+      this.containerEl,
+      title,
+      true, // Always show "enabled" state for the header or just remove the toggle from header logic?
+      // Actually, let's keep the section collapsible but manage the "Enable" setting inside.
+      // But addCollapsibleSection is designed to have the toggle.
+      // Let's modify the usage: Pass a dummy 'true' and a no-op handler if we want no toggle, 
+      // but addCollapsibleSection logic might render a toggle anyway.
+      // A better approach for this user is to have the toggle INSIDE.
+      // So I will pass 'undefined' or change addCollapsibleSection? 
+      // Let's just use a standard Setting/addToggle inside and modify addCollapsibleSection to support 'no toggle'.
+      (enabled) => { }, // No-op for header toggle if we ignore it
+      (contentEl) => {
+
+        // 1. explicit Enable Switch
+        new Setting(contentEl)
+          .setName(t("settings-weather-enable", lang))
+          .setDesc(t("settings-weather-enable-desc", lang))
+          .addToggle((toggle) => {
+            toggle.setValue(this.plugin.options.enableWeather);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({ enableWeather: value }));
+              // Force refresh sections?
+              this.display();
+            });
+          });
+
+        if (!this.plugin.options.enableWeather) {
+          // Optional: Hide other settings if disabled, or just leave them?
+          // Leaving them is fine.
+        }
+
+        new Setting(contentEl)
+          .setName(t("settings-weather-warnings-enable", lang))
+          // ... (rest of settings)
+          .setDesc(t("settings-weather-warnings-desc", lang))
+          .addToggle((toggle) => {
+            toggle.setValue(!!this.plugin.options.enableWeatherWarnings);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                enableWeatherWarnings: value,
+              }));
+            });
+          });
+
+        new Setting(contentEl)
+          .setName(t("settings-weather-token", lang))
+          .setDesc(t("settings-weather-token-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "password";
+            text.setValue(this.plugin.options.qweatherToken);
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                qweatherToken: value,
+              }));
+            });
+          });
+
+        new Setting(contentEl)
+          .setName(t("settings-weather-host", lang))
+          .setDesc(t("settings-weather-host-desc", lang))
+          .addText((text) => {
+            text.setPlaceholder("e.g. abc-123.qweatherapi.com");
+            text.setValue(this.plugin.options.qweatherApiHost);
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                qweatherApiHost: value,
+              }));
+            });
+          });
+
+        new Setting(contentEl)
+          .setName(t("settings-weather-city", lang))
+          .setDesc(t("settings-weather-city-desc", lang))
+          .addText((text) => {
+            text.setValue(this.plugin.options.weatherCity);
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                weatherCity: value,
+              }));
+            });
+          });
+
+        new Setting(contentEl)
+          .setName(t("settings-weather-interval", lang))
+          .setDesc(t("settings-weather-interval-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "number";
+            text
+              .setPlaceholder("60")
+              .setValue(String(this.plugin.options.weatherRefreshInterval))
+              .onChange(async (value) => {
+                const num = parseInt(value);
+                if (!isNaN(num) && num > 0) {
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    weatherRefreshInterval: num,
+                  }));
+                }
+              });
+          });
+
+        new Setting(contentEl)
+          .setName(t("settings-weather-daily-interval", lang))
+          .setDesc(t("settings-weather-daily-interval-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "number"; // Added this for consistency with other number inputs
+            text
+              .setPlaceholder("4")
+              .setValue(String(this.plugin.options.dailyWeatherRefreshInterval))
+              .onChange(async (value) => {
+                const num = parseInt(value);
+                if (!isNaN(num) && num > 0) {
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    dailyWeatherRefreshInterval: num,
+                  }));
+                }
+              });
+          });
+      },
+      false // No toggle in header, use internal setting
+    );
   }
 
   private createIndentedContainer(parent: HTMLElement): HTMLElement {

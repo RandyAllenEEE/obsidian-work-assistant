@@ -1,17 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { writable, type Writable } from 'svelte/store';
-import { Component, Platform } from 'obsidian';
+import { Component, Platform, debounce } from 'obsidian';
 import * as path from 'path';
 import * as fs from 'fs';
+import type { CacheManager } from "../services/CacheManager";
+import { pluginCache, type MediaCache } from "../ui/stores";
 
-interface MediaInfo {
-    Title: string;
-    Artist: string;
-    AlbumTitle: string;
-    Status: 'Closed' | 'Opened' | 'Changing' | 'Stopped' | 'Playing' | 'Paused';
-    SourceAppId: string;
-    Thumbnail: string; // Base64 encoded image or empty
-}
+interface MediaInfo extends MediaCache { }
 
 export class SystemMediaMonitor extends Component {
     private process: ChildProcessWithoutNullStreams | null = null;
@@ -19,11 +14,25 @@ export class SystemMediaMonitor extends Component {
     private buffer = '';
     private bridgePath: string;
     private setupScriptPath: string;
+    private cacheManager: CacheManager;
 
-    constructor(pluginPath: string) {
+    constructor(pluginPath: string, cacheManager: CacheManager) {
         super();
         this.bridgePath = path.join(pluginPath, 'bin', 'SMTCBridge.exe');
         this.setupScriptPath = path.join(pluginPath, 'bin', 'setup.ps1');
+        this.cacheManager = cacheManager;
+        this.initializeFromCache();
+    }
+
+    private initializeFromCache() {
+        // Load cached media state immediately
+        const cached = this.cacheManager.getMedia();
+        if (cached && (cached.Title || cached.Artist)) {
+            // Restore as "Paused" or "Stopped" to avoid confusion if it was playing when closed?
+            // User might want to see what was last playing. Retain status but maybe UI renders it differently?
+            // Keeping raw status is fine.
+            this.mediaStore.set(cached);
+        }
     }
 
     onload() {
@@ -111,10 +120,20 @@ export class SystemMediaMonitor extends Component {
 
             try {
                 if (jsonStr === 'null') {
+                    // Don't clear store/cache on null immediately if we want to persist "Last Played"?
+                    // Usually null means "no active session".
+                    // If we want persistence, we might ignore null updates OR treat them as "Closed".
                     this.mediaStore.set(null);
+                    // this.updateCache(null); // Optional: clear cache or keep last? 
+                    // Usually if session ends, we verify that. Let's keep last played in UI if preferred,
+                    // but 'null' implies nothing to control.
                 } else {
-                    const data = JSON.parse(jsonStr);
+                    const data = JSON.parse(jsonStr) as MediaInfo;
+
+                    // Optimization: Check if meaningful change before update?
+                    // Store set triggers subscribers.
                     this.mediaStore.set(data);
+                    this.debouncedSave(data);
                 }
             } catch (e) {
                 console.error("[SMTC] Failed to parse JSON:", e);
@@ -130,6 +149,23 @@ export class SystemMediaMonitor extends Component {
         }
     }
 
+    // Debounce save to avoid disk I/O on every second update (if any)
+    private debouncedSave = debounce((data: MediaInfo) => {
+        if (!data) return;
+        // Sanitize: Pick only allowed fields to prevent cache bloat (garbage properties from JSON)
+        // and ensure we overwrite cleanly.
+        const cleanData: MediaCache = {
+            Title: data.Title,
+            Artist: data.Artist,
+            AlbumTitle: data.AlbumTitle,
+            Status: data.Status,
+            SourceAppId: data.SourceAppId,
+            Thumbnail: data.Thumbnail, // We keep the base64 thumbnail
+            lastUpdate: Date.now()
+        };
+        this.cacheManager.updateMedia(cleanData);
+    }, 2000, true);
+
     stopMonitoring() {
         if (this.process) {
             this.process.kill();
@@ -140,8 +176,6 @@ export class SystemMediaMonitor extends Component {
     controlMedia(action: 'PlayPause' | 'Next' | 'Previous') {
         if (!Platform.isWin) return;
 
-        // Map string actions to bridge commands if necessary
-        // Bridge supports: playpause, next, previous (case insensitive)
         const cmd = action.toLowerCase();
 
         try {

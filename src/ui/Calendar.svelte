@@ -10,6 +10,9 @@
 
   import type { ISettings } from "src/settings";
   import { dailyNotes, settings, weeklyNotes } from "./stores";
+  import WeatherBanner from "../weather/WeatherBanner.svelte";
+  import WeatherWarningBanner from "../weather/WeatherWarningBanner.svelte";
+  import type { QWeatherService } from "../weather/QWeatherService";
 
   export let today: Moment = window.moment();
   export let localeData: Locale = today.localeData();
@@ -19,6 +22,7 @@
   }
 
   export let displayedMonth: Moment = undefined;
+  export let weatherService: QWeatherService = undefined;
   export let sources: ICalendarSource[] = [];
   export let onHoverDay: (
     date: Moment,
@@ -102,3 +106,8 @@
   {onClickMonth}
   {onClickYear}
 />
+
+{#if $settings.enableWeather}
+  <WeatherWarningBanner {weatherService} />
+  <WeatherBanner {weatherService} />
+{/if}

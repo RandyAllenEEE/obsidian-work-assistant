@@ -38,6 +38,7 @@ import { t } from "./i18n";
 import type { Language } from "./i18n";
 import { Timer, Mode } from "./pomo/timer";
 import { StatusBarPlayer } from "./ui/StatusBarPlayer";
+import { QWeatherService } from "./weather/QWeatherService";
 
 declare global {
   interface Window {
@@ -46,11 +47,15 @@ declare global {
   }
 }
 
+import { CacheManager } from "./services/CacheManager";
+
 export default class CalendarPlugin extends Plugin {
   public options: ISettings;
   public settings: Writable<ISettings>;
   private view: CalendarView;
   public wordCountStats: WordCountStats;
+  public weatherService: QWeatherService;
+  public cacheManager: CacheManager;
   private statusBarEl: HTMLElement;
   private pomoStatusBarEl: HTMLElement | null = null;
   public timer: Timer;
@@ -107,6 +112,9 @@ export default class CalendarPlugin extends Plugin {
   }
 
   async onload(): Promise<void> {
+    this.cacheManager = new CacheManager(this);
+    await this.cacheManager.load();
+
     this.settings = settings;
     this.register(
       settings.subscribe((value) => {
@@ -120,6 +128,9 @@ export default class CalendarPlugin extends Plugin {
 
     // Initialize word count stats
     this.configureWordCount();
+
+    this.weatherService = new QWeatherService(this);
+
 
     this.debouncedSync = debounce(() => this.syncCacheToStores(), 200);
 
@@ -222,6 +233,11 @@ export default class CalendarPlugin extends Plugin {
           }
         });
       }
+
+      // Ensure booleans are loaded correctly (handle null/undefined from JSON)
+      newSettings.enableWeather = newSettings.enableWeather ?? false;
+      newSettings.enableWeatherWarnings = newSettings.enableWeatherWarnings ?? false;
+      newSettings.enablePomodoro = newSettings.enablePomodoro ?? true;
 
       return newSettings;
     });
@@ -577,7 +593,7 @@ export default class CalendarPlugin extends Plugin {
         const basePath = (self.app.vault.adapter as any).getBasePath();
         const pluginPath = `${basePath}/${self.manifest.dir || '.obsidian/plugins/obsidian-work-assistant'}`;
 
-        self.systemMediaMonitor = new SystemMediaMonitor(pluginPath);
+        self.systemMediaMonitor = new SystemMediaMonitor(pluginPath, self.cacheManager);
         self.addChild(self.systemMediaMonitor);
 
         // Initialize Status Bar Player
