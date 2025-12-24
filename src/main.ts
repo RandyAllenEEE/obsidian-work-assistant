@@ -52,13 +52,16 @@ export default class CalendarPlugin extends Plugin {
   private view: CalendarView;
   public wordCountStats: WordCountStats;
   private statusBarEl: HTMLElement;
-  private pomoStatusBarEl: HTMLElement;
+  private pomoStatusBarEl: HTMLElement | null = null;
   public timer: Timer;
   private ribbonEl: HTMLElement | null;
   public cache: PeriodicNotesCache;
   private isInitialized = false;
   private debouncedSync: () => void;
   public systemMediaMonitor: any; // Type SystemMediaMonitor
+  private statusBarPlayer: StatusBarPlayer | null = null;
+  private statusBarPlayerEl: HTMLElement | null = null;
+  private browserSMTC: any | null = null; // BrowserSMTC
 
 
   private getObsidianLanguage(): Language {
@@ -77,6 +80,11 @@ export default class CalendarPlugin extends Plugin {
       await this.saveData(this.options);
       this.configureCommands();
       this.configureRibbonIcons();
+      this.configurePomodoro();
+      this.configureSystemMedia();
+      this.configureWordCount();
+      this.configurePeriodicNotes();
+      this.configureCalendar();
       // Cache reset is now handled in writeOptions conditionally
       // this.app.workspace.trigger("periodic-notes:settings-updated");
 
@@ -108,12 +116,10 @@ export default class CalendarPlugin extends Plugin {
     );
 
     await this.loadOptions();
-    const lang: Language = this.getObsidianLanguage();
 
-    this.cache = new PeriodicNotesCache(this.app, this);
 
     // Initialize word count stats
-    this.wordCountStats = new WordCountStats(this);
+    this.configureWordCount();
 
     this.debouncedSync = debounce(() => this.syncCacheToStores(), 200);
 
@@ -127,60 +133,12 @@ export default class CalendarPlugin extends Plugin {
       // The cache initialization will trigger sync via periodic-notes:resolve
     });
 
-    // Initialize status bar
-    this.statusBarEl = this.addStatusBarItem();
-
     // Initialize Pomo Timer
     this.timer = new Timer(this);
-    this.pomoStatusBarEl = this.addStatusBarItem();
-    this.pomoStatusBarEl.addClass("statusbar-pomo");
-    this.pomoStatusBarEl.setAttribute("aria-label", t("pomo-status-bar-aria", lang));
-    this.pomoStatusBarEl.addEventListener("click", () => {
-      if (this.timer.mode === Mode.NoTimer) {
-        this.timer.startTimer(Mode.Pomo);
-      } else {
-        this.timer.togglePause();
-      }
-    });
-
-    this.pomoStatusBarEl.setText("🍅");
+    this.configurePomodoro();
 
     // Initialize SMTC
-    console.log("[Work Assistant] Initializing SMTC. Options:", this.options);
-    console.log("[Work Assistant] Platform.isWin:", Platform.isWin);
-    console.log("[Work Assistant] System Media Enabled:", this.options?.systemMedia);
-
-    if (this.settings) {
-      if (this.options.systemMedia) {
-        import('./smtc/BrowserSMTC').then(({ BrowserSMTC }) => {
-          const smtc = new BrowserSMTC(this.timer.whiteNoiseService);
-          this.addChild(smtc);
-          this.timer.whiteNoiseService.setSMTC(smtc);
-        });
-      }
-    }
-
-    if (this.options.systemMedia && Platform.isWin) {
-      console.log("[Work Assistant] Importing SystemMediaMonitor...");
-      import('./smtc/SystemMediaMonitor').then(({ SystemMediaMonitor }) => {
-        console.log("[Work Assistant] SystemMediaMonitor imported.");
-        const basePath = (this.app.vault.adapter as any).getBasePath();
-        const pluginPath = `${basePath}/${this.manifest.dir || '.obsidian/plugins/obsidian-work-assistant'}`;
-
-        this.systemMediaMonitor = new SystemMediaMonitor(pluginPath);
-        this.addChild(this.systemMediaMonitor);
-
-        // Initialize Status Bar Player
-        const statusBarItem = this.addStatusBarItem();
-        new StatusBarPlayer(statusBarItem, this.systemMediaMonitor);
-
-      }).catch(e => {
-        console.error("[Work Assistant] Error importing/initializing SystemMediaMonitor:", e);
-      });
-    } else {
-      console.log("[Work Assistant] SystemMediaMonitor skipped. Enabled:", this.options?.systemMedia, "Win:", Platform.isWin);
-    }
-
+    this.configureSystemMedia();
 
     addIcon("calendar-day", calendarDayIcon);
     addIcon("calendar-week", calendarWeekIcon);
@@ -190,78 +148,36 @@ export default class CalendarPlugin extends Plugin {
 
     this.ribbonEl = null;
 
+    this.configurePeriodicNotes(); // Handles cache, commands, ribbon icons
+
     this.registerView(
       VIEW_TYPE_CALENDAR,
       (leaf: WorkspaceLeaf) => (this.view = new CalendarView(leaf, this))
     );
 
-    this.configureRibbonIcons();
-    this.configureCommands();
+    this.configureCalendar();      // Handles view, view commands
 
 
-
-    this.addCommand({
-      id: "show-calendar-view",
-      name: t('command-open-view', lang),
-      checkCallback: (checking: boolean) => {
-        if (checking) {
-          return (
-            this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0
-          );
-        }
-        this.initLeaf();
-      },
-      hotkeys: []
-    });
 
     // Old commands replaced by configureCommands()
     // this.addCommand({ id: "open-weekly-note", ... });
 
-    this.addCommand({
-      id: "reveal-active-note",
-      name: t('command-reveal-active-note', lang),
-      callback: () => this.view.revealActiveNote(),
-    });
-
+    // Command 'reveal-active-note' moved to initCalendar
 
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
 
-    // Register interval to update status bar
-    this.registerInterval(
-      window.setInterval(() => {
-        // Get the current language from Obsidian
-        const lang: Language = this.getObsidianLanguage();
-        const currentWordCount = this.wordCountStats ? this.wordCountStats.currentWordCount : 0;
+    // Status Bar implementation moved to WordCountStats
 
-        let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
-
-        // Improve status bar: "x / y" where x is current file change, y is total today change
-        const activeFile = this.app.workspace.getActiveFile();
-        if (activeFile && activeFile.extension === 'md' && this.wordCountStats) {
-          const fileChange = this.wordCountStats.getFileCountChange(activeFile.path);
-          const detailText = t('status-bar-words-today-detail', lang)
-            .replace('{file}', fileChange.toString())
-            .replace('{total}', currentWordCount.toString());
-
-          // Only use detailed text if the key exists (fallback safe)
-          if (detailText !== 'status-bar-words-today-detail') {
-            text = detailText;
-          }
-        }
-
-        this.statusBarEl.setText(text);
-      }, 200)
-    );
-
+    // Register interval to update pomo status bar
     // Register interval to update pomo status bar
     this.registerInterval(
       window.setInterval(async () => {
-        const text = await this.timer.setStatusBarText();
-        this.pomoStatusBarEl.setText(text);
+        if (this.pomoStatusBarEl) {
+          const text = await this.timer.setStatusBarText();
+          this.pomoStatusBarEl.setText(text);
+        }
       }, 100)
     );
-
-    this.addPomoCommands(lang);
 
     // Removed locale change listener due to unsupported event type
 
@@ -401,6 +317,8 @@ export default class CalendarPlugin extends Plugin {
       });
     });
 
+    if (!this.options.enablePeriodicNotes) return;
+
     // register enabled commands
     granularities.filter(g => this.options[g]?.enabled).forEach(granularity => {
       getCommands(this.app, this, granularity).forEach(this.addCommand.bind(this));
@@ -474,10 +392,10 @@ export default class CalendarPlugin extends Plugin {
   }
 
   public getPeriodicNote(granularity: Granularity, date: Moment): TFile | null {
-    return this.cache.getPeriodicNote(
+    return this.cache?.getPeriodicNote(
       granularity,
       date
-    );
+    ) ?? null;
   }
 
   public getPeriodicNotes(
@@ -485,29 +403,30 @@ export default class CalendarPlugin extends Plugin {
     date: Moment,
     includeFinerGranularities = false
   ): PeriodicNoteCachedMetadata[] {
-    return this.cache.getPeriodicNotes(
+    return this.cache?.getPeriodicNotes(
       granularity,
       date,
       includeFinerGranularities
-    );
+    ) ?? [];
   }
 
   public isPeriodic(filePath: string, granularity?: Granularity): boolean {
-    return this.cache.isPeriodic(filePath, granularity);
+    return this.cache?.isPeriodic(filePath, granularity) ?? false;
   }
 
   public findInCache(filePath: string): PeriodicNoteCachedMetadata | null {
-    return this.cache.find(filePath);
+    return this.cache?.find(filePath) ?? null;
   }
 
   public findAdjacent(
     filePath: string,
     direction: "forwards" | "backwards"
   ): PeriodicNoteCachedMetadata | null {
-    return this.cache.findAdjacent(filePath, direction);
+    return this.cache?.findAdjacent(filePath, direction) ?? null;
   }
 
   public syncCacheToStores() {
+    if (!this.cache) return;
     const allCachedFiles = Array.from(this.cache.cachedFiles.values());
 
     const dailyData: Record<string, TFile> = {};
@@ -573,4 +492,261 @@ export default class CalendarPlugin extends Plugin {
       }
     });
   }
+
+
+  private configurePomodoro() {
+    if (this.options.enablePomodoro) {
+      this.initPomodoro();
+    } else {
+      this.unloadPomodoro();
+    }
+  }
+
+  private initPomodoro() {
+    if (this.pomoStatusBarEl) return; // Already initialized
+
+    const lang: Language = this.getObsidianLanguage();
+
+    this.pomoStatusBarEl = this.addStatusBarItem();
+    this.pomoStatusBarEl.addClass("statusbar-pomo");
+    this.pomoStatusBarEl.setAttribute("aria-label", t("pomo-status-bar-aria", lang));
+    this.pomoStatusBarEl.addEventListener("click", () => {
+      if (this.timer.mode === Mode.NoTimer) {
+        this.timer.startTimer(Mode.Pomo);
+      } else {
+        this.timer.togglePause();
+      }
+    });
+
+    this.pomoStatusBarEl.setText("🍅");
+    this.addPomoCommands(lang);
+  }
+
+  private unloadPomodoro() {
+    const pomoStatusBarEl = this.pomoStatusBarEl;
+    if (pomoStatusBarEl) {
+      pomoStatusBarEl.remove();
+      this.pomoStatusBarEl = null;
+    }
+
+    if (this.timer) {
+      this.timer.quitTimer();
+    }
+
+    // Unregister commands
+    // Note: plugin id is 'obsidian-work-assistant' usually, but 'id' in addCommand is just suffix.
+    // The full id is usually 'plugin-id:command-id'.
+    const commands = ['start-pomo', 'pause-pomo', 'quit-pomo'];
+    commands.forEach(id => {
+      this.app.commands.removeCommand(`${this.manifest.id}:${id}`);
+    });
+  }
+
+  private configureSystemMedia() {
+    if (this.options.systemMedia) {
+      this.initSystemMedia();
+    } else {
+      this.unloadSystemMedia();
+    }
+  }
+
+  private initSystemMedia() {
+    const self = this as any;
+    console.log("[Work Assistant] Initializing SMTC. Enabled:", self.options?.systemMedia);
+
+    // Browser SMTC
+    if (!self.browserSMTC) {
+      import('./smtc/BrowserSMTC').then(({ BrowserSMTC }) => {
+        // If deactivated while loading
+        if (!self.options.systemMedia) return;
+
+        self.browserSMTC = new BrowserSMTC(self.timer.whiteNoiseService);
+        self.addChild(self.browserSMTC);
+        self.timer.whiteNoiseService.setSMTC(self.browserSMTC);
+      });
+    }
+
+    // System Media Monitor (Windows Only)
+    if (Platform.isWin && !self.systemMediaMonitor) {
+      console.log("[Work Assistant] Importing SystemMediaMonitor...");
+      import('./smtc/SystemMediaMonitor').then(({ SystemMediaMonitor }) => {
+        // If deactivated while loading
+        if (!self.options.systemMedia) return;
+
+        console.log("[Work Assistant] SystemMediaMonitor imported.");
+        const basePath = (self.app.vault.adapter as any).getBasePath();
+        const pluginPath = `${basePath}/${self.manifest.dir || '.obsidian/plugins/obsidian-work-assistant'}`;
+
+        self.systemMediaMonitor = new SystemMediaMonitor(pluginPath);
+        self.addChild(self.systemMediaMonitor);
+
+        // Initialize Status Bar Player
+        if (!self.statusBarPlayerEl) {
+          const el = self.addStatusBarItem();
+          self.statusBarPlayerEl = el;
+          self.statusBarPlayer = new StatusBarPlayer(el, self.systemMediaMonitor);
+        }
+
+      }).catch((e: any) => {
+        console.error("[Work Assistant] Error importing/initializing SystemMediaMonitor:", e);
+      });
+    }
+  }
+
+  private unloadSystemMedia() {
+    const self = this as any;
+
+    // Browser SMTC
+    if (self.browserSMTC) {
+      self.removeChild(self.browserSMTC);
+      if (self.browserSMTC.unload) self.browserSMTC.unload();
+      self.browserSMTC = null;
+    }
+    // Also likely need to clear it from whiteNoiseService?
+    if (self.timer?.whiteNoiseService) {
+      self.timer.whiteNoiseService.setSMTC(null);
+    }
+
+    // System Media Monitor
+    if (self.systemMediaMonitor) {
+      self.removeChild(self.systemMediaMonitor);
+      if (self.systemMediaMonitor.unload) self.systemMediaMonitor.unload();
+      self.systemMediaMonitor = null;
+    }
+
+    // Status Bar Player
+    if (self.statusBarPlayer) {
+      self.statusBarPlayer.destroy();
+      self.statusBarPlayer = null;
+    }
+
+    if (self.statusBarPlayerEl) {
+      self.statusBarPlayerEl.remove();
+      self.statusBarPlayerEl = null;
+    }
+  }
+
+  // Word Count / Heatmap Decoupling
+  private configureWordCount() {
+    if (this.options.enableWordCount) {
+      this.initWordCount();
+      // Manage Status Bar visibility
+      if (this.wordCountStats) {
+        this.wordCountStats.updateStatusBar(this.options.enableWordCountStatusBar);
+      }
+    } else {
+      this.unloadWordCount();
+    }
+  }
+
+  private initWordCount() {
+    if (!this.wordCountStats) {
+      this.wordCountStats = new WordCountStats(this, this.app);
+      this.addChild(this.wordCountStats);
+      // Status bar init handled by updateStatusBar logic in configureWordCount
+    }
+  }
+
+  private unloadWordCount() {
+    if (this.wordCountStats) {
+      this.removeChild(this.wordCountStats);
+      (this.wordCountStats as any) = null;
+    }
+  }
+
+  // Periodic Notes Decoupling
+  private configurePeriodicNotes() {
+    this.configureCache();
+
+    if (this.options.enablePeriodicNotes) {
+      this.initPeriodicNotes();
+    } else {
+      this.unloadPeriodicNotes();
+    }
+  }
+
+  private configureCache() {
+    // Cache is required if Periodic Notes are enabled. 
+    // Calendar View consumes cache but doesn't strictly own it.
+    const needsCache = this.options.enablePeriodicNotes;
+
+    if (needsCache) {
+      if (!this.cache) {
+        this.cache = new PeriodicNotesCache(this.app, this);
+        // this.addChild(this.cache); // Cache handles its own lifecycle usually? No, it's a Component.
+        this.cache.load(); // Manually load or add child? 
+        // Existing code used addChild.
+        this.addChild(this.cache);
+      }
+    } else {
+      if (this.cache) {
+        this.removeChild(this.cache);
+        (this.cache as any) = null;
+      }
+    }
+  }
+
+  private initPeriodicNotes() {
+    this.configureCommands();
+    this.configureRibbonIcons();
+  }
+
+  private unloadPeriodicNotes() {
+    this.configureCommands();
+    this.configureRibbonIcons();
+  }
+
+  // Calendar Decoupling
+  private configureCalendar() {
+    this.configureCache();
+
+    if (this.options.enableCalendar) {
+      this.initCalendar();
+    } else {
+      this.unloadCalendar();
+    }
+  }
+
+  private initCalendar() {
+    // Register View if not registered? 
+    // We register only once in onload usually. But if we want to "disable" fully...
+    // We can leave view logic as is (registered), but control access via Ribbon/Commands.
+
+    // Check command
+    const lang = this.getObsidianLanguage();
+
+    // Add 'show-calendar-view' command
+    // We can't check if command exists easily, so we just add it (overwrite).
+    this.addCommand({
+      id: "show-calendar-view",
+      name: t('command-open-view', lang),
+      checkCallback: (checking: boolean) => {
+        if (checking) {
+          return (
+            this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0
+          );
+        }
+        this.initLeaf();
+      },
+      hotkeys: []
+    });
+
+    this.addCommand({
+      id: "reveal-active-note",
+      name: t('command-reveal-active-note', lang),
+      callback: () => this.view.revealActiveNote(),
+    });
+
+    this.initLeaf();
+  }
+
+  private unloadCalendar() {
+    this.app.workspace
+      .getLeavesOfType(VIEW_TYPE_CALENDAR)
+      .forEach((leaf) => leaf.detach());
+
+    this.app.commands.removeCommand(`${this.manifest.id}:show-calendar-view`);
+    this.app.commands.removeCommand(`${this.manifest.id}:reveal-active-note`);
+  }
 }
+

@@ -155,14 +155,22 @@ export default class CalendarView extends ItemView {
   }
 
   private createSources() {
-    return [
+    const sources = [
       customTagsSource,
       streakSource,
       wordCountSource,
       tasksSource,
-      createWordCountBackgroundSource(this.wordCountStats),
-      createDailyStatsSource(this.wordCountStats),
     ];
+
+    if (this.settings?.enableHeatmap && this.wordCountStats) {
+      sources.push(createWordCountBackgroundSource(this.wordCountStats));
+    }
+
+    if (this.wordCountStats) {
+      sources.push(createDailyStatsSource(this.wordCountStats));
+    }
+
+    return sources;
   }
 
   onHoverDay(
@@ -317,6 +325,11 @@ export default class CalendarView extends ItemView {
     date: Moment,
     inNewSplit: boolean
   ): Promise<void> {
+    // Check Linkage setting first
+    if (!this.plugin.options.enablePeriodicNotesCalendarLinkage) {
+      return;
+    }
+
     const { enabled } = this.plugin.options[granularity];
     if (enabled) {
       await this.plugin.openPeriodicNote(granularity, date, { inNewSplit });

@@ -9,6 +9,7 @@ export class StatusBarPlayer {
     private nextButton: HTMLElement;
     private popover: HTMLElement | null = null;
     private currentMedia: any = null;
+    private unsubscribe: () => void;
 
     constructor(container: HTMLElement, monitor: SystemMediaMonitor) {
         this.container = container;
@@ -20,10 +21,17 @@ export class StatusBarPlayer {
         this.render();
 
         // Subscribe to store
-        this.monitor.mediaStore.subscribe((media) => {
+        this.unsubscribe = this.monitor.mediaStore.subscribe((media) => {
             this.currentMedia = media;
             this.update(media);
         });
+    }
+
+    public destroy() {
+        if (this.unsubscribe) {
+            this.unsubscribe();
+        }
+        this.container.empty();
     }
 
     private render() {

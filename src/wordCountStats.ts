@@ -1,6 +1,7 @@
-import { Plugin, MarkdownView, debounce, TFile } from 'obsidian';
+import { Plugin, MarkdownView, debounce, TFile, Component, App } from 'obsidian';
 import type { Debouncer } from 'obsidian';
 import type { Moment } from "moment";
+import { t } from "./i18n";
 
 interface WordCount {
 	initial: number;
@@ -19,12 +20,14 @@ const DEFAULT_SETTINGS: DailyStatsSettings = {
 	pomoCounts: {}
 }
 
-export default class WordCountStats {
+export default class WordCountStats extends Component {
 	settings: DailyStatsSettings;
 	currentWordCount: number;
 	today: string;
 	debouncedUpdate: Debouncer<[string, string], void>;
 	plugin: Plugin;
+	app: App;
+	statusBarEl: HTMLElement | null = null;
 
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
@@ -39,9 +42,21 @@ export default class WordCountStats {
 		return hash.toString();
 	}
 
-	constructor(plugin: Plugin) {
+	constructor(plugin: Plugin, app: App) {
+		super();
 		this.plugin = plugin;
+		this.app = app;
+	}
+
+	onload() {
 		this.initialize();
+	}
+
+	onunload() {
+		if (this.statusBarEl) {
+			this.statusBarEl.remove();
+			this.statusBarEl = null;
+		}
 	}
 
 	async initialize(): Promise<void> {
@@ -59,26 +74,80 @@ export default class WordCountStats {
 		}, 400, false);
 
 		// Register events
-		this.plugin.registerEvent(
-			this.plugin.app.workspace.on("quick-preview", this.onQuickPreview.bind(this))
+		this.registerEvent(
+			this.app.workspace.on("quick-preview", this.onQuickPreview.bind(this))
 		);
 
-		this.plugin.registerEvent(
-			this.plugin.app.vault.on("modify", async (file: TFile) => {
+		this.registerEvent(
+			this.app.vault.on("modify", async (file: TFile) => {
 				// Only process markdown files
 				if (file instanceof TFile && file.extension === "md") {
 					// We need to read the file content to update the word count
-					const contents = await this.plugin.app.vault.read(file);
+					const contents = await this.app.vault.read(file);
 					this.debouncedUpdate(contents, file.path);
 				}
 			})
 		);
 
 		// Save settings periodically (every 30 seconds)
-		this.plugin.registerInterval(window.setInterval(() => {
+		this.registerInterval(window.setInterval(() => {
 			this.updateDate();
 			this.saveSettings();
 		}, 30000)); // Save every 30 seconds
+
+
+		// Initialize status bar based on initial state? We'll let main.ts call updateStatusBar.
+		// this.statusBarEl = this.plugin.addStatusBarItem();
+		this.startStatusBarUpdates();
+	}
+
+	public updateStatusBar(enabled: boolean) {
+		if (enabled) {
+			if (!this.statusBarEl) {
+				this.statusBarEl = this.plugin.addStatusBarItem();
+			}
+		} else {
+			if (this.statusBarEl) {
+				this.statusBarEl.remove();
+				this.statusBarEl = null;
+			}
+		}
+	}
+
+	private getObsidianLanguage(): "zh-cn" | "en" {
+		const momentLang = window.moment.locale();
+		if (momentLang.startsWith('zh')) {
+			return 'zh-cn';
+		}
+		return 'en';
+	}
+
+	startStatusBarUpdates() {
+		// Register interval to update status bar
+		this.registerInterval(
+			window.setInterval(() => {
+				if (!this.statusBarEl) return;
+
+				const lang = this.getObsidianLanguage();
+				const currentWordCount = this.currentWordCount || 0;
+
+				let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
+
+				const activeFile = this.app.workspace.getActiveFile();
+				if (activeFile && activeFile.extension === 'md') {
+					const fileChange = this.getFileCountChange(activeFile.path);
+					const detailText = t('status-bar-words-today-detail', lang)
+						.replace('{file}', fileChange.toString())
+						.replace('{total}', currentWordCount.toString());
+
+					if (detailText !== 'status-bar-words-today-detail') {
+						text = detailText;
+					}
+				}
+
+				this.statusBarEl.setText(text);
+			}, 200)
+		);
 	}
 
 	onQuickPreview(file: TFile, contents: string): void {

@@ -140,6 +140,19 @@ export default {
   "settings-notification-sound-desc": "Play a sound when timer ends",
   "settings-use-system-notification": "System Notification",
   "settings-use-system-notification-desc": "Use system notification when timer ends",
+
+  // Settings - Hierarchy Sections
+  "settings-calendar-view-title": "Calendar View",
+  "settings-periodic-notes-section": "Periodic Notes",
+  "settings-calendar-linkage-title": "Calendar Linkage",
+  "settings-calendar-linkage-desc": "Enable interaction with the Calendar View (clicking days/weeks)",
+  "settings-word-count-section-title": "Word Count",
+  "settings-word-count-status-bar-title": "Status Bar",
+  "settings-word-count-status-bar-desc": "Show word count in the status bar",
+  "settings-word-count-heatmap-desc": "Show word count intensity on the Calendar View",
+  "settings-requires-calendar-view": "Requires Calendar View",
+  "settings-locale-default": "Locale default ({day})",
+
   "pomo-status-bar-aria": "Click to toggle Pomodoro Timer",
   "pomo-notice-start": "Starting {time} {unit} {mode}.",
   "pomo-notice-restart": "Restarting {mode}.",

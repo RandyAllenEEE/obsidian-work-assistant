@@ -139,6 +139,19 @@ export interface Translation {
   "settings-notification-sound-desc": string;
   "settings-use-system-notification": string;
   "settings-use-system-notification-desc": string;
+
+  // Settings - Hierarchy Sections
+  "settings-calendar-view-title": string;
+  "settings-periodic-notes-section": string;
+  "settings-calendar-linkage-title": string;
+  "settings-calendar-linkage-desc": string;
+  "settings-word-count-section-title": string;
+  "settings-word-count-status-bar-title": string;
+  "settings-word-count-status-bar-desc": string;
+  "settings-word-count-heatmap-desc": string;
+  "settings-requires-calendar-view": string;
+  "settings-locale-default": string;
+
   "pomo-status-bar-aria": string;
   "pomo-notice-start": string;
   "pomo-notice-restart": string;

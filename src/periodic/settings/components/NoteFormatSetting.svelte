@@ -68,11 +68,6 @@
 </div>
 
 <style>
-  .alert-warning {
-    color: var(--text-muted);
-    font-size: 80%;
-    margin-top: 0.6em;
-  }
   .setting-item-control input {
     flex-grow: 1;
   }

@@ -139,6 +139,19 @@ export default {
   "settings-notification-sound-desc": "定时器结束时播放声音",
   "settings-use-system-notification": "系统通知",
   "settings-use-system-notification-desc": "计时结束时使用系统通知",
+
+  // Settings - Hierarchy Sections
+  "settings-calendar-view-title": "日历视图",
+  "settings-periodic-notes-section": "周期笔记",
+  "settings-calendar-linkage-title": "日历联动",
+  "settings-calendar-linkage-desc": "启用与日历视图的交互（点击日期/周）",
+  "settings-word-count-section-title": "字数统计",
+  "settings-word-count-status-bar-title": "状态栏",
+  "settings-word-count-status-bar-desc": "在状态栏显示字数统计",
+  "settings-word-count-heatmap-desc": "在日历视图上显示字数统计强度",
+  "settings-requires-calendar-view": "需要日历视图",
+  "settings-locale-default": "区域默认 ({day})",
+
   "pomo-status-bar-aria": "点击切换番茄钟定时器",
   "pomo-notice-start": "正在启动 {time} {unit} {mode}。",
   "pomo-notice-restart": "正在重新启动 {mode}。",

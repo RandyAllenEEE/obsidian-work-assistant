@@ -42,6 +42,9 @@
   <div
     class="setting-item setting-item-heading periodic-group-heading"
     on:click={toggleExpand}
+    on:keypress={(e) => e.key === "Enter" && toggleExpand()}
+    role="button"
+    tabindex="0"
   >
     <div class="setting-item-info">
       <h3 class="setting-item-name periodic-group-title">

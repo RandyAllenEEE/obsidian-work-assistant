@@ -1,4 +1,4 @@
-import { PluginSettingTab, Setting, Platform } from "obsidian";
+import { PluginSettingTab, Setting, Platform, ToggleComponent } from "obsidian";
 import type { App } from "obsidian";
 import type { IWeekStartOption } from "obsidian-calendar-ui";
 import { DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
@@ -15,6 +15,13 @@ export interface ISettings {
   wordsPerDot: number;
   weekStart: IWeekStartOption;
   shouldConfirmBeforeCreate: boolean;
+  enableCalendar: boolean;
+  enablePeriodicNotes: boolean;
+  enableWordCount: boolean;
+  enableWordCountStatusBar: boolean;
+  enableHeatmap: boolean;
+
+  enablePeriodicNotesCalendarLinkage: boolean;
 
   // Periodic Notes settings
   day: PeriodicConfig;
@@ -34,6 +41,7 @@ export interface ISettings {
   heatmapRefreshInterval: number;
 
   // Pomodoro settings
+  enablePomodoro: boolean;
   pomo: number;
   shortBreak: number;
   longBreak: number;
@@ -59,6 +67,12 @@ const weekdays = [
 
 export const defaultSettings = Object.freeze({
   shouldConfirmBeforeCreate: true,
+  enableCalendar: true,
+  enablePeriodicNotes: true,
+  enableWordCount: true,
+  enableWordCountStatusBar: true,
+  enableHeatmap: true,
+  enablePeriodicNotesCalendarLinkage: true,
   weekStart: "locale" as IWeekStartOption,
 
   wordsPerDot: DEFAULT_WORDS_PER_DOT,
@@ -85,6 +99,7 @@ export const defaultSettings = Object.freeze({
   heatmapRefreshInterval: DEFAULT_REFRESH_INTERVAL,
 
   // Pomodoro defaults
+  enablePomodoro: true,
   pomo: 25,
   shortBreak: 5,
   longBreak: 15,
@@ -109,46 +124,140 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
   display(): void {
     this.containerEl.empty();
-
-    // Get the current language from Obsidian
     const lang = getLanguage();
+    const { enableCalendar, enableWordCount, enablePeriodicNotes } = this.plugin.options;
 
-    this.containerEl.createEl("h3", {
-      text: t('settings-general-title', lang),
-    });
-    this.addDotThresholdSetting(lang);
-    this.addWeekStartSetting(lang);
-    this.addConfirmCreateSetting(lang);
-
-    // Add word count background settings
-    this.containerEl.createEl("h3", {
-      text: t('settings-word-count-bg-title', lang),
-    });
-    this.addWordCountColorRangeSettings(lang);
-    this.addHeatmapRefreshIntervalSetting(lang);
-
-    this.containerEl.createEl("h3", {
-      text: t("media-control-title", lang),
-    });
-    this.addMediaSettings(lang);
-
-    this.containerEl.createEl("h3", {
-      text: t("pomo-title", lang),
-    });
-    this.addPomodoroSettings(lang);
-
-    // Calendar Sets
-    mount(SettingsRouter, {
-      target: this.containerEl,
-      props: {
-        app: this.app,
-        settings: this.plugin.settings,
+    // 1. Calendar View (Master)
+    this.addCollapsibleSection(
+      this.containerEl,
+      t('settings-calendar-view-title', lang),
+      enableCalendar,
+      (enabled) => {
+        const updates: Partial<ISettings> = { enableCalendar: enabled };
+        if (!enabled) {
+          // Strict Requirement: Actively disable dependent features
+          updates.enablePeriodicNotesCalendarLinkage = false;
+          updates.enableHeatmap = false;
+        }
+        this.plugin.writeOptions(() => updates);
+        this.display(); // Force refresh to update dependent states in UI
       },
-    });
+      (container) => {
+        this.addWeekStartSetting(container, lang);
+      }
+    );
+
+    // Dependent State: Is Calendar Active?
+    const isCalendarActive = enableCalendar;
+
+
+    // 2. Periodic Notes
+    this.addCollapsibleSection(
+      this.containerEl,
+      t('settings-periodic-notes-section', lang),
+      enablePeriodicNotes,
+      (enabled) => this.plugin.writeOptions(() => ({ enablePeriodicNotes: enabled })),
+      (container) => {
+        // 2.1 Calendar Linkage (Dependent on Calendar View)
+        this.addSubToggle(
+          container,
+          t('settings-calendar-linkage-title', lang),
+          t('settings-calendar-linkage-desc', lang),
+          this.plugin.options.enablePeriodicNotesCalendarLinkage,
+          isCalendarActive, // Enabled only if Calendar is On
+          (val) => this.plugin.writeOptions(() => ({ enablePeriodicNotesCalendarLinkage: val }))
+        );
+
+        if (this.plugin.options.enablePeriodicNotesCalendarLinkage && isCalendarActive) {
+          // Words Per Dot is part of linkage visualization
+          const linkageSubContainer = this.createIndentedContainer(container);
+          this.addDotThresholdSetting(linkageSubContainer, lang);
+          // Confirm Create is strictly requested under Linkage
+          this.addConfirmCreateSetting(linkageSubContainer, lang);
+        }
+
+        // 2.2 Periodic Settings (Router)
+        // Check if there's a divider needed?
+
+        // Router for granularity settings
+        mount(SettingsRouter, {
+          target: container,
+          props: {
+            app: this.app,
+            settings: this.plugin.settings,
+          },
+        });
+      }
+    );
+
+    // 3. Word Count
+    this.addCollapsibleSection(
+      this.containerEl,
+      t('settings-word-count-section-title', lang),
+      enableWordCount,
+      (enabled) => this.plugin.writeOptions(() => ({ enableWordCount: enabled })),
+      (container) => {
+
+        // 3.1 Status Bar
+        this.addSubToggle(
+          container,
+          t('settings-word-count-status-bar-title', lang),
+          t('settings-word-count-status-bar-desc', lang),
+          this.plugin.options.enableWordCountStatusBar,
+          true,
+          (val) => this.plugin.writeOptions(() => ({ enableWordCountStatusBar: val }))
+        );
+
+        // 3.2 Heatmap (Dependent on Calendar View)
+        // Title from i18n
+        this.addSubToggle(
+          container,
+          t('settings-word-count-bg-title', lang), // "Word Count Heatmap"
+          t('settings-word-count-heatmap-desc', lang),
+          this.plugin.options.enableHeatmap,
+          isCalendarActive, // Enabled only if Calendar is On
+          (val) => this.plugin.writeOptions(() => ({ enableHeatmap: val }))
+        );
+
+        if (this.plugin.options.enableHeatmap && isCalendarActive) {
+          const heatmapSubContainer = this.createIndentedContainer(container);
+          this.addWordCountColorRangeSettings(heatmapSubContainer, lang);
+          this.addHeatmapRefreshIntervalSetting(heatmapSubContainer, lang);
+        }
+      }
+    );
+
+    this.addMediaSettings(lang);
+    this.addPomodoroSettings(lang);
   }
 
-  addDotThresholdSetting(lang: Language): void {
-    new Setting(this.containerEl)
+  // Helper for sub-toggles
+  private addSubToggle(
+    container: HTMLElement,
+    name: string,
+    desc: string,
+    value: boolean,
+    enabled: boolean,
+    onChange: (value: boolean) => void
+  ) {
+    const setting = new Setting(container)
+      .setName(name)
+      .setDesc(desc)
+      .addToggle(toggle => {
+        toggle.setValue(value).onChange(onChange);
+        if (!enabled) {
+          toggle.setDisabled(true);
+        }
+      });
+
+    if (!enabled) {
+      setting.settingEl.style.opacity = "0.5";
+      setting.setDesc(desc + ` (${t('settings-requires-calendar-view', getLanguage())})`);
+    }
+  }
+
+  addDotThresholdSetting(container: HTMLElement, lang: Language): void {
+    new Setting(container)
       .setName(t('settings-words-per-dot', lang))
       .setDesc(t('settings-words-per-dot-desc', lang))
       .addText((textfield) => {
@@ -163,20 +272,20 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addWeekStartSetting(lang: Language): void {
+  addWeekStartSetting(container: HTMLElement, lang: Language): void {
     const { moment } = window;
 
     const localizedWeekdays = moment.weekdays();
     const localeWeekStartNum = window._bundledLocaleWeekSpec?.dow ?? (moment.localeData() as any)._week?.dow ?? 0;
     const localeWeekStart = moment.weekdays()[localeWeekStartNum];
 
-    new Setting(this.containerEl)
+    new Setting(container)
       .setName(t('settings-start-week', lang))
       .setDesc(
         t('settings-start-week-desc', lang)
       )
       .addDropdown((dropdown) => {
-        dropdown.addOption("locale", `Locale default (${localeWeekStart})`);
+        dropdown.addOption("locale", t('settings-locale-default', lang).replace("{day}", localeWeekStart));
         localizedWeekdays.forEach((day, i) => {
           dropdown.addOption(weekdays[i], day);
         });
@@ -189,8 +298,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addConfirmCreateSetting(lang: Language): void {
-    new Setting(this.containerEl)
+  addConfirmCreateSetting(container: HTMLElement, lang: Language): void {
+    new Setting(container)
       .setName(t('settings-confirm-create', lang))
       .setDesc(t('settings-confirm-create-desc', lang))
       .addToggle((toggle) => {
@@ -262,12 +371,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
   */
 
 
-  addWordCountColorRangeSettings(lang: Language): void {
+  addWordCountColorRangeSettings(container: HTMLElement, lang: Language): void {
     const { wordCountColorRanges } = this.plugin.options;
 
     // Create a setting for each color range
     wordCountColorRanges.forEach((range, index) => {
-      const setting = new Setting(this.containerEl)
+      const setting = new Setting(container)
         .setName(`${t('settings-color-range', lang)} ${index + 1}`)
         .setDesc(t('settings-color-range-desc', lang)
           .replace('{min}', range.min.toString())
@@ -275,7 +384,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .replace('{opacity}', range.opacity.toString()));
 
       // Create a flex container for the three inputs
-      const inputsContainer = this.containerEl.createDiv();
+      const inputsContainer = container.createDiv();
       inputsContainer.style.display = 'flex';
       inputsContainer.style.gap = '10px';
       inputsContainer.style.marginBottom = '10px';
@@ -342,7 +451,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
 
     // Add button to reset to default ranges
-    new Setting(this.containerEl)
+    new Setting(container)
       .setName(t('settings-reset-ranges', lang))
       .setDesc(t('settings-reset-ranges-desc', lang))
       .addButton((button) => {
@@ -362,8 +471,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  addHeatmapRefreshIntervalSetting(lang: Language): void {
-    new Setting(this.containerEl)
+  addHeatmapRefreshIntervalSetting(container: HTMLElement, lang: Language): void {
+    new Setting(container)
       .setName(t('settings-heatmap-refresh-interval', lang))
       .setDesc(t('settings-heatmap-refresh-interval-desc', lang))
       .addText((textfield) => {
@@ -379,171 +488,249 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   addMediaSettings(lang: Language): void {
-    // 1. System Media Integration (Master Switch)
-    if (Platform.isWin) {
-      new Setting(this.containerEl)
-        .setName("System Media Integration")
-        .setDesc("Experimental: Show media from other apps (Spotify, Chrome) in the sidebar. Requires restart.")
-        .addToggle((toggle) => {
-          toggle.setValue(this.plugin.options?.systemMedia ?? false);
-          toggle.onChange(async (value) => {
-            this.plugin.writeOptions(() => ({
-              systemMedia: value,
-            }));
-            // Refresh to update dependent settings visibility
-            this.display();
+    const isWin = Platform.isWin;
+    // Section Title
+    const title = t("media-control-title", lang);
+
+    this.addCollapsibleSection(
+      this.containerEl,
+      title,
+      this.plugin.options.systemMedia,
+      (enabled) => {
+        // Logic to update setting
+        if (!isWin && enabled) {
+          // Prevent enabling on non-Windows if that's the hard constraint
+          // But let's assume valid state change for now or notify user.
+          // For now, allow saving, logic elsewhere handles it.
+        }
+        this.plugin.writeOptions(() => ({ systemMedia: enabled }));
+      },
+      (contentEl) => {
+        // Content of the section
+        if (!isWin) {
+          contentEl.createDiv({ text: "Media Control is currently only supported on Windows.", cls: "setting-item-description" });
+          return;
+        }
+
+        new Setting(contentEl)
+          .setName("System Media Integration")
+          .setDesc("Experimental: Show media from other apps (Spotify, Chrome) in the sidebar. Requires restart.")
+          .addToggle(toggle => {
+            toggle.setValue(this.plugin.options.systemMedia)
+              .setDisabled(true); // Controlled by master switch
           });
-        });
-    }
 
-    // 2. White Noise Toggle
-    const isSystemMediaEnabled = Platform.isWin && this.plugin.options?.systemMedia;
+        // White Noise Settings
+        new Setting(contentEl)
+          .setName(t("settings-white-noise", lang))
+          .setDesc(t("settings-white-noise-desc", lang))
+          .addToggle((toggle) => {
+            toggle.setValue(this.plugin.options.whiteNoise);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                whiteNoise: value,
+              }));
+            });
+          });
 
-    // Only show or enable White Noise settings if System Media Integration is enabled (if that's the requirement)
-    // The user said "subject to the master switch control". 
-    // If I interpret strictly: if Master Switch is OFF, these are hidden or disabled.
-    // Given the previous functionality was independent, this is a restrictive change requested by the user.
-    // I will disable them if the master switch is off (and exist).
-
-    // Helper to check if we should enable controls
-    const isEnabled = isSystemMediaEnabled;
-    const disabledDesc = isEnabled ? "" : " (Requires System Media Integration enabled)";
-
-    new Setting(this.containerEl)
-      .setName(t("settings-white-noise", lang))
-      .setDesc(t("settings-white-noise-desc", lang) + disabledDesc)
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.options!.whiteNoise);
-        toggle.setDisabled(!isEnabled);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            whiteNoise: value,
-          }));
-        });
-      });
-
-    // 3. Background Noise File
-    new Setting(this.containerEl)
-      .setName(t("settings-pomo-background-noise", lang))
-      .setDesc(t("settings-pomo-background-noise-desc", lang) + disabledDesc)
-      .addText((text) => {
-        text.setValue(this.plugin.options.pomoBackgroundNoiseFile);
-        text.setDisabled(!isEnabled);
-        text.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            pomoBackgroundNoiseFile: value,
-          }));
-        });
-      });
+        new Setting(contentEl)
+          .setName(t("settings-pomo-background-noise", lang))
+          .setDesc(t("settings-pomo-background-noise-desc", lang))
+          .addText((text) => {
+            text.setValue(this.plugin.options.pomoBackgroundNoiseFile);
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                pomoBackgroundNoiseFile: value,
+              }));
+            });
+          });
+      }
+    );
   }
 
   addPomodoroSettings(lang: Language): void {
+    const title = t("pomo-title", lang);
 
-    new Setting(this.containerEl)
-      .setName(t("settings-pomo-duration", lang))
-      .setDesc(t("settings-pomo-duration-desc", lang))
-      .addText((text) => {
-        text.inputEl.type = "number";
-        text.setValue(String(this.plugin.options!.pomo));
-        text.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            pomo: value !== "" ? Number(value) : 25,
-          }));
-        });
-      });
+    this.addCollapsibleSection(
+      this.containerEl,
+      title,
+      this.plugin.options.enablePomodoro,
+      (enabled) => {
+        this.plugin.writeOptions(() => ({ enablePomodoro: enabled }));
+      },
+      (contentEl) => {
+        // Pomodoro Settings Content
+        new Setting(contentEl)
+          .setName(t("settings-pomo-duration", lang))
+          .setDesc(t("settings-pomo-duration-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "number";
+            text.setValue(String(this.plugin.options.pomo));
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                pomo: value !== "" ? Number(value) : 25,
+              }));
+            });
+          });
 
-    new Setting(this.containerEl)
-      .setName(t("settings-short-break", lang))
-      .setDesc(t("settings-short-break-desc", lang))
-      .addText((text) => {
-        text.inputEl.type = "number";
-        text.setValue(String(this.plugin.options!.shortBreak));
-        text.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            shortBreak: value !== "" ? Number(value) : 5,
-          }));
-        });
-      });
+        new Setting(contentEl)
+          .setName(t("settings-short-break", lang))
+          .setDesc(t("settings-short-break-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "number";
+            text.setValue(String(this.plugin.options.shortBreak));
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                shortBreak: value !== "" ? Number(value) : 5,
+              }));
+            });
+          });
 
-    new Setting(this.containerEl)
-      .setName(t("settings-long-break", lang))
-      .setDesc(t("settings-long-break-desc", lang))
-      .addText((text) => {
-        text.inputEl.type = "number";
-        text.setValue(String(this.plugin.options!.longBreak));
-        text.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            longBreak: value !== "" ? Number(value) : 15,
-          }));
-        });
-      });
+        new Setting(contentEl)
+          .setName(t("settings-long-break", lang))
+          .setDesc(t("settings-long-break-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "number";
+            text.setValue(String(this.plugin.options.longBreak));
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                longBreak: value !== "" ? Number(value) : 15,
+              }));
+            });
+          });
 
-    new Setting(this.containerEl)
-      .setName(t("settings-long-break-interval", lang))
-      .setDesc(t("settings-long-break-interval-desc", lang))
-      .addText((text) => {
-        text.inputEl.type = "number";
-        text.setValue(String(this.plugin.options!.longBreakInterval));
-        text.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            longBreakInterval: value !== "" ? Number(value) : 4,
-          }));
-        });
-      });
+        new Setting(contentEl)
+          .setName(t("settings-long-break-interval", lang))
+          .setDesc(t("settings-long-break-interval-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "number";
+            text.setValue(String(this.plugin.options.longBreakInterval));
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                longBreakInterval: value !== "" ? Number(value) : 4,
+              }));
+            });
+          });
 
-    new Setting(this.containerEl)
-      .setName(t("settings-continuous-mode", lang))
-      .setDesc(t("settings-continuous-mode-desc", lang))
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.options!.continuousMode);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            continuousMode: value,
-          }));
-        });
-      });
+        new Setting(contentEl)
+          .setName(t("settings-continuous-mode", lang))
+          .setDesc(t("settings-continuous-mode-desc", lang))
+          .addToggle((toggle) => {
+            toggle.setValue(this.plugin.options.continuousMode);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                continuousMode: value,
+              }));
+            });
+          });
 
+        new Setting(contentEl)
+          .setName(t("settings-notification-sound", lang))
+          .setDesc(t("settings-notification-sound-desc", lang))
+          .addToggle((toggle) => {
+            toggle.setValue(this.plugin.options.notificationSound);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                notificationSound: value,
+              }));
+            });
+          });
 
+        new Setting(contentEl)
+          .setName(t("settings-pomo-num-auto-cycles", lang))
+          .setDesc(t("settings-pomo-num-auto-cycles-desc", lang))
+          .addText((text) => {
+            text.inputEl.type = "number";
+            text.setValue(String(this.plugin.options.numAutoCycles));
+            text.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                numAutoCycles: value !== "" ? Number(value) : 0,
+              }));
+            });
+          });
 
+        new Setting(contentEl)
+          .setName(t("settings-use-system-notification", lang))
+          .setDesc(t("settings-use-system-notification-desc", lang))
+          .addToggle((toggle) => {
+            toggle.setValue(this.plugin.options.useSystemNotification);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions(() => ({
+                useSystemNotification: value,
+              }));
+            });
+          });
+      }
+    );
+  }
 
-    new Setting(this.containerEl)
-      .setName(t("settings-notification-sound", lang))
-      .setDesc(t("settings-notification-sound-desc", lang))
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.options!.notificationSound);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            notificationSound: value,
-          }));
-        });
-      });
+  private addCollapsibleSection(
+    container: HTMLElement,
+    title: string,
+    enabled: boolean,
+    onToggle: (value: boolean) => void,
+    renderContent: (container: HTMLElement) => void
+  ) {
+    const details = container.createEl('details');
+    details.style.marginBottom = '10px';
+    details.style.border = '1px solid var(--background-modifier-border)';
+    details.style.borderRadius = '6px';
+    details.style.padding = '10px';
 
-    new Setting(this.containerEl)
-      .setName(t("settings-pomo-num-auto-cycles", lang))
-      .setDesc(t("settings-pomo-num-auto-cycles-desc", lang))
-      .addText((text) => {
-        text.inputEl.type = "number";
-        text.setValue(String(this.plugin.options.numAutoCycles));
-        text.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            numAutoCycles: value !== "" ? Number(value) : 0,
-          }));
-        });
-      });
+    // Default to open if enabled? Or remember state?
+    // Use enabled as default/initial state? User might want to close it while enabled.
+    // But if disabled, it should probably be closed.
+    details.open = enabled;
 
+    const summary = details.createEl('summary');
+    summary.style.display = 'flex';
+    summary.style.justifyContent = 'space-between';
+    summary.style.alignItems = 'center';
+    summary.style.cursor = 'pointer';
+    summary.style.listStyle = 'none'; // Try to hide default marker? 
+    // Note: hiding default marker on details/summary varies by browser.
+    // Obsidian might have styles.
 
+    const titleEl = summary.createDiv();
+    titleEl.setText(title);
+    titleEl.style.fontWeight = 'bold';
+    titleEl.style.fontSize = '1.1em';
 
+    const toggleDiv = summary.createDiv();
+    const toggle = new ToggleComponent(toggleDiv);
+    toggle.setValue(enabled);
+    toggle.onChange((value) => {
+      onToggle(value);
+      // If enabled, open. If disabled, close.
+      if (value) {
+        details.open = true;
+      } else {
+        details.open = false;
+      }
+    });
+    toggleDiv.addEventListener('click', (e) => {
+      e.stopPropagation(); // vital to prevent summary toggle
+    });
 
-    new Setting(this.containerEl)
-      .setName(t("settings-use-system-notification", lang))
-      .setDesc(t("settings-use-system-notification-desc", lang)) // Need to check
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.options.useSystemNotification);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions(() => ({
-            useSystemNotification: value,
-          }));
-        });
-      });
+    // Provide visual indicator for dropdown? 
+    // Default detail creates a marker. 
+    // We can rely on that or style it.
+
+    const content = details.createDiv();
+    content.style.marginTop = '10px';
+    content.style.paddingLeft = '10px';
+    content.style.borderLeft = '2px solid var(--background-modifier-border)';
+
+    renderContent(content);
+  }
+
+  private createIndentedContainer(parent: HTMLElement): HTMLElement {
+    const container = parent.createDiv();
+    container.style.borderLeft = "2px solid var(--background-modifier-border)";
+    container.style.paddingLeft = "18px";
+    container.style.marginLeft = "4px";
+    container.style.marginTop = "8px";
+    container.style.marginBottom = "8px";
+    return container;
   }
 }
