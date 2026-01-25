@@ -1,3 +1,4 @@
+import * as obsidian from "obsidian";
 import { PluginSettingTab, Setting, Platform, ToggleComponent } from "obsidian";
 import type { App } from "obsidian";
 import type { IWeekStartOption } from "obsidian-calendar-ui";
@@ -29,9 +30,9 @@ export interface ISettings {
     weather: {
       enabled: boolean;
       warnings: boolean;
-      token: string;
+      tokenSecretId: string;
+      hostSecretId: string;
       city: string;
-      host: string;
       refreshInterval: number;
       dailyRefreshInterval: number;
     };
@@ -98,9 +99,9 @@ export const defaultSettings: ISettings = {
     weather: {
       enabled: false,
       warnings: false,
-      token: "",
+      tokenSecretId: "",
+      hostSecretId: "",
       city: "",
-      host: "",
       refreshInterval: 60,
       dailyRefreshInterval: 4,
     },
@@ -843,12 +844,80 @@ export class CalendarSettingsTab extends PluginSettingTab {
             });
           });
 
-        const addText = (name: string, desc: string, key: keyof typeof weather, placeholder?: string, isPassword?: boolean, isNumber?: boolean) => {
+        const SecretComponent = (obsidian as any).SecretComponent;
+
+        // Token
+        const tokenSetting = new Setting(subContainer)
+          .setName(t("settings-weather-token", lang))
+          .setDesc(t("settings-weather-token-desc", lang));
+
+        if (SecretComponent && this.app.secretStorage) {
+          const sc = new SecretComponent(this.app, tokenSetting.controlEl);
+          sc.setValue(weather.tokenSecretId || "");
+          sc.onChange(async (id: string) => {
+            this.plugin.writeOptions((old) => ({
+              ...old,
+              assistant: {
+                ...old.assistant,
+                weather: { ...old.assistant.weather, tokenSecretId: id }
+              }
+            }));
+          });
+        } else {
+          // Fallback if SecretComponent is unavailable
+          tokenSetting.addText(text => {
+            text.inputEl.type = "password";
+            text.setValue(weather.tokenSecretId || "");
+            text.onChange(async (id: string) => {
+              this.plugin.writeOptions((old) => ({
+                ...old,
+                assistant: {
+                  ...old.assistant,
+                  weather: { ...old.assistant.weather, tokenSecretId: id }
+                }
+              }));
+            });
+          });
+        }
+
+        // Host
+        const hostSetting = new Setting(subContainer)
+          .setName(t("settings-weather-host", lang))
+          .setDesc(t("settings-weather-host-desc", lang));
+
+        if (SecretComponent && this.app.secretStorage) {
+          const sc = new SecretComponent(this.app, hostSetting.controlEl);
+          sc.setValue(weather.hostSecretId || "");
+          sc.onChange(async (id: string) => {
+            this.plugin.writeOptions((old) => ({
+              ...old,
+              assistant: {
+                ...old.assistant,
+                weather: { ...old.assistant.weather, hostSecretId: id }
+              }
+            }));
+          });
+        } else {
+          hostSetting.addText(text => {
+            text.setPlaceholder("e.g. abc-123.qweatherapi.com");
+            text.setValue(weather.hostSecretId || "");
+            text.onChange(async (id: string) => {
+              this.plugin.writeOptions((old) => ({
+                ...old,
+                assistant: {
+                  ...old.assistant,
+                  weather: { ...old.assistant.weather, hostSecretId: id }
+                }
+              }));
+            });
+          });
+        }
+
+        const addText = (name: string, desc: string, key: keyof typeof weather, placeholder?: string, isNumber?: boolean) => {
           new Setting(subContainer)
             .setName(name)
             .setDesc(desc)
             .addText(text => {
-              if (isPassword) text.inputEl.type = "password";
               if (isNumber) text.inputEl.type = "number";
               if (placeholder) text.setPlaceholder(placeholder);
               text.setValue(String(weather[key]));
@@ -865,9 +934,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
             });
         };
 
-        addText(t("settings-weather-token", lang), t("settings-weather-token-desc", lang), 'token', undefined, true);
-        addText(t("settings-weather-host", lang), t("settings-weather-host-desc", lang), 'host', "e.g. abc-123.qweatherapi.com");
-
         // Determine default city placeholder based on current moment locale (which follows override)
         const currentLocale = window.moment.locale().toLowerCase();
         let defaultCityPlaceholder = "Beijing";
@@ -876,8 +942,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
         // Add more if needed, or just keep generic.
 
         addText(t("settings-weather-city", lang), t("settings-weather-city-desc", lang), 'city', `e.g. ${defaultCityPlaceholder}`);
-        addText(t("settings-weather-interval", lang), t("settings-weather-interval-desc", lang), 'refreshInterval', "60", false, true);
-        addText(t("settings-weather-daily-interval", lang), t("settings-weather-daily-interval-desc", lang), 'dailyRefreshInterval', "4", false, true);
+        addText(t("settings-weather-interval", lang), t("settings-weather-interval-desc", lang), 'refreshInterval', "60", true);
+        addText(t("settings-weather-daily-interval", lang), t("settings-weather-daily-interval-desc", lang), 'dailyRefreshInterval', "4", true);
       }
     );
   }

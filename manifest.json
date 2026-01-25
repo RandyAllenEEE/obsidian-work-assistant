@@ -2,9 +2,9 @@
   "id": "work-assistant",
   "name": "Work Assistant",
   "description": "A comprehensive productivity companion combining Calendar, Periodic Notes, and Word Count Heatmap features.",
-  "version": "3.2.0",
-  "author": "Randy RandyAllen",
+  "version": "4.0.0",
+  "author": "Randy Allen",
   "authorUrl": "https://github.com/RandyAllenEEE",
   "isDesktopOnly": false,
-  "minAppVersion": "0.9.11"
+  "minAppVersion": "1.11.4"
 }

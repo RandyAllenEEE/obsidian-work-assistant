@@ -58,7 +58,8 @@ export class QWeatherService {
     }
 
     private getApiUrls(): { geo: string; weather: string; weather24h: string; weather3d: string; warning: string } {
-        const { host: qweatherApiHost } = this.plugin.options.assistant.weather;
+        const { hostSecretId } = this.plugin.options.assistant.weather;
+        const qweatherApiHost = (hostSecretId ? this.plugin.app.secretStorage?.getSecret(hostSecretId) : null) || "";
 
         let host = (qweatherApiHost || "").trim().replace(/\/$/, "");
         if (host && !host.startsWith("http")) host = "https://" + host;
@@ -126,7 +127,9 @@ export class QWeatherService {
     }
 
     private async fetchData(forceRefresh: boolean, type: 'all' | 'warnings-only'): Promise<WeatherData | null> {
-        const { enabled: enableWeather, warnings: enableWeatherWarnings, token: qweatherToken, city: weatherCity, refreshInterval: weatherRefreshInterval, dailyRefreshInterval: dailyWeatherRefreshInterval, host: qweatherApiHost } = this.plugin.options.assistant.weather;
+        const { enabled: enableWeather, warnings: enableWeatherWarnings, city: weatherCity, refreshInterval: weatherRefreshInterval, dailyRefreshInterval: dailyWeatherRefreshInterval, tokenSecretId, hostSecretId } = this.plugin.options.assistant.weather;
+        const qweatherToken = (tokenSecretId ? this.plugin.app.secretStorage?.getSecret(tokenSecretId) : null) || "";
+        const qweatherApiHost = (hostSecretId ? this.plugin.app.secretStorage?.getSecret(hostSecretId) : null) || "";
 
         // If getting warnings only, allow even if weather disabled? 
         // No, master weather switch usually controls tokens etc.

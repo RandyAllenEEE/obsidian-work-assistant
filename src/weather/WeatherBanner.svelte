@@ -64,7 +64,6 @@
     if (!weatherService) return;
     if (
       !$settings.assistant.weather.enabled ||
-      !$settings.assistant.weather.token ||
       !$settings.assistant.weather.city
     )
       return;
@@ -132,9 +131,7 @@
     }, intervalMs);
   }
 
-  $: $settings.assistant.weather.city,
-    $settings.assistant.weather.token,
-    refresh();
+  $: $settings.assistant.weather.city, refresh();
 </script>
 
 {#if $settings.assistant.weather.enabled && current}

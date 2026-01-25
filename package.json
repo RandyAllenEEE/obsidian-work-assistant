@@ -1,8 +1,8 @@
 {
   "name": "work-assistant",
-  "version": "3.2.0",
+  "version": "4.0.0",
   "description": "A comprehensive productivity companion combining Calendar, Periodic Notes, and Word Count Heatmap features.",
-  "author": "Liam Cain, Dhruvik Parikh, and Randy",
+  "author": "Randy Allen",
   "main": "main.js",
   "license": "MIT",
   "scripts": {
