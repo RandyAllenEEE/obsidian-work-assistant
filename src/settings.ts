@@ -78,6 +78,7 @@ export interface ISettings {
     enabled: boolean;
     whiteNoise: boolean;
     backgroundNoiseFile: string;
+    trustedExeHash?: string; // Hash of the locally compiled/verified exe
   };
 }
 
@@ -153,6 +154,7 @@ export const defaultSettings: ISettings = {
     enabled: false,
     whiteNoise: false,
     backgroundNoiseFile: "",
+    trustedExeHash: "",
   },
 };
 

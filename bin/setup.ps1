@@ -97,8 +97,8 @@ try {
     }
     
     # Compile
-    $src = "SMTCBridge.cs"
-    $out = "SMTCBridge.exe"
+    $src = Join-Path $PSScriptRoot "SMTCBridge.cs"
+    $out = Join-Path $PSScriptRoot "SMTCBridge.exe"
     
     if (Test-Path $out) { Remove-Item $out -Force }
     

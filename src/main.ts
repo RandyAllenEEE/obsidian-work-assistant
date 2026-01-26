@@ -85,7 +85,6 @@ export default class CalendarPlugin extends Plugin {
 
       await this.saveData(this.options);
       this.configureCommands();
-      this.configureRibbonIcons();
       this.configurePomodoro();
       this.configureSystemMedia();
       this.configureWordCount();
@@ -182,20 +181,27 @@ export default class CalendarPlugin extends Plugin {
       }, 1000)
     );
 
-    this.initLeaf();
     this.isInitialized = true;
   }
 
   initLeaf(): void {
+    // Already have a leaf? Don't create another.
     if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length) {
       return;
     }
 
     if (this.app.workspace.layoutReady) {
-      this.app.workspace.getRightLeaf(false).setViewState({
-        type: VIEW_TYPE_CALENDAR,
-      });
+      // Layout is ready (lazy load or reload). Defer to allow Obsidian to
+      // claim any orphan leaves (from saved workspace) after registerView.
+      setTimeout(() => {
+        if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0) {
+          this.app.workspace.getRightLeaf(false).setViewState({
+            type: VIEW_TYPE_CALENDAR,
+          });
+        }
+      }, 100); // Small delay to ensure orphan leaf revival completes
     } else {
+      // Normal startup: use onLayoutReady callback
       this.app.workspace.onLayoutReady(() => {
         if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0) {
           this.app.workspace.getRightLeaf(false).setViewState({
@@ -324,6 +330,11 @@ export default class CalendarPlugin extends Plugin {
   }
 
   private configureRibbonIcons(): void {
+    const RIBBON_ICON_CLASS = 'obsidian-work-assistant-ribbon-icon';
+
+    // Robust cleanup: Remove by class in case reference was lost or duplicate created
+    this.app.workspace.containerEl.querySelectorAll(`.${RIBBON_ICON_CLASS}`).forEach(el => el.detach());
+
     if (this.ribbonEl) {
       this.ribbonEl.detach();
       this.ribbonEl = null;
@@ -347,6 +358,7 @@ export default class CalendarPlugin extends Plugin {
           }
         }
       );
+      this.ribbonEl.addClass(RIBBON_ICON_CLASS);
       this.ribbonEl.addEventListener("contextmenu", (e: MouseEvent) => {
         e.preventDefault();
         showFileMenu(this.app, this, {
@@ -609,10 +621,7 @@ export default class CalendarPlugin extends Plugin {
       import('./smtc/SystemMediaMonitor').then(({ SystemMediaMonitor }) => {
         if (!this.options.media.enabled) return;
 
-        const basePath = (this.app.vault.adapter as any).getBasePath();
-        const pluginPath = `${basePath}/${this.manifest.dir || '.obsidian/plugins/obsidian-work-assistant'}`;
-
-        this.systemMediaMonitor = new SystemMediaMonitor(pluginPath, this.cacheManager);
+        this.systemMediaMonitor = new SystemMediaMonitor(this, this.cacheManager);
         this.addChild(this.systemMediaMonitor);
 
         if (!this.statusBarPlayerEl) {

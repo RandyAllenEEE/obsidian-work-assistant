@@ -1,26 +1,40 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { writable, type Writable } from 'svelte/store';
-import { Component, Platform, debounce } from 'obsidian';
+import { Component, Platform, debounce, Notice } from 'obsidian';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import type { CacheManager } from "../services/CacheManager";
 import { type MediaCache } from "../ui/stores";
+import type CalendarPlugin from '../main';
 
-// interface MediaInfo extends MediaCache { }
+// Known hashes for verification
+const KNOWN_CS_HASH = "86B272BF9CCF50CCAF554F821163588EA87D8AA0E8E24AA63CA50652FE0138DA";
+const KNOWN_EXE_HASH = "638E16C97FF01683AF55C5B528D3AE58467AFF7841CE465328ACB4133AD6CCAF";
 
 export class SystemMediaMonitor extends Component {
     private process: ChildProcessWithoutNullStreams | null = null;
     public mediaStore: Writable<MediaCache | null> = writable(null);
     private buffer = '';
     private bridgePath: string;
+    private sourcePath: string;
     private setupScriptPath: string;
     private cacheManager: CacheManager;
+    private plugin: CalendarPlugin;
 
-    constructor(pluginPath: string, cacheManager: CacheManager) {
+    constructor(plugin: CalendarPlugin, cacheManager: CacheManager) {
         super();
-        this.bridgePath = path.join(pluginPath, 'bin', 'SMTCBridge.exe');
-        this.setupScriptPath = path.join(pluginPath, 'bin', 'setup.ps1');
+        this.plugin = plugin;
         this.cacheManager = cacheManager;
+
+        const basePath = (plugin.app.vault.adapter as any).getBasePath();
+        const manifestDir = plugin.manifest.dir || '.obsidian/plugins/obsidian-work-assistant';
+        const pluginPath = path.join(basePath, manifestDir);
+
+        this.bridgePath = path.join(pluginPath, 'bin', 'SMTCBridge.exe');
+        this.sourcePath = path.join(pluginPath, 'bin', 'SMTCBridge.cs');
+        this.setupScriptPath = path.join(pluginPath, 'bin', 'setup.ps1');
+
         this.initializeFromCache();
     }
 
@@ -28,9 +42,6 @@ export class SystemMediaMonitor extends Component {
         // Load cached media state immediately
         const cached = this.cacheManager.getMedia();
         if (cached && (cached.Title || cached.Artist)) {
-            // Restore as "Paused" or "Stopped" to avoid confusion if it was playing when closed?
-            // User might want to see what was last playing. Retain status but maybe UI renders it differently?
-            // Keeping raw status is fine.
             this.mediaStore.set(cached);
         }
     }
@@ -40,18 +51,91 @@ export class SystemMediaMonitor extends Component {
         this.startMonitoring();
     }
 
-    async ensureBridge(): Promise<boolean> {
-        if (fs.existsSync(this.bridgePath)) {
+    private computeHash(filePath: string): string | null {
+        if (!fs.existsSync(filePath)) return null;
+        try {
+            const fileBuffer = fs.readFileSync(filePath);
+            const hashSum = crypto.createHash('sha256');
+            hashSum.update(fileBuffer);
+            return hashSum.digest('hex').toUpperCase();
+        } catch (e) {
+            console.error(`[SMTC] Failed to compute hash for ${filePath}`, e);
+            return null;
+        }
+    }
+
+    private async verifyIntegrity(): Promise<boolean> {
+        const exeHash = this.computeHash(this.bridgePath);
+        const trustedHash = this.plugin.options.media.trustedExeHash;
+
+        // 1. Check if matches shipped binary
+        if (exeHash === KNOWN_EXE_HASH) {
             return true;
         }
 
-        console.log("[SMTC] SMTCBridge.exe not found. Running compilation setup...");
+        // 2. Check if matches locally compiled trusted binary
+        if (trustedHash && exeHash === trustedHash) {
+            return true;
+        }
+
+        console.warn(`[SMTC] Binary hash mismatch. Current: ${exeHash}. Verifying source...`);
+
+        // 3. Verify Source Code
+        const sourceHash = this.computeHash(this.sourcePath);
+        if (sourceHash !== KNOWN_CS_HASH) {
+            console.error(`[SMTC] Security Violation: Source code hash mismatch! Expected ${KNOWN_CS_HASH}, got ${sourceHash}`);
+            new Notice("Work Assistant: SMTC Security Violation. Source code modified.");
+            return false;
+        }
+
+        console.log("[SMTC] Source verified. Recompiling to ensure safety...");
+
+        // 4. Recompile
+        const compiled = await this.runCompilation();
+        if (compiled) {
+            const newExeHash = this.computeHash(this.bridgePath);
+            if (newExeHash) {
+                console.log(`[SMTC] Recompiled successfully. Trusted new hash: ${newExeHash}`);
+                // Save this hash as trusted
+                this.plugin.writeOptions((old) => ({
+                    ...old,
+                    media: { ...old.media, trustedExeHash: newExeHash }
+                }));
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    async ensureBridge(): Promise<boolean> {
+        // First check existence
+        if (!fs.existsSync(this.bridgePath)) {
+            console.log("[SMTC] SMTCBridge.exe not found. verified source and compiling...");
+            // Check source before compiling first time too
+            const sourceHash = this.computeHash(this.sourcePath);
+            if (sourceHash !== KNOWN_CS_HASH) {
+                console.error("[SMTC] Cannot compile: Source code mismatch.");
+                return false;
+            }
+            return await this.runCompilation();
+        }
+
+        // Then verify integrity
+        return await this.verifyIntegrity();
+    }
+
+    private async runCompilation(): Promise<boolean> {
+        console.log("[SMTC] Running setup script...");
         return new Promise((resolve) => {
             const child = spawn('powershell', [
                 '-NoProfile',
                 '-ExecutionPolicy', 'Bypass',
                 '-File', this.setupScriptPath
-            ], { windowsHide: true });
+            ], {
+                windowsHide: true,
+                cwd: path.dirname(this.setupScriptPath)
+            });
 
             child.on('close', (code) => {
                 if (code === 0) {
@@ -75,7 +159,7 @@ export class SystemMediaMonitor extends Component {
 
         const ready = await this.ensureBridge();
         if (!ready) {
-            console.error("[SMTC] Bridge not ready. Monitoring aborted.");
+            console.error("[SMTC] Bridge validation failed. Monitoring aborted.");
             return;
         }
 
@@ -120,18 +204,9 @@ export class SystemMediaMonitor extends Component {
 
             try {
                 if (jsonStr === 'null') {
-                    // Don't clear store/cache on null immediately if we want to persist "Last Played"?
-                    // Usually null means "no active session".
-                    // If we want persistence, we might ignore null updates OR treat them as "Closed".
                     this.mediaStore.set(null);
-                    // this.updateCache(null); // Optional: clear cache or keep last? 
-                    // Usually if session ends, we verify that. Let's keep last played in UI if preferred,
-                    // but 'null' implies nothing to control.
                 } else {
                     const data = JSON.parse(jsonStr) as MediaCache;
-
-                    // Optimization: Check if meaningful change before update?
-                    // Store set triggers subscribers.
                     this.mediaStore.set(data);
                     this.debouncedSave(data);
                 }
@@ -152,15 +227,13 @@ export class SystemMediaMonitor extends Component {
     // Debounce save to avoid disk I/O on every second update (if any)
     private debouncedSave = debounce((data: MediaCache) => {
         if (!data) return;
-        // Sanitize: Pick only allowed fields to prevent cache bloat (garbage properties from JSON)
-        // and ensure we overwrite cleanly.
         const cleanData: MediaCache = {
             Title: data.Title,
             Artist: data.Artist,
             AlbumTitle: data.AlbumTitle,
             Status: data.Status,
             SourceAppId: data.SourceAppId,
-            Thumbnail: data.Thumbnail, // We keep the base64 thumbnail
+            Thumbnail: data.Thumbnail,
             lastUpdate: Date.now()
         };
         this.cacheManager.updateMedia(cleanData);

@@ -66,10 +66,13 @@
 
 ## 🤝 致敬与鸣谢
 
-本项目站在巨人的肩膀上，特别致敬 Obsidian 社区的先驱者：
+本项目是基于开源社区的优秀成果构建的。我们特别感谢以下插件的创作者，是他们的工作奠定了本项目的基础：
 
-*   **Liam Cain**：原版 Calendar 和 Periodic Notes 插件的创作者。本插件的日历核心逻辑深深受益于他的开创性工作。
-*   **Dhruvik Parikh**：Daily Stats 插件的作者，为日益精进的字数统计逻辑提供了灵感。
+1.  **[Liam Cain](https://github.com/liamcain)** - **calendar-plugin** 和 **periodic-notes** 的创作者
+    *   本插件的日历视图核心逻辑和周期笔记管理功能深度集成了他的开创性工作。
+    
+2.  **[Dhruvik Parikh](https://github.com/dalede)** - **daily-stats-for-obsidian** 的创作者
+    *   为本项目的高性能后台字数统计和热力图绘制提供了核心灵感。
 
 正是他们的开源精神，让这个工具成为可能。
 
