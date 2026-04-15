@@ -53,6 +53,7 @@ export interface ISettings {
   wordCount: {
     enabled: boolean;
     statusBar: boolean;
+    statsFile: string;
     heatmap: {
       enabled: boolean;
       refreshInterval: number;
@@ -123,6 +124,7 @@ export const defaultSettings: ISettings = {
   wordCount: {
     enabled: true,
     statusBar: true,
+    statsFile: "stats.md",
     heatmap: {
       enabled: true,
       refreshInterval: DEFAULT_REFRESH_INTERVAL,

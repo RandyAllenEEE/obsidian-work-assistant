@@ -1,25 +1,11 @@
-import { Plugin, MarkdownView, debounce, TFile, Component } from 'obsidian';
+import { MarkdownView, debounce, TFile, Component } from 'obsidian';
 import type { Debouncer, App } from 'obsidian';
 import type { Moment } from "moment";
 import { t } from "./i18n";
 import { WORKER_CODE } from "./workers/worker";
-
-interface WordCount {
-	initial: number;
-	current: number;
-}
-
-interface DailyStatsSettings {
-	dayCounts: Record<string, number>;
-	todaysWordCount: Record<string, WordCount>;
-	pomoCounts: Record<string, number>;
-}
-
-const DEFAULT_SETTINGS: DailyStatsSettings = {
-	dayCounts: {},
-	todaysWordCount: {},
-	pomoCounts: {}
-}
+import { DEFAULT_DAILY_STATS_SETTINGS, StatsMdStore } from "./io/statsMdStore";
+import type { DailyStatsSettings } from "./io/statsMdStore";
+import type CalendarPlugin from "./main";
 
 export default class WordCountStats extends Component {
 	settings: DailyStatsSettings;
@@ -27,9 +13,10 @@ export default class WordCountStats extends Component {
 	today: string;
 	debouncedUpdate: Debouncer<[string, string], void>;
 	private debouncedSave: Debouncer<[], Promise<void>>;
-	plugin: Plugin;
+	plugin: CalendarPlugin;
 	app: App;
 	statusBarEl: HTMLElement | null = null;
+	private readonly statsStore: StatsMdStore;
 
 	// Worker related
 	private worker: Worker | null = null;
@@ -41,12 +28,13 @@ export default class WordCountStats extends Component {
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
 
-	constructor(plugin: Plugin, app: App) {
+	constructor(plugin: CalendarPlugin, app: App) {
 		super();
 		this.plugin = plugin;
 		this.app = app;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS);
+		this.settings = Object.assign({}, DEFAULT_DAILY_STATS_SETTINGS);
 		this.today = window.moment().format("YYYY-MM-DD");
+		this.statsStore = new StatsMdStore(this.app, () => this.plugin.options.wordCount.statsFile);
 	}
 
 	onload(): void {
@@ -358,70 +346,18 @@ export default class WordCountStats extends Component {
 		return this.settings.pomoCounts?.[dateStr] || 0;
 	}
 
-	private getDataPath(): string {
-		const configDir = this.plugin.app.vault.configDir || ".obsidian";
-		const pluginId = this.plugin.manifest.id || "work-assistant";
-		return `${configDir}/plugins/${pluginId}/daily-count-data.json`;
-	}
-
 	async loadSettings(): Promise<void> {
-		const dataPath = this.getDataPath();
-		try {
-			if (!(await this.plugin.app.vault.adapter.exists(dataPath))) {
-				this.settings = Object.assign({}, DEFAULT_SETTINGS);
-				return;
-			}
-			const data = await this.plugin.app.vault.adapter.read(dataPath);
-			if (data) {
-				const parsedData = JSON.parse(data);
-				const mergedSettings = Object.assign({}, DEFAULT_SETTINGS, parsedData);
-
-				// Preserve early pomo counts if any happened before load finished
-				if (this.settings && this.settings.pomoCounts) {
-					if (!mergedSettings.pomoCounts) mergedSettings.pomoCounts = {};
-					for (const [date, count] of Object.entries(this.settings.pomoCounts)) {
-						mergedSettings.pomoCounts[date] = (mergedSettings.pomoCounts[date] || 0) + count;
-					}
-				}
-
-				this.settings = mergedSettings;
-			} else {
-				this.settings = Object.assign({}, DEFAULT_SETTINGS);
-			}
-		} catch (e) {
-			console.log("[Work Assistant] Failed to load daily count data, using defaults", e);
-			this.settings = Object.assign({}, DEFAULT_SETTINGS);
-		}
+		this.settings = await this.statsStore.load();
 	}
 
 	async saveSettings(): Promise<void> {
 		if (!this.dirty) return; // Optimization: Skip if no changes
 
-		if (Object.keys(this.settings.dayCounts).length > 0 || Object.keys(this.settings.pomoCounts).length > 0) {
-			const dataPath = this.getDataPath();
-			try {
-				const backupPath = dataPath.replace(".json", "-backup.json");
-
-				// Ensure directory exists
-				const dir = dataPath.substring(0, dataPath.lastIndexOf("/"));
-				if (!(await this.plugin.app.vault.adapter.exists(dir))) {
-					await this.plugin.app.vault.adapter.mkdir(dir);
-				}
-
-				if (await this.plugin.app.vault.adapter.exists(dataPath)) {
-					const existingData = await this.plugin.app.vault.adapter.read(dataPath);
-					await this.plugin.app.vault.adapter.write(backupPath, existingData);
-				}
-
-				await this.plugin.app.vault.adapter.write(dataPath, JSON.stringify(this.settings));
-				this.dirty = false;
-
-				if (await this.plugin.app.vault.adapter.exists(backupPath)) {
-					await this.plugin.app.vault.adapter.remove(backupPath);
-				}
-			} catch (error) {
-				console.error("[Work Assistant] Failed to save daily count data, keeping backup:", error);
-			}
+		try {
+			await this.statsStore.save(this.settings);
+			this.dirty = false;
+		} catch (error) {
+			console.error("[Work Assistant] Failed to save stats.md data:", error);
 		}
 	}
 
