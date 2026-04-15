@@ -8,8 +8,6 @@ import type { DailyStatsSettings } from "./io/statsMdStore";
 import type { TodaysWordCountAggregate } from "./io/statsMdStore";
 import type CalendarPlugin from "./main";
 
-const DEFAULT_SHOCK_THRESHOLD = 1000;
-
 export default class WordCountStats extends Component {
 	settings: DailyStatsSettings;
 	currentWordCount: number;
@@ -28,6 +26,7 @@ export default class WordCountStats extends Component {
 	private nonces = new Map<string, number>();
 	private pendingHashes = new Map<number, string>(); // Deprecated: Hash computed in worker now
 	private dirty = false; // Check for unsaved changes
+	private activeStatsMdPath: string;
 
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
@@ -40,7 +39,8 @@ export default class WordCountStats extends Component {
 		this.app = app;
 		this.settings = Object.assign({}, DEFAULT_DAILY_STATS_SETTINGS);
 		this.today = window.moment().format("YYYY-MM-DD");
-		this.statsStore = new StatsMdStore(this.app, () => this.plugin.options.wordCount.statsFile);
+		this.activeStatsMdPath = this.resolveStatsMdPath();
+		this.statsStore = new StatsMdStore(this.app, () => this.resolveStatsMdPath());
 	}
 
 	onload(): void {
@@ -146,6 +146,22 @@ export default class WordCountStats extends Component {
 		this.registerStatusBarUpdates();
 	}
 
+		public async handleSettingsChanged(): Promise<void> {
+		const nextPath = this.resolveStatsMdPath();
+		if (nextPath === this.activeStatsMdPath) {
+			return;
+		}
+
+		if (this.dirty) {
+			await this.saveSettings();
+		}
+
+		this.activeStatsMdPath = nextPath;
+		await this.loadSettings();
+		this.updateDate();
+		this.updateCounts();
+	}
+
 	private updateStore(filepath: string, count: number): void {
 		// We rely on handleWorkerMessage to update the cache now.
 
@@ -157,7 +173,7 @@ export default class WordCountStats extends Component {
 				const rawDelta = count - baseline;
 				this.latestObservedCounts.set(filepath, count);
 
-				if (rawDelta !== 0 && Math.abs(rawDelta) < DEFAULT_SHOCK_THRESHOLD) {
+				if (rawDelta !== 0 && Math.abs(rawDelta) < this.getShockThreshold()) {
 					fileStats.accumulatedDelta += rawDelta;
 					fileStats.lastAcceptedCount = count;
 					changed = true;
@@ -435,5 +451,15 @@ export default class WordCountStats extends Component {
 	// Get all word count data
 	getAllWordCountData(): Record<string, number> {
 		return this.settings.dayCounts;
+	}
+
+	private resolveStatsMdPath(): string {
+		const path = this.plugin.options.wordCount.statsMdPath?.trim();
+		return path || "stats.md";
+	}
+
+	private getShockThreshold(): number {
+		const threshold = this.plugin.options.wordCount.shockThreshold;
+		return Number.isInteger(threshold) && threshold > 0 ? threshold : 1000;
 	}
 }
