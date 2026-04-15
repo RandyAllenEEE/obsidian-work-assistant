@@ -55,6 +55,14 @@ export default class WordCountStats extends Component {
 			this.statusBarEl.remove();
 			this.statusBarEl = null;
 		}
+		// 强制保存脏数据，防止会话统计丢失
+		if (this.dirty) {
+			void this.saveSettings();
+		}
+		
+		// 清理StatsMdStore中的事件监听器
+		this.statsStore.cleanup();
+		
 		this.terminateWorker();
 	}
 
@@ -395,7 +403,12 @@ export default class WordCountStats extends Component {
 		this.settings = snapshot.settings;
 		this.todaysAggregate = snapshot.todaysAggregate;
 		this.currentWordCount = this.todaysAggregate.total;
-		this.settings.dayCounts[this.today] = this.currentWordCount;
+		
+		// 修正 today 覆盖逻辑：只有当当天数据不存在时才设置
+		if (!this.settings.dayCounts[this.today] || this.settings.dayCounts[this.today] !== this.currentWordCount) {
+			this.settings.dayCounts[this.today] = this.currentWordCount;
+		}
+		
 		this.refreshStatusBar();
 	}
 

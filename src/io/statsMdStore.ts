@@ -25,6 +25,7 @@ interface NoteTableRow {
   rowId: string;
   noteLink: string;
   countsByDate: Record<string, number>;
+  lastModified: number;  // 添加最后修改时间追踪
 }
 
 interface TableModel {
@@ -62,12 +63,35 @@ function normalizeRecord(values: unknown): Record<string, number> {
 
 export class StatsMdStore {
   private readonly filePathToRowId = new Map<string, string>();
+  private renameHandlerRef: ((file: TAbstractFile, oldPath: string) => void) | null = null;  // 保留对处理器的引用
+  
+  // 添加用于跟踪文件更新时间的映射
+  private readonly fileLastModified = new Map<string, number>();
 
   constructor(
     private readonly app: App,
     private readonly getPath: () => string,
   ) {
-    this.app.vault.on("rename", this.handleRename);
+    // 创建一个命名函数以便稍后可以移除监听器
+    this.renameHandlerRef = this.handleRename;
+    this.app.vault.on("rename", this.renameHandlerRef);
+  }
+  
+  // 添加清理方法
+  cleanup() {
+    if (this.renameHandlerRef) {
+      this.app.vault.off("rename", this.renameHandlerRef);
+      this.renameHandlerRef = null;
+    }
+  }
+
+  // 添加一个方法来获取文件的最后修改时间
+  private getFileLastModified(filePath: string): number {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (file && file instanceof TFile) {
+      return file.stat.mtime; // 返回文件的实际修改时间
+    }
+    return Date.now(); // 默认使用当前时间
   }
 
   async load(): Promise<WordCountSnapshot> {
@@ -163,6 +187,7 @@ export class StatsMdStore {
     model.noteRows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
       if (!file) return;
+      
       const accumulatedDelta = row.countsByDate[today] ?? 0;
       const baseline = baselines[file.path];
       todaysWordCount[file.path] = {
@@ -170,6 +195,8 @@ export class StatsMdStore {
         lastAcceptedCount: Number.isFinite(baseline) ? baseline : accumulatedDelta,
       };
       this.filePathToRowId.set(file.path, row.rowId);
+      // 记录文件的最后修改时间
+      this.fileLastModified.set(file.path, row.lastModified || Date.now());
     });
 
     return {
@@ -240,7 +267,11 @@ export class StatsMdStore {
           rowId: this.createRowId(target.path),
           noteLink: this.toNoteLink(target),
           countsByDate: {},
+          lastModified: this.getFileLastModified(target.path), // 记录文件修改时间
         };
+      } else {
+        // 更新修改时间
+        row.lastModified = this.getFileLastModified(target.path);
       }
 
       row.noteLink = this.toNoteLink(target);
@@ -292,6 +323,32 @@ export class StatsMdStore {
     this.filePathToRowId.set(file.path, rowId);
   };
 
+  private dedupeRows(rows: NoteTableRow[]): NoteTableRow[] {
+    const deduped = new Map<string, {row: NoteTableRow, timestamp: number}>();
+
+    rows.forEach((row) => {
+      const file = this.resolveNoteLink(row.noteLink);
+      const key = file ? `file:${file.path}` : `link:${row.noteLink}`;
+      
+      // 获取文件的最后修改时间进行比较
+      const currentTimestamp = row.lastModified || Date.now();
+      
+      const existing = deduped.get(key);
+      // 按照更新时间覆盖，而不是简单的"后出现行覆盖"
+      if (!existing || currentTimestamp > existing.timestamp) {
+        deduped.set(key, { row, timestamp: currentTimestamp });
+        if (file) {
+          this.filePathToRowId.set(file.path, row.rowId);
+        }
+      } else {
+        // 如果发现重复项，可以考虑记录日志
+        console.debug(`[Work Assistant] Duplicate entry detected for key ${key}, keeping newer entry`);
+      }
+    });
+
+    return [...deduped.values()].map(item => item.row);
+  }
+
   private parseTable(content: string): TableModel {
     const lines = content
       .split("\n")
@@ -340,6 +397,7 @@ export class StatsMdStore {
         rowId: this.getRowIdFromLink(label, i),
         noteLink: label,
         countsByDate: {},
+        lastModified: Date.now(), // 为新解析的行设置当前时间作为默认值
       };
 
       dates.forEach((date, idx) => {
@@ -360,26 +418,10 @@ export class StatsMdStore {
   }
 
   private parseTableCells(line: string): string[] {
+    // 不再过滤空单元格，而是保留它们的位置
     return line
       .split("|")
-      .map((cell) => cell.trim())
-      .filter((cell) => cell.length > 0);
-  }
-
-  private dedupeRows(rows: NoteTableRow[]): NoteTableRow[] {
-    const deduped = new Map<string, NoteTableRow>();
-
-    rows.forEach((row) => {
-      const file = this.resolveNoteLink(row.noteLink);
-      const key = file ? `file:${file.path}` : `link:${row.noteLink}`;
-      // later row wins
-      deduped.set(key, row);
-      if (file) {
-        this.filePathToRowId.set(file.path, row.rowId);
-      }
-    });
-
-    return [...deduped.values()];
+      .map((cell) => cell.trim());
   }
 
   private buildMainTable(

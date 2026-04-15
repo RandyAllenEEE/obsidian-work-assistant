@@ -1,81 +1,121 @@
-# Work Assistant (工作助手) Plugin
+# Work Assistant Plugin
 
-这是为 [Obsidian](https://obsidian.md/) 打造的一站式生产力中心，将 **日历 (Calendar)**、**周期笔记 (Periodic Notes)**、**字数热力图 (Word Count Heatmap)**、**番茄钟 (Pomodoro)** 和 **系统媒体控制 (System Media Control)** 完美融合，构建了一个高性能、模块化的效率生态系统。
+This is a comprehensive productivity center for [Obsidian](https://obsidian.md/), perfectly integrating **Calendar**, **Periodic Notes**, **Word Count Heatmap**, **Pomodoro Timer**, and **System Media Control** into a high-performance, modular efficiency ecosystem.
 
 ![screenshot-hero](https://raw.githubusercontent.com/liamcain/obsidian-calendar-plugin/master/images/screenshot-full.png)
-*(注：由于功能丰富，实际界面包含增强的周期笔记集成和热力图显示)*
+*(Note: Due to rich functionality, the actual interface includes enhanced periodic notes integration and heatmap display)*
 
-## 🚀 3.2.0 版本更新：性能与稳定性的飞跃
+## 🚀 Version 3.2.0 Update: Performance and Stability Leap
 
-本次更新专注于核心体验的打磨，为您带来更流畅、更可靠的工作流：
+This update focuses on refining core experiences, bringing you a smoother and more reliable workflow:
 
-*   **🍅 智能番茄钟**：新增**退出自动暂停**功能。关闭 Obsidian 时，正在进行的番茄钟会自动暂停并保存状态，下次打开时无缝继续，不再白白流失时间。
-*   **⚡ 极致性能**：字数统计核心重构，迁移至后台 **Worker 线程** 并引入 I/O 防抖，彻底消除打字卡顿，硬盘写入量减少 99%。
-*   **🛡️ 系统稳健性**：重写了天气服务和缓存系统的生命周期管理，杜绝内存泄露和僵尸定时器，资源占用更低。
-
----
-
-## 🌟 核心功能
-
-### 📅 1. 模块化日历视图 (核心枢纽)
-您的时间管理指挥塔。
--   **主控开关**：不仅是显示日历，更是整个插件的开关。关闭日历会自动卸载相关联的子功能，确保零资源占用。
--   **智能联动**：禁用日历时，热力图等依赖功能会自动锁定，防止配置冲突。
-
-### 🔁 2. 周期笔记系统 (Periodic Notes)
--   **全维度管理**：支持 **日、周、月、季、年** 维度的笔记管理。
--   **日历交互**：点击日历日期直接创建或跳转对应笔记。
--   **按需加载**：文件缓存系统仅在启用此功能时激活，不使用则不消耗任何内存。
-
-### 📊 3. 字数统计与热力图 (Word Count & Heatmap)
--   **双重架构**：
-    -   **状态栏**：实时显示“今日字数”，轻量无感。
-    -   **日历热力图**：直观展示您的创作习惯，颜色越深，产出越多。
--   **后台计算**：计算逻辑完全在独立线程运行，从不阻塞主界面。
-
-### 🍅 4. 番茄钟 (Pomodoro Timer)
--   **沉浸式体验**：状态栏常驻显示 (`🍅 25:00`)，不占用屏幕空间。
--   **自动记录**：完成番茄钟后，自动在当天的日记中记录成果。
--   **状态持久化**：无论是重启软件还是电脑休眠，您的专注进度都会被安全保存。
-
-### 🎵 5. 原生媒体控制 (Windows 专用)
--   **SMTC 桥接**：内置高性能 C# 桥接器，将 Windows 系统媒体控制直接集成到 Obsidian。
--   **零配置**：无需手动安装任何依赖，插件自动处理所有环境配置。
--   **极速响应**：优化的缩略图缓存与轮询机制，比传统方案快数倍。
+*   **🍅 Smart Pomodoro Timer**: New **automatic pause on exit** feature. When closing Obsidian, an ongoing Pomodoro session automatically pauses and saves its state, allowing seamless resumption next time without losing time.
+*   **⚡ Extreme Performance**: Word count core rebuilt with background **Worker threads** and I/O debouncing, completely eliminating typing lag and reducing disk writes by 99%.
+*   **🛡️ System Robustness**: Rewrote weather service and cache system lifecycle management, eliminating memory leaks and zombie timers, with lower resource consumption.
 
 ---
 
-## 🛠️ 配置与架构
+## 🌟 Core Features
 
-设置面板经过重构，以反映严格的层级关系：
+### 📅 1. Modular Calendar View (Central Hub)
+Your time management command center.
+-   **Master Switch**: Not only displays the calendar but serves as the switch for the entire plugin. Closing the calendar automatically unloads related sub-features, ensuring zero resource consumption.
+-   **Smart Integration**: Disabling the calendar automatically locks dependent features like heatmaps, preventing configuration conflicts.
 
-1.  **日历视图 (Calendar View) - 总开关**
-    *   控制侧边栏视图。
-    *   *关闭后*：热力图和日历联动功能将被禁用。
+### 🔁 2. Periodic Notes System
+-   **Full Dimension Management**: Supports **Daily, Weekly, Monthly, Quarterly, Yearly** note management.
+-   **Calendar Interaction**: Click calendar dates to directly create or jump to corresponding notes.
+-   **On-Demand Loading**: File caching system activates only when this feature is enabled, consuming no memory when unused.
 
-2.  **周期笔记 (Periodic Notes)**
-    *   **日历联动**：允许通过点击日历操作笔记。
-    *   **粒度配置**：自定义各级笔记（日/周/月等）的路径和模板。
+### 📊 3. Word Count & Heatmap
+-   **Dual Architecture**:
+    -   **Status Bar**: Real-time "Today's Word Count" display, lightweight and unobtrusive.
+    -   **Calendar Heatmap**: Intuitive visualization of your writing habits, with deeper colors indicating higher productivity.
+-   **Background Processing**: Calculation logic runs entirely in independent threads, never blocking the main interface.
+-   **Smart Threshold Filter**: Implements shock detection to prevent abnormal jumps in word counts from distorting statistics.
+-   **Persistent Storage**: Uses a single `stats.md` file with tabular format to store all word count history.
+-   **Rename Resilience**: Handles file renames robustly with proper deduplication based on modification times.
 
-3.  **字数统计 (Word Count)**
-    *   **状态栏组件**：开关底部状态显示。
-    *   **热力图**：开关日历背景渲染。
-        *   *颜色阈值*：自定义您的努力程度颜色。
+### 🍅 4. Pomodoro Timer
+-   **Immersive Experience**: Status bar resident display (`🍅 25:00`), not occupying screen space.
+-   **Auto Logging**: Upon completion, automatically records achievements in the day's journal.
+-   **State Persistence**: Whether restarting software or computer sleep, your focus progress is safely preserved.
+-   **Audio Feedback**: Includes customizable sound notifications for completed sessions.
+
+### 🎵 5. Native Media Control (Windows Only)
+-   **SMTC Bridge**: Built-in high-performance C# bridge integrating Windows System Media Transport Controls directly into Obsidian.
+-   **Zero Configuration**: No manual installation of dependencies required; the plugin handles all environmental configurations automatically.
+-   **Lightning Fast Response**: Optimized thumbnail caching and polling mechanisms, many times faster than traditional solutions.
+
+### 🌤️ 6. Weather Service
+-   **Integrated Weather Data**: Provides real-time weather information display.
+-   **QWeather Integration**: Utilizes QWeather API for accurate forecasts.
+-   **Customizable Display**: Configurable refresh intervals and location settings.
+
+### 📁 7. File Management Utilities
+-   **Custom Templates**: Support for custom templates in periodic notes creation.
+-   **Flexible Paths**: Customizable paths for different note types (daily, weekly, monthly, etc.).
+-   **Smart Linking**: Automatic linking between related notes and calendar entries.
 
 ---
 
-## 🤝 致敬与鸣谢
+## ⚙️ Configuration & Architecture
 
-本项目是基于开源社区的优秀成果构建的。我们特别感谢以下插件的创作者，是他们的工作奠定了本项目的基础：
+The settings panel has been restructured to reflect strict hierarchical relationships:
 
-1.  **[Liam Cain](https://github.com/liamcain)** - **calendar-plugin** 和 **periodic-notes** 的创作者
-    *   本插件的日历视图核心逻辑和周期笔记管理功能深度集成了他的开创性工作。
+1.  **Calendar View - Master Switch**
+    *   Controls sidebar view.
+    *   *When disabled*: Heatmap and calendar integration features will be disabled.
+
+2.  **Periodic Notes**
+    *   **Calendar Linkage**: Allows note operations through calendar clicks.
+    *   **Granular Configuration**: Customize paths and templates for each level (daily/weekly/monthly/etc.).
+
+3.  **Word Count**
+    *   **Status Bar Component**: Toggle bottom status display.
+    *   **Heatmap**: Toggle calendar background rendering.
+        *   *Color Thresholds*: Customize colors representing your effort levels.
+    *   **Storage Path**: Configure the location of the `stats.md` file.
+    *   **Shock Threshold**: Set sensitivity for detecting significant word count changes.
+
+4.  **Pomodoro Timer**
+    *   **Timer Durations**: Customize work, break, and long break intervals.
+    *   **Notification Settings**: Configure sound and system notifications.
+    *   **Automatic Cycles**: Option for continuous or manual session management.
+
+5.  **Media Control**
+    *   **System Integration**: Enable native Windows media controls.
+    *   **White Noise**: Background noise options for focus.
+
+---
+
+## 🏗️ Technical Architecture
+
+### Key Design Decisions:
+-   **Web Workers Offline Computing**: Heavy computational tasks like word count calculations are moved to background Worker threads to avoid blocking the main UI thread.
+-   **I/O Debouncing**: Reduces frequent disk write operations, lowering resource consumption.
+-   **Lifecycle Strict Management**: Cache and service lifecycles are rewritten to prevent memory leaks and zombie timers.
+
+### Architecture Patterns:
+-   **Modular/Plugin Pattern**: Feature decoupling through configuration switches to dynamically enable/disable modules.
+-   **Observer Pattern**: Using Svelte Stores and Obsidian event systems for automatic UI updates when data changes.
+-   **Singleton Pattern**: Used for managing service instances (such as CacheManager, WhiteNoiseService).
+-   **Bridge Pattern**: Establishing communication bridges between JS/TS environments and native C# code (SMTC Bridge).
+
+---
+
+## 🤝 Acknowledgments
+
+This project is built upon the excellent work of the open-source community. We especially thank the creators of the following plugins, whose work laid the foundation for this project:
+
+1.  **[Liam Cain](https://github.com/liamcain)** - Creator of **calendar-plugin** and **periodic-notes**
+    *   The core logic of our calendar view and periodic notes management functionality deeply integrates his pioneering work.
     
-2.  **[Dhruvik Parikh](https://github.com/dalede)** - **daily-stats-for-obsidian** 的创作者
-    *   为本项目的高性能后台字数统计和热力图绘制提供了核心灵感。
+2.  **[Dhruvik Parikh](https://github.com/dalede)** - Creator of **daily-stats-for-obsidian**
+    *   Provided core inspiration for our high-performance background word count and heatmap rendering.
 
-正是他们的开源精神，让这个工具成为可能。
+It is their open-source spirit that makes this tool possible.
 
-## 📜 许可证
+## 📜 License
 
-本项目采用 MIT 许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
