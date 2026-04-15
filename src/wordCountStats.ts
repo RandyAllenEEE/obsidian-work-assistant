@@ -5,6 +5,7 @@ import { t } from "./i18n";
 import { WORKER_CODE } from "./workers/worker";
 import { DEFAULT_DAILY_STATS_SETTINGS, StatsMdStore } from "./io/statsMdStore";
 import type { DailyStatsSettings } from "./io/statsMdStore";
+import type { TodaysWordCountAggregate } from "./io/statsMdStore";
 import type CalendarPlugin from "./main";
 
 const DEFAULT_SHOCK_THRESHOLD = 1000;
@@ -19,6 +20,7 @@ export default class WordCountStats extends Component {
 	app: App;
 	statusBarEl: HTMLElement | null = null;
 	private readonly statsStore: StatsMdStore;
+	private todaysAggregate: TodaysWordCountAggregate = { total: 0, byFile: {} };
 
 	// Worker related
 	private worker: Worker | null = null;
@@ -99,11 +101,7 @@ export default class WordCountStats extends Component {
 		await this.loadSettings();
 
 		this.updateDate();
-		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
-			this.updateCounts();
-		} else {
-			this.currentWordCount = 0;
-		}
+		this.updateCounts();
 
 		// Initialize Worker if enabled
 		this.initWorker();
@@ -228,7 +226,7 @@ export default class WordCountStats extends Component {
 		if (!this.statusBarEl) return;
 
 		const lang = this.getObsidianLanguage();
-		const currentWordCount = this.currentWordCount || 0;
+		const currentWordCount = this.todaysAggregate.total || 0;
 
 		let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
 
@@ -336,9 +334,8 @@ export default class WordCountStats extends Component {
 	}
 
 	updateCounts(): void {
-		this.currentWordCount = Object.values(this.settings.todaysWordCount)
-			.map((wordCount) => Math.max(0, wordCount.accumulatedDelta))
-			.reduce((a, b) => a + b, 0);
+		this.todaysAggregate = this.statsStore.getTodaysWordCountAggregate(this.settings.todaysWordCount);
+		this.currentWordCount = this.todaysAggregate.total;
 		// Persist the display value for stats table-like consumers.
 		this.settings.dayCounts[this.today] = this.currentWordCount;
 		this.refreshStatusBar();
@@ -370,7 +367,10 @@ export default class WordCountStats extends Component {
 		if (!this.dirty) return; // Optimization: Skip if no changes
 
 		try {
-			await this.statsStore.save(this.settings);
+			const refreshedSettings = await this.statsStore.save(this.settings);
+			this.settings = refreshedSettings;
+			this.updateDate();
+			this.updateCounts();
 			this.dirty = false;
 		} catch (error) {
 			console.error("[Work Assistant] Failed to save stats.md data:", error);
@@ -379,13 +379,14 @@ export default class WordCountStats extends Component {
 
 	// Get word count for a specific date
 	getWordCountForDate(dateStr: string): number {
+		if (dateStr === this.today) {
+			return this.todaysAggregate.total;
+		}
 		return this.settings.dayCounts[dateStr] || 0;
 	}
 
 	getFileCountChange(filepath: string): number {
-		const fileData = this.settings.todaysWordCount[filepath];
-		if (!fileData) return 0;
-		return Math.max(0, fileData.accumulatedDelta);
+		return this.todaysAggregate.byFile[filepath]?.displayDelta || 0;
 	}
 
 	getWeeklyWordCount(date: Moment): number {

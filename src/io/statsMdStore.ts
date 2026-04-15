@@ -6,6 +6,16 @@ interface WordCount {
   lastAcceptedCount: number;
 }
 
+export interface TodaysWordCountStat {
+  displayDelta: number;
+  lastAcceptedCount: number;
+}
+
+export interface TodaysWordCountAggregate {
+  total: number;
+  byFile: Record<string, TodaysWordCountStat>;
+}
+
 interface WordCountTableRow extends WordCount {
   rowId: string;
   noteLink: string;
@@ -106,13 +116,31 @@ export class StatsMdStore {
     }
   }
 
-  async save(settings: DailyStatsSettings): Promise<void> {
+  async save(settings: DailyStatsSettings): Promise<DailyStatsSettings> {
     const statsPath = this.getPath();
     await this.ensureParentDirectory(statsPath);
     const existingContent = (await this.app.vault.adapter.exists(statsPath))
       ? await this.app.vault.adapter.read(statsPath)
       : "";
-    await this.app.vault.adapter.write(statsPath, this.buildTemplate(settings, existingContent));
+    const nextContent = this.buildTemplate(settings, existingContent);
+    await this.app.vault.adapter.write(statsPath, nextContent);
+    return this.parse(nextContent);
+  }
+
+  getTodaysWordCountAggregate(todaysWordCount: Record<string, WordCount>): TodaysWordCountAggregate {
+    const byFile: Record<string, TodaysWordCountStat> = {};
+    let total = 0;
+
+    for (const [filePath, wordCount] of Object.entries(todaysWordCount ?? {})) {
+      const displayDelta = Math.max(0, wordCount.accumulatedDelta);
+      byFile[filePath] = {
+        displayDelta,
+        lastAcceptedCount: wordCount.lastAcceptedCount,
+      };
+      total += displayDelta;
+    }
+
+    return { total, byFile };
   }
 
   private async ensureParentDirectory(path: string): Promise<void> {
