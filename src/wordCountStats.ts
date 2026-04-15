@@ -31,6 +31,8 @@ export default class WordCountStats extends Component {
 
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
+// Runtime baseline to apply shock filtering before persisting to settings.
+	private latestObservedCounts: Map<string, number> = new Map();
 
 	constructor(plugin: CalendarPlugin, app: App) {
 		super();
@@ -133,7 +135,9 @@ export default class WordCountStats extends Component {
 		// Save settings periodically (every 30 seconds) as a safety measure
 		this.registerInterval(window.setInterval(() => {
 			this.updateDate();
-			this.debouncedSave();
+			if (this.dirty) {
+				this.debouncedSave();
+			}
 		}, 30000)); // Trigger debounced save every 30 seconds
 
 
@@ -149,11 +153,12 @@ export default class WordCountStats extends Component {
 		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
 			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
 				const fileStats = this.settings.todaysWordCount[filepath];
-				if (fileStats.lastAcceptedCount !== count) {
-					const rawDelta = count - fileStats.lastAcceptedCount;
-					if (Math.abs(rawDelta) < DEFAULT_SHOCK_THRESHOLD) {
-						fileStats.accumulatedDelta += rawDelta;
-					}
+				const baseline = this.latestObservedCounts.get(filepath) ?? fileStats.lastAcceptedCount;
+				const rawDelta = count - baseline;
+				this.latestObservedCounts.set(filepath, count);
+
+				if (rawDelta !== 0 && Math.abs(rawDelta) < DEFAULT_SHOCK_THRESHOLD) {
+					fileStats.accumulatedDelta += rawDelta;
 					fileStats.lastAcceptedCount = count;
 					changed = true;
 				}
@@ -162,6 +167,7 @@ export default class WordCountStats extends Component {
 					accumulatedDelta: 0,
 					lastAcceptedCount: count,
 				};
+				this.latestObservedCounts.set(filepath, count);
 				changed = true;
 			}
 		} else {
@@ -171,6 +177,8 @@ export default class WordCountStats extends Component {
 				lastAcceptedCount: count,
 			};
 			this.wordCountCache.clear();
+			this.latestObservedCounts.clear();
+			this.latestObservedCounts.set(filepath, count);
 			changed = true;
 		}
 
@@ -329,6 +337,7 @@ export default class WordCountStats extends Component {
 		// If date has changed, clear the cache for better performance
 		if (newToday !== this.today) {
 			this.wordCountCache.clear();
+			this.latestObservedCounts.clear();
 		}
 		this.today = newToday;
 	}
@@ -361,6 +370,9 @@ export default class WordCountStats extends Component {
 
 	async loadSettings(): Promise<void> {
 		this.settings = await this.statsStore.load();
+		this.latestObservedCounts = new Map(
+			Object.entries(this.settings.todaysWordCount).map(([filepath, stats]) => [filepath, stats.lastAcceptedCount])
+		);
 	}
 
 	async saveSettings(): Promise<void> {
