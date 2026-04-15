@@ -89,10 +89,11 @@
     color: var(--color-text-title);
     font-size: 1.5em;
     margin: 0;
+    min-width: 0;
   }
 
   .is-mobile .title {
-    font-size: 1.3em;
+    font-size: clamp(1rem, 5vw, 1.3em);
   }
 
   .month {
@@ -117,6 +118,7 @@
     display: flex;
     justify-content: center;
     margin-left: auto;
+    flex-shrink: 0;
   }
 
   .reset-button {

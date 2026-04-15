@@ -140,7 +140,7 @@
     display: flex;
     justify-content: center;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
   }
   .widget-container:last-child {
     margin-bottom: 0;
