@@ -7,6 +7,8 @@ import { DEFAULT_DAILY_STATS_SETTINGS, StatsMdStore } from "./io/statsMdStore";
 import type { DailyStatsSettings } from "./io/statsMdStore";
 import type CalendarPlugin from "./main";
 
+const DEFAULT_SHOCK_THRESHOLD = 1000;
+
 export default class WordCountStats extends Component {
 	settings: DailyStatsSettings;
 	currentWordCount: number;
@@ -150,7 +152,10 @@ export default class WordCountStats extends Component {
 			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
 				const fileStats = this.settings.todaysWordCount[filepath];
 				if (fileStats.lastAcceptedCount !== count) {
-					fileStats.accumulatedDelta += count - fileStats.lastAcceptedCount;
+					const rawDelta = count - fileStats.lastAcceptedCount;
+					if (Math.abs(rawDelta) < DEFAULT_SHOCK_THRESHOLD) {
+						fileStats.accumulatedDelta += rawDelta;
+					}
 					fileStats.lastAcceptedCount = count;
 					changed = true;
 				}
