@@ -6,7 +6,10 @@ import { WORKER_CODE } from "./workers/worker";
 import { DEFAULT_DAILY_STATS_SETTINGS, StatsMdStore } from "./io/statsMdStore";
 import type { DailyStatsSettings } from "./io/statsMdStore";
 import type { TodaysWordCountAggregate } from "./io/statsMdStore";
+import type { WordCountSnapshot } from "./io/statsMdStore";
 import type CalendarPlugin from "./main";
+
+export const WORD_COUNT_STATS_UPDATED_EVENT = "work-assistant:word-count-stats-updated";
 
 export default class WordCountStats extends Component {
 	settings: DailyStatsSettings;
@@ -366,6 +369,18 @@ export default class WordCountStats extends Component {
 		this.refreshStatusBar();
 	}
 
+	private applySnapshot(snapshot: WordCountSnapshot): void {
+		this.settings = snapshot.settings;
+		this.todaysAggregate = snapshot.todaysAggregate;
+		this.currentWordCount = this.todaysAggregate.total;
+		this.settings.dayCounts[this.today] = this.currentWordCount;
+		this.refreshStatusBar();
+	}
+
+	private emitStatsUpdated(): void {
+		this.app.workspace.trigger(WORD_COUNT_STATS_UPDATED_EVENT);
+	}
+
 	incrementPomoCount(date: string = this.today): void {
 		if (!this.settings.pomoCounts) {
 			this.settings.pomoCounts = {};
@@ -385,7 +400,8 @@ export default class WordCountStats extends Component {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = await this.statsStore.load();
+		const snapshot = await this.statsStore.load();
+		this.applySnapshot(snapshot);
 		this.latestObservedCounts = new Map(
 			Object.entries(this.settings.todaysWordCount).map(([filepath, stats]) => [filepath, stats.lastAcceptedCount])
 		);
@@ -395,11 +411,11 @@ export default class WordCountStats extends Component {
 		if (!this.dirty) return; // Optimization: Skip if no changes
 
 		try {
-			const refreshedSettings = await this.statsStore.save(this.settings);
-			this.settings = refreshedSettings;
+			const refreshedSnapshot = await this.statsStore.save(this.settings);
+			this.applySnapshot(refreshedSnapshot);
 			this.updateDate();
-			this.updateCounts();
 			this.dirty = false;
+			this.emitStatsUpdated();
 		} catch (error) {
 			console.error("[Work Assistant] Failed to save stats.md data:", error);
 		}

@@ -20,6 +20,7 @@ import {
   createDailyStatsSource,
 } from "./ui/sources";
 import WordCountStats from "./wordCountStats";
+import { WORD_COUNT_STATS_UPDATED_EVENT } from "./wordCountStats";
 import type CalendarPlugin from "./main";
 import { isMetaPressed } from "./periodic/utils";
 import type { Granularity, PeriodicNotesConfig } from "./periodic/types";
@@ -66,6 +67,7 @@ export default class CalendarView extends ItemView {
     this.registerEvent(this.app.vault.on("create", this.onFileCreated));
     this.registerEvent(this.app.vault.on("delete", this.onFileDeleted));
     this.registerEvent(this.app.vault.on("modify", this.onFileModified));
+    this.registerEvent((<any>this.app.workspace).on(WORD_COUNT_STATS_UPDATED_EVENT, () => this.calendar?.tick()));
     this.registerEvent(this.app.workspace.on("file-open", this.onFileOpen));
 
     this.settings = null;
