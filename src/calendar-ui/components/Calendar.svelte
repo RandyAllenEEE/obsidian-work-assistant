@@ -154,6 +154,8 @@
 
   .container {
     padding: 0 8px;
+    width: 100%;
+    min-width: 0;
   }
 
   .container.is-mobile {
