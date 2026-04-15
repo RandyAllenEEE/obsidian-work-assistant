@@ -1,25 +1,12 @@
-import { Plugin, MarkdownView, debounce, TFile, Component } from 'obsidian';
+import { MarkdownView, debounce, TFile, Component } from 'obsidian';
 import type { Debouncer, App } from 'obsidian';
 import type { Moment } from "moment";
 import { t } from "./i18n";
 import { WORKER_CODE } from "./workers/worker";
-
-interface WordCount {
-	initial: number;
-	current: number;
-}
-
-interface DailyStatsSettings {
-	dayCounts: Record<string, number>;
-	todaysWordCount: Record<string, WordCount>;
-	pomoCounts: Record<string, number>;
-}
-
-const DEFAULT_SETTINGS: DailyStatsSettings = {
-	dayCounts: {},
-	todaysWordCount: {},
-	pomoCounts: {}
-}
+import { DEFAULT_DAILY_STATS_SETTINGS, StatsMdStore } from "./io/statsMdStore";
+import type { DailyStatsSettings } from "./io/statsMdStore";
+import type { TodaysWordCountAggregate } from "./io/statsMdStore";
+import type CalendarPlugin from "./main";
 
 export default class WordCountStats extends Component {
 	settings: DailyStatsSettings;
@@ -27,9 +14,11 @@ export default class WordCountStats extends Component {
 	today: string;
 	debouncedUpdate: Debouncer<[string, string], void>;
 	private debouncedSave: Debouncer<[], Promise<void>>;
-	plugin: Plugin;
+	plugin: CalendarPlugin;
 	app: App;
 	statusBarEl: HTMLElement | null = null;
+	private readonly statsStore: StatsMdStore;
+	private todaysAggregate: TodaysWordCountAggregate = { total: 0, byFile: {} };
 
 	// Worker related
 	private worker: Worker | null = null;
@@ -37,16 +26,21 @@ export default class WordCountStats extends Component {
 	private nonces = new Map<string, number>();
 	private pendingHashes = new Map<number, string>(); // Deprecated: Hash computed in worker now
 	private dirty = false; // Check for unsaved changes
+	private activeStatsMdPath: string;
 
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
+// Runtime baseline to apply shock filtering before persisting to settings.
+	private latestObservedCounts: Map<string, number> = new Map();
 
-	constructor(plugin: Plugin, app: App) {
+	constructor(plugin: CalendarPlugin, app: App) {
 		super();
 		this.plugin = plugin;
 		this.app = app;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS);
+		this.settings = Object.assign({}, DEFAULT_DAILY_STATS_SETTINGS);
 		this.today = window.moment().format("YYYY-MM-DD");
+		this.activeStatsMdPath = this.resolveStatsMdPath();
+		this.statsStore = new StatsMdStore(this.app, () => this.resolveStatsMdPath());
 	}
 
 	onload(): void {
@@ -109,11 +103,7 @@ export default class WordCountStats extends Component {
 		await this.loadSettings();
 
 		this.updateDate();
-		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
-			this.updateCounts();
-		} else {
-			this.currentWordCount = 0;
-		}
+		this.updateCounts();
 
 		// Initialize Worker if enabled
 		this.initWorker();
@@ -145,7 +135,9 @@ export default class WordCountStats extends Component {
 		// Save settings periodically (every 30 seconds) as a safety measure
 		this.registerInterval(window.setInterval(() => {
 			this.updateDate();
-			this.debouncedSave();
+			if (this.dirty) {
+				this.debouncedSave();
+			}
 		}, 30000)); // Trigger debounced save every 30 seconds
 
 
@@ -154,24 +146,55 @@ export default class WordCountStats extends Component {
 		this.registerStatusBarUpdates();
 	}
 
+		public async handleSettingsChanged(): Promise<void> {
+		const nextPath = this.resolveStatsMdPath();
+		if (nextPath === this.activeStatsMdPath) {
+			return;
+		}
+
+		if (this.dirty) {
+			await this.saveSettings();
+		}
+
+		this.activeStatsMdPath = nextPath;
+		await this.loadSettings();
+		this.updateDate();
+		this.updateCounts();
+	}
+
 	private updateStore(filepath: string, count: number): void {
 		// We rely on handleWorkerMessage to update the cache now.
 
 		let changed = false;
 		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
 			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
-				if (this.settings.todaysWordCount[filepath].current !== count) {
-					this.settings.todaysWordCount[filepath].current = count;
+				const fileStats = this.settings.todaysWordCount[filepath];
+				const baseline = this.latestObservedCounts.get(filepath) ?? fileStats.lastAcceptedCount;
+				const rawDelta = count - baseline;
+				this.latestObservedCounts.set(filepath, count);
+
+				if (rawDelta !== 0 && Math.abs(rawDelta) < this.getShockThreshold()) {
+					fileStats.accumulatedDelta += rawDelta;
+					fileStats.lastAcceptedCount = count;
 					changed = true;
 				}
 			} else {
-				this.settings.todaysWordCount[filepath] = { initial: count, current: count };
+				this.settings.todaysWordCount[filepath] = {
+					accumulatedDelta: 0,
+					lastAcceptedCount: count,
+				};
+				this.latestObservedCounts.set(filepath, count);
 				changed = true;
 			}
 		} else {
 			this.settings.todaysWordCount = {};
-			this.settings.todaysWordCount[filepath] = { initial: count, current: count };
+			this.settings.todaysWordCount[filepath] = {
+				accumulatedDelta: 0,
+				lastAcceptedCount: count,
+			};
 			this.wordCountCache.clear();
+			this.latestObservedCounts.clear();
+			this.latestObservedCounts.set(filepath, count);
 			changed = true;
 		}
 
@@ -227,7 +250,7 @@ export default class WordCountStats extends Component {
 		if (!this.statusBarEl) return;
 
 		const lang = this.getObsidianLanguage();
-		const currentWordCount = this.currentWordCount || 0;
+		const currentWordCount = this.todaysAggregate.total || 0;
 
 		let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
 
@@ -330,12 +353,15 @@ export default class WordCountStats extends Component {
 		// If date has changed, clear the cache for better performance
 		if (newToday !== this.today) {
 			this.wordCountCache.clear();
+			this.latestObservedCounts.clear();
 		}
 		this.today = newToday;
 	}
 
 	updateCounts(): void {
-		this.currentWordCount = Object.values(this.settings.todaysWordCount).map((wordCount) => Math.max(0, wordCount.current - wordCount.initial)).reduce((a, b) => a + b, 0);
+		this.todaysAggregate = this.statsStore.getTodaysWordCountAggregate(this.settings.todaysWordCount);
+		this.currentWordCount = this.todaysAggregate.total;
+		// Persist the display value for stats table-like consumers.
 		this.settings.dayCounts[this.today] = this.currentWordCount;
 		this.refreshStatusBar();
 	}
@@ -358,82 +384,37 @@ export default class WordCountStats extends Component {
 		return this.settings.pomoCounts?.[dateStr] || 0;
 	}
 
-	private getDataPath(): string {
-		const configDir = this.plugin.app.vault.configDir || ".obsidian";
-		const pluginId = this.plugin.manifest.id || "work-assistant";
-		return `${configDir}/plugins/${pluginId}/daily-count-data.json`;
-	}
-
 	async loadSettings(): Promise<void> {
-		const dataPath = this.getDataPath();
-		try {
-			if (!(await this.plugin.app.vault.adapter.exists(dataPath))) {
-				this.settings = Object.assign({}, DEFAULT_SETTINGS);
-				return;
-			}
-			const data = await this.plugin.app.vault.adapter.read(dataPath);
-			if (data) {
-				const parsedData = JSON.parse(data);
-				const mergedSettings = Object.assign({}, DEFAULT_SETTINGS, parsedData);
-
-				// Preserve early pomo counts if any happened before load finished
-				if (this.settings && this.settings.pomoCounts) {
-					if (!mergedSettings.pomoCounts) mergedSettings.pomoCounts = {};
-					for (const [date, count] of Object.entries(this.settings.pomoCounts)) {
-						mergedSettings.pomoCounts[date] = (mergedSettings.pomoCounts[date] || 0) + count;
-					}
-				}
-
-				this.settings = mergedSettings;
-			} else {
-				this.settings = Object.assign({}, DEFAULT_SETTINGS);
-			}
-		} catch (e) {
-			console.log("[Work Assistant] Failed to load daily count data, using defaults", e);
-			this.settings = Object.assign({}, DEFAULT_SETTINGS);
-		}
+		this.settings = await this.statsStore.load();
+		this.latestObservedCounts = new Map(
+			Object.entries(this.settings.todaysWordCount).map(([filepath, stats]) => [filepath, stats.lastAcceptedCount])
+		);
 	}
 
 	async saveSettings(): Promise<void> {
 		if (!this.dirty) return; // Optimization: Skip if no changes
 
-		if (Object.keys(this.settings.dayCounts).length > 0 || Object.keys(this.settings.pomoCounts).length > 0) {
-			const dataPath = this.getDataPath();
-			try {
-				const backupPath = dataPath.replace(".json", "-backup.json");
-
-				// Ensure directory exists
-				const dir = dataPath.substring(0, dataPath.lastIndexOf("/"));
-				if (!(await this.plugin.app.vault.adapter.exists(dir))) {
-					await this.plugin.app.vault.adapter.mkdir(dir);
-				}
-
-				if (await this.plugin.app.vault.adapter.exists(dataPath)) {
-					const existingData = await this.plugin.app.vault.adapter.read(dataPath);
-					await this.plugin.app.vault.adapter.write(backupPath, existingData);
-				}
-
-				await this.plugin.app.vault.adapter.write(dataPath, JSON.stringify(this.settings));
-				this.dirty = false;
-
-				if (await this.plugin.app.vault.adapter.exists(backupPath)) {
-					await this.plugin.app.vault.adapter.remove(backupPath);
-				}
-			} catch (error) {
-				console.error("[Work Assistant] Failed to save daily count data, keeping backup:", error);
-			}
+		try {
+			const refreshedSettings = await this.statsStore.save(this.settings);
+			this.settings = refreshedSettings;
+			this.updateDate();
+			this.updateCounts();
+			this.dirty = false;
+		} catch (error) {
+			console.error("[Work Assistant] Failed to save stats.md data:", error);
 		}
 	}
 
 	// Get word count for a specific date
 	getWordCountForDate(dateStr: string): number {
+		if (dateStr === this.today) {
+			return this.todaysAggregate.total;
+		}
 		return this.settings.dayCounts[dateStr] || 0;
 	}
 
 	getFileCountChange(filepath: string): number {
-		const fileData = this.settings.todaysWordCount[filepath];
-		if (!fileData) return 0;
-		return Math.max(0, fileData.current - fileData.initial);
+		return this.todaysAggregate.byFile[filepath]?.displayDelta || 0;
 	}
 
 	getWeeklyWordCount(date: Moment): number {
@@ -470,5 +451,15 @@ export default class WordCountStats extends Component {
 	// Get all word count data
 	getAllWordCountData(): Record<string, number> {
 		return this.settings.dayCounts;
+	}
+
+	private resolveStatsMdPath(): string {
+		const path = this.plugin.options.wordCount.statsMdPath?.trim();
+		return path || "stats.md";
+	}
+
+	private getShockThreshold(): number {
+		const threshold = this.plugin.options.wordCount.shockThreshold;
+		return Number.isInteger(threshold) && threshold > 0 ? threshold : 1000;
 	}
 }

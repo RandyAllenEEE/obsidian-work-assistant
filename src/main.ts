@@ -237,6 +237,15 @@ export default class CalendarPlugin extends Plugin {
       if (loadedData.assistant?.weather) finalSettings.assistant.weather = { ...defaultSettings.assistant.weather, ...loadedData.assistant.weather };
 
       if (loadedData.wordCount?.heatmap) finalSettings.wordCount.heatmap = { ...defaultSettings.wordCount.heatmap, ...loadedData.wordCount.heatmap };
+      if (typeof loadedData.wordCount?.statsFile === "string" && !loadedData.wordCount?.statsMdPath) {
+        finalSettings.wordCount.statsMdPath = loadedData.wordCount.statsFile;
+      }
+      if (typeof finalSettings.wordCount.statsMdPath !== "string" || !finalSettings.wordCount.statsMdPath.trim()) {
+        finalSettings.wordCount.statsMdPath = defaultSettings.wordCount.statsMdPath;
+      }
+      if (!Number.isInteger(finalSettings.wordCount.shockThreshold) || finalSettings.wordCount.shockThreshold <= 0) {
+        finalSettings.wordCount.shockThreshold = defaultSettings.wordCount.shockThreshold;
+      }
       if (loadedData.pomodoro?.notification) finalSettings.pomodoro.notification = { ...defaultSettings.pomodoro.notification, ...loadedData.pomodoro.notification };
 
       // Deep merge periodic notes granularities
@@ -667,6 +676,7 @@ export default class CalendarPlugin extends Plugin {
       this.initWordCount();
       if (this.wordCountStats) {
         this.wordCountStats.updateStatusBar(wordCount.statusBar);
+        void this.wordCountStats.handleSettingsChanged();
       }
     } else {
       this.unloadWordCount();

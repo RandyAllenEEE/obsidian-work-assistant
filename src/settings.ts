@@ -53,6 +53,8 @@ export interface ISettings {
   wordCount: {
     enabled: boolean;
     statusBar: boolean;
+    statsMdPath: string;
+    shockThreshold: number;
     heatmap: {
       enabled: boolean;
       refreshInterval: number;
@@ -123,6 +125,8 @@ export const defaultSettings: ISettings = {
   wordCount: {
     enabled: true,
     statusBar: true,
+    statsMdPath: "stats.md",
+    shockThreshold: 1000,
     heatmap: {
       enabled: true,
       refreshInterval: DEFAULT_REFRESH_INTERVAL,
@@ -248,6 +252,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
             wordCount: { ...old.wordCount, statusBar: val }
           }))
         );
+
+        this.addWordCountStatsMdPathSetting(container, lang);
+        this.addWordCountShockThresholdSetting(container, lang);
 
         // 3.2 Heatmap
         this.addSubToggle(
@@ -637,6 +644,74 @@ export class CalendarSettingsTab extends PluginSettingTab {
             wordCount: {
               ...old.wordCount,
               heatmap: { ...old.wordCount.heatmap, refreshInterval: num }
+            }
+          }));
+        });
+      });
+  }
+
+  addWordCountStatsMdPathSetting(container: HTMLElement, lang: Language): void {
+    const title = lang === "zh-cn" ? "统计文件路径 (wordCount.statsMdPath)" : "Stats file path (wordCount.statsMdPath)";
+    const desc = lang === "zh-cn"
+      ? "用于保存字数统计的 Markdown 文件路径，不能为空。默认值：stats.md。"
+      : "Markdown file path used to persist word count stats. Cannot be empty. Default: stats.md.";
+
+    new Setting(container)
+      .setName(title)
+      .setDesc(desc)
+      .addText((text) => {
+        text.setPlaceholder(defaultSettings.wordCount.statsMdPath);
+        text.setValue(this.plugin.options.wordCount.statsMdPath);
+        text.onChange(async (value) => {
+          const nextPath = value.trim();
+          if (!nextPath) {
+            new obsidian.Notice(
+              lang === "zh-cn"
+                ? `统计文件路径不能为空，已回退为默认值 ${defaultSettings.wordCount.statsMdPath}`
+                : `Stats file path cannot be empty. Reverted to default: ${defaultSettings.wordCount.statsMdPath}`
+            );
+          }
+
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            wordCount: {
+              ...old.wordCount,
+              statsMdPath: nextPath || defaultSettings.wordCount.statsMdPath
+            }
+          }));
+        });
+      });
+  }
+
+  addWordCountShockThresholdSetting(container: HTMLElement, lang: Language): void {
+    const title = lang === "zh-cn" ? "剧烈变化阈值 (wordCount.shockThreshold)" : "Shock threshold (wordCount.shockThreshold)";
+    const desc = lang === "zh-cn"
+      ? "用于过滤字数增减的异常跳变，需为正整数。默认值：1000。"
+      : "Filters abnormal jumps in both positive/negative word-count deltas. Must be a positive integer. Default: 1000.";
+
+    new Setting(container)
+      .setName(title)
+      .setDesc(desc)
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setPlaceholder(String(defaultSettings.wordCount.shockThreshold));
+        text.setValue(String(this.plugin.options.wordCount.shockThreshold));
+        text.onChange(async (value) => {
+          const parsed = Number.parseInt(value, 10);
+          const valid = Number.isInteger(parsed) && parsed > 0;
+          if (!valid) {
+            new obsidian.Notice(
+              lang === "zh-cn"
+                ? `剧烈变化阈值必须为正整数，已回退为默认值 ${defaultSettings.wordCount.shockThreshold}`
+                : `Shock threshold must be a positive integer. Reverted to default: ${defaultSettings.wordCount.shockThreshold}`
+            );
+          }
+
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            wordCount: {
+              ...old.wordCount,
+              shockThreshold: valid ? parsed : defaultSettings.wordCount.shockThreshold
             }
           }));
         });
