@@ -21,9 +21,16 @@ export interface TodaysWordCountAggregate {
   byFile: Record<string, TodaysWordCountStat>;
 }
 
-interface WordCountTableRow extends WordCount {
+interface NoteTableRow {
   rowId: string;
   noteLink: string;
+  countsByDate: Record<string, number>;
+}
+
+interface TableModel {
+  dates: string[];
+  pomoByDate: Record<string, number>;
+  noteRows: NoteTableRow[];
 }
 
 export interface DailyStatsSettings {
@@ -38,6 +45,8 @@ const DEFAULT_SETTINGS: DailyStatsSettings = {
   pomoCounts: {},
 };
 
+const DATE_COLUMN_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 function normalizeRecord(values: unknown): Record<string, number> {
   if (!values || typeof values !== "object") {
     return {};
@@ -47,48 +56,6 @@ function normalizeRecord(values: unknown): Record<string, number> {
     if (typeof value === "number" && Number.isFinite(value)) {
       acc[key] = value;
     }
-    return acc;
-  }, {});
-}
-
-function normalizeTodaysWordCount(values: unknown): Record<string, WordCount> {
-  if (!values || typeof values !== "object") {
-    return {};
-  }
-
-  return Object.entries(values as Record<string, unknown>).reduce<Record<string, WordCount>>((acc, [key, value]) => {
-    if (!value || typeof value !== "object") {
-      return acc;
-    }
-
-    const typed = value as Record<string, unknown>;
-
-    if (
-      typeof typed.accumulatedDelta === "number" &&
-      Number.isFinite(typed.accumulatedDelta) &&
-      typeof typed.lastAcceptedCount === "number" &&
-      Number.isFinite(typed.lastAcceptedCount)
-    ) {
-      acc[key] = {
-        accumulatedDelta: typed.accumulatedDelta,
-        lastAcceptedCount: typed.lastAcceptedCount,
-      };
-      return acc;
-    }
-
-    // Backward compatibility: migrate legacy { initial, current } format.
-    if (
-      typeof typed.initial === "number" &&
-      Number.isFinite(typed.initial) &&
-      typeof typed.current === "number" &&
-      Number.isFinite(typed.current)
-    ) {
-      acc[key] = {
-        accumulatedDelta: typed.current - typed.initial,
-        lastAcceptedCount: typed.current,
-      };
-    }
-
     return acc;
   }, {});
 }
@@ -178,37 +145,38 @@ export class StatsMdStore {
   }
 
   private parse(content: string): DailyStatsSettings {
-    const dayCounts = this.readSection(content, "Day Counts");
-    const todaysWordCount = this.readTodaysWordCount(content);
-    const pomoCounts = this.readSection(content, "Pomodoro Counts");
+    const model = this.parseTable(content);
+    const baselines = normalizeRecord(this.readSection(content, "Baselines"));
+
+    const dayCounts: Record<string, number> = {};
+    model.dates.forEach((date) => {
+      let total = 0;
+      model.noteRows.forEach((row) => {
+        const raw = row.countsByDate[date] ?? 0;
+        total += Math.max(0, raw);
+      });
+      dayCounts[date] = total;
+    });
+
+    const today = window.moment().format("YYYY-MM-DD");
+    const todaysWordCount: Record<string, WordCount> = {};
+    model.noteRows.forEach((row) => {
+      const file = this.resolveNoteLink(row.noteLink);
+      if (!file) return;
+      const accumulatedDelta = row.countsByDate[today] ?? 0;
+      const baseline = baselines[file.path];
+      todaysWordCount[file.path] = {
+        accumulatedDelta,
+        lastAcceptedCount: Number.isFinite(baseline) ? baseline : accumulatedDelta,
+      };
+      this.filePathToRowId.set(file.path, row.rowId);
+    });
 
     return {
-      dayCounts: normalizeRecord(dayCounts),
+      dayCounts,
       todaysWordCount,
-      pomoCounts: normalizeRecord(pomoCounts),
+      pomoCounts: model.pomoByDate,
     };
-  }
-
-  private readTodaysWordCount(content: string): Record<string, WordCount> {
-    const parsedRows = this.parseWordCountTable(content);
-    if (parsedRows.length > 0) {
-      const dedupedRows = this.dedupeRows(parsedRows);
-      const data: Record<string, WordCount> = {};
-      dedupedRows.forEach((row) => {
-        const file = this.resolveNoteLink(row.noteLink);
-        if (!file) return;
-
-        data[file.path] = {
-          accumulatedDelta: row.accumulatedDelta,
-          lastAcceptedCount: row.lastAcceptedCount,
-        };
-      });
-      return data;
-    }
-
-    // Backward compatibility for old JSON format.
-    const oldFormat = this.readSection(content, "Today's Word Count");
-    return normalizeTodaysWordCount(oldFormat);
   }
 
   private readSection(content: string, sectionName: string): unknown {
@@ -230,37 +198,92 @@ export class StatsMdStore {
   }
 
   private buildTemplate(settings: DailyStatsSettings, existingContent = ""): string {
-    const dayCounts = JSON.stringify(settings.dayCounts ?? {}, null, 2);
-    const pomoCounts = JSON.stringify(settings.pomoCounts ?? {}, null, 2);
-    const todaysWordCountRows = this.buildRowsForWrite(settings.todaysWordCount ?? {}, existingContent);
-    const todaysWordCount = this.buildWordCountTable(todaysWordCountRows);
+    const existingModel = this.parseTable(existingContent);
+    const today = window.moment().format("YYYY-MM-DD");
+
+    const dateSet = new Set<string>(existingModel.dates);
+    Object.keys(settings.dayCounts ?? {}).forEach((date) => dateSet.add(date));
+    Object.keys(settings.pomoCounts ?? {}).forEach((date) => dateSet.add(date));
+    dateSet.add(today);
+
+    const dates = [...dateSet].filter((date) => DATE_COLUMN_PATTERN.test(date)).sort();
+
+    const rowById = new Map<string, NoteTableRow>();
+    const rowByPath = new Map<string, NoteTableRow>();
+
+    // keep existing rows and historical values
+    existingModel.noteRows.forEach((row) => {
+      const normalized = {
+        ...row,
+        countsByDate: { ...row.countsByDate },
+      };
+      rowById.set(normalized.rowId, normalized);
+      const file = this.resolveNoteLink(normalized.noteLink);
+      if (file) {
+        rowByPath.set(file.path, normalized);
+        this.filePathToRowId.set(file.path, normalized.rowId);
+      }
+    });
+
+    // apply current-day values from runtime settings
+    Object.entries(settings.todaysWordCount ?? {}).forEach(([filePath, wordCount]) => {
+      const target = this.app.vault.getAbstractFileByPath(filePath);
+      if (!(target instanceof TFile)) {
+        return;
+      }
+
+      const knownRowId = this.filePathToRowId.get(target.path);
+      let row = (knownRowId ? rowById.get(knownRowId) : undefined) ?? rowByPath.get(target.path);
+
+      if (!row) {
+        row = {
+          rowId: this.createRowId(target.path),
+          noteLink: this.toNoteLink(target),
+          countsByDate: {},
+        };
+      }
+
+      row.noteLink = this.toNoteLink(target);
+      row.countsByDate[today] = wordCount.accumulatedDelta;
+      rowById.set(row.rowId, row);
+      rowByPath.set(target.path, row);
+      this.filePathToRowId.set(target.path, row.rowId);
+    });
+
+    const noteRows = this.dedupeRows([...rowById.values()]);
+
+    const pomoByDate: Record<string, number> = {};
+    dates.forEach((date) => {
+      pomoByDate[date] = settings.pomoCounts?.[date] ?? existingModel.pomoByDate[date] ?? 0;
+    });
+
+    const baselinePayload = Object.entries(settings.todaysWordCount ?? {}).reduce<Record<string, number>>((acc, [path, stat]) => {
+      if (Number.isFinite(stat.lastAcceptedCount)) {
+        acc[path] = stat.lastAcceptedCount;
+      }
+      return acc;
+    }, {});
+
+    const table = this.buildMainTable(dates, noteRows, pomoByDate);
 
     return [
       "# Work Assistant Stats",
       "",
       "> This file is managed by Work Assistant. Edit with care.",
       "",
-      "## Day Counts",
+      table,
+      "",
+      "## Baselines",
       "",
       "```json",
-      dayCounts,
-      "```",
-      "",
-      "## Today's Word Count",
-      "",
-      todaysWordCount,
-      "",
-      "## Pomodoro Counts",
-      "",
-      "```json",
-      pomoCounts,
+      JSON.stringify(baselinePayload, null, 2),
       "```",
       "",
     ].join("\n");
   }
 
   private handleRename = (file: TAbstractFile, oldPath: string): void => {
-    if (!("path" in file)) return;
+    if (!(file instanceof TFile)) return;
 
     const rowId = this.filePathToRowId.get(oldPath);
     if (!rowId) return;
@@ -269,138 +292,111 @@ export class StatsMdStore {
     this.filePathToRowId.set(file.path, rowId);
   };
 
-  private parseWordCountTable(content: string): WordCountTableRow[] {
-    const sectionRegex = /## Today's Word Count\s*\n([\s\S]*?)(\n## |\s*$)/m;
-    const sectionMatch = content.match(sectionRegex);
-    if (!sectionMatch || !sectionMatch[1]) {
-      return [];
-    }
-
-    const lines = sectionMatch[1]
+  private parseTable(content: string): TableModel {
+    const lines = content
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.startsWith("|"));
 
-    if (lines.length < 3) return [];
+    if (lines.length < 3) {
+      return { dates: [], pomoByDate: {}, noteRows: [] };
+    }
 
-    const rows: WordCountTableRow[] = [];
+    const headerCells = this.parseTableCells(lines[0]);
+    if (headerCells.length < 2 || headerCells[0].toLowerCase() !== "note") {
+      return { dates: [], pomoByDate: {}, noteRows: [] };
+    }
+
+    const dates = headerCells.slice(1).filter((date) => DATE_COLUMN_PATTERN.test(date));
+    if (dates.length === 0) {
+      return { dates: [], pomoByDate: {}, noteRows: [] };
+    }
+
+    const pomoByDate: Record<string, number> = {};
+    dates.forEach((date) => {
+      pomoByDate[date] = 0;
+    });
+
+    const noteRows: NoteTableRow[] = [];
+
     for (let i = 2; i < lines.length; i++) {
-      const cells = lines[i]
-        .split("|")
-        .map((cell) => cell.trim())
-        .filter((cell) => cell.length > 0);
-      if (cells.length < 3) continue;
+      const cells = this.parseTableCells(lines[i]);
+      if (cells.length === 0) continue;
 
-      const accumulatedDelta = Number(cells[1]);
-      const lastAcceptedCount = Number(cells[2]);
-      if (!Number.isFinite(accumulatedDelta) || !Number.isFinite(lastAcceptedCount)) {
+      const label = cells[0];
+      if (!label) continue;
+
+      if (label === "🍅 POMO") {
+        dates.forEach((date, idx) => {
+          const raw = Number(cells[idx + 1]);
+          if (Number.isFinite(raw)) {
+            pomoByDate[date] = raw;
+          }
+        });
         continue;
       }
 
-      const rowId = this.getRowIdFromLink(cells[0], i);
-      rows.push({
-        rowId,
-        noteLink: cells[0],
-        accumulatedDelta,
-        lastAcceptedCount,
-      });
-
-      const file = this.resolveNoteLink(cells[0]);
-      if (file) {
-        this.filePathToRowId.set(file.path, rowId);
-      }
-    }
-
-    return rows;
-  }
-
-  private buildRowsForWrite(
-    todaysWordCount: Record<string, WordCount>,
-    existingContent: string,
-  ): WordCountTableRow[] {
-    const existingRows = this.parseWordCountTable(existingContent);
-    const nextRows: WordCountTableRow[] = [...existingRows];
-
-    for (const [filePath, wordCount] of Object.entries(todaysWordCount)) {
-      const target = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(target instanceof TFile)) {
-        continue;
-      }
-
-      const byLinkIdx = nextRows.findIndex((row) => {
-        const resolved = this.resolveNoteLink(row.noteLink);
-        return Boolean(resolved && resolved.path === target.path);
-      });
-      const byIndexRowId = this.filePathToRowId.get(target.path);
-      const byIndexIdx = byIndexRowId
-        ? nextRows.findIndex((row) => row.rowId === byIndexRowId)
-        : -1;
-
-      const foundIdx = byLinkIdx >= 0 ? byLinkIdx : byIndexIdx;
-
-      if (foundIdx >= 0) {
-        nextRows[foundIdx] = {
-          ...nextRows[foundIdx],
-          noteLink: this.toNoteLink(target),
-          accumulatedDelta: wordCount.accumulatedDelta,
-          lastAcceptedCount: wordCount.lastAcceptedCount,
-        };
-        this.filePathToRowId.set(target.path, nextRows[foundIdx].rowId);
-        continue;
-      }
-
-      // New row is created only when link matching and in-memory index both fail.
-      const rowId = this.createRowId(target.path);
-      const row: WordCountTableRow = {
-        rowId,
-        noteLink: this.toNoteLink(target),
-        accumulatedDelta: wordCount.accumulatedDelta,
-        lastAcceptedCount: wordCount.lastAcceptedCount,
+      const row: NoteTableRow = {
+        rowId: this.getRowIdFromLink(label, i),
+        noteLink: label,
+        countsByDate: {},
       };
-      nextRows.push(row);
-      this.filePathToRowId.set(target.path, rowId);
+
+      dates.forEach((date, idx) => {
+        const raw = Number(cells[idx + 1]);
+        if (Number.isFinite(raw)) {
+          row.countsByDate[date] = raw;
+        }
+      });
+
+      noteRows.push(row);
     }
 
-    return this.dedupeRows(nextRows);
+    return {
+      dates,
+      pomoByDate,
+      noteRows: this.dedupeRows(noteRows),
+    };
   }
 
-  private dedupeRows(rows: WordCountTableRow[]): WordCountTableRow[] {
-    const deduped = new Map<string, WordCountTableRow>();
-    const unresolvedRows: WordCountTableRow[] = [];
+  private parseTableCells(line: string): string[] {
+    return line
+      .split("|")
+      .map((cell) => cell.trim())
+      .filter((cell) => cell.length > 0);
+  }
+
+  private dedupeRows(rows: NoteTableRow[]): NoteTableRow[] {
+    const deduped = new Map<string, NoteTableRow>();
 
     rows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
-      if (!file) {
-        unresolvedRows.push(row);
-        return;
+      const key = file ? `file:${file.path}` : `link:${row.noteLink}`;
+      // later row wins
+      deduped.set(key, row);
+      if (file) {
+        this.filePathToRowId.set(file.path, row.rowId);
       }
-
-      const key = file.path;
-      const existing = deduped.get(key);
-      if (!existing) {
-        deduped.set(key, row);
-        this.filePathToRowId.set(key, row.rowId);
-        return;
-      }
-
-      deduped.set(key, {
-        ...existing,
-        noteLink: this.toNoteLink(file),
-        accumulatedDelta: existing.accumulatedDelta + row.accumulatedDelta,
-        lastAcceptedCount: Math.max(existing.lastAcceptedCount, row.lastAcceptedCount),
-      });
     });
 
-    return [...deduped.values(), ...unresolvedRows];
+    return [...deduped.values()];
   }
 
-  private buildWordCountTable(rows: WordCountTableRow[]): string {
-    const tableRows = rows.map((row) => `| ${row.noteLink} | ${row.accumulatedDelta} | ${row.lastAcceptedCount} |`);
-    return [
-      "| Note | Accumulated Delta | Last Accepted Count |",
-      "| --- | ---: | ---: |",
-      ...tableRows,
-    ].join("\n");
+  private buildMainTable(
+    dates: string[],
+    noteRows: NoteTableRow[],
+    pomoByDate: Record<string, number>,
+  ): string {
+    const header = `| Note | ${dates.join(" | ")} |`;
+    const separator = `| --- | ${dates.map(() => "---:").join(" | ")} |`;
+    const pomoRow = `| 🍅 POMO | ${dates.map((date) => String(pomoByDate[date] ?? 0)).join(" | ")} |`;
+
+    const bodyRows = noteRows.map((row) => {
+      const values = dates.map((date) => String(row.countsByDate[date] ?? 0));
+      return `| ${row.noteLink} | ${values.join(" | ")} |`;
+    });
+
+    return [header, separator, pomoRow, ...bodyRows].join("\n");
   }
 
   private resolveNoteLink(noteLink: string): TFile | null {
@@ -408,7 +404,7 @@ export class StatsMdStore {
     if (!match || !match[1]) return null;
 
     const path = match[1].trim();
-    const file = this.app.metadataCache.getFirstLinkpathDest(path, "");
+    const file = this.app.metadataCache.getFirstLinkpathDest(path, this.getPath());
     return file ?? null;
   }
 

@@ -127,7 +127,7 @@ export default class WordCountStats extends Component {
 		this.registerEvent(
 			this.app.vault.on("modify", async (file: TFile) => {
 				// Only process markdown files
-				if (file instanceof TFile && file.extension === "md") {
+				if (file instanceof TFile && file.extension === "md" && !this.isStatsFile(file.path)) {
 					// We need to read the file content to update the word count
 					const contents = await this.app.vault.read(file);
 					this.debouncedUpdate(contents, file.path);
@@ -166,39 +166,54 @@ export default class WordCountStats extends Component {
 	}
 
 	private updateStore(filepath: string, count: number): void {
+		if (this.isStatsFile(filepath)) {
+			return;
+		}
+
 		// We rely on handleWorkerMessage to update the cache now.
-
 		let changed = false;
-		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
-			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
-				const fileStats = this.settings.todaysWordCount[filepath];
-				const baseline = this.latestObservedCounts.get(filepath) ?? fileStats.lastAcceptedCount;
-				const rawDelta = count - baseline;
-				this.latestObservedCounts.set(filepath, count);
 
-				if (rawDelta !== 0 && Math.abs(rawDelta) < this.getShockThreshold()) {
-					fileStats.accumulatedDelta += rawDelta;
+		this.updateDate();
+
+		if (!Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
+			this.settings.dayCounts[this.today] = 0;
+			this.settings.todaysWordCount = {};
+			this.wordCountCache.clear();
+			this.latestObservedCounts.clear();
+		}
+
+		if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
+			const fileStats = this.settings.todaysWordCount[filepath];
+			const baseline = this.latestObservedCounts.get(filepath) ?? fileStats.lastAcceptedCount;
+			const rawDelta = count - baseline;
+			this.latestObservedCounts.set(filepath, count);
+
+			if (Math.abs(rawDelta) >= this.getShockThreshold()) {
+				if (fileStats.lastAcceptedCount !== count) {
 					fileStats.lastAcceptedCount = count;
 					changed = true;
 				}
-			} else {
-				this.settings.todaysWordCount[filepath] = {
-					accumulatedDelta: 0,
-					lastAcceptedCount: count,
-				};
-				this.latestObservedCounts.set(filepath, count);
+			} else if (rawDelta !== 0) {
+				fileStats.accumulatedDelta += rawDelta;
+				fileStats.lastAcceptedCount = count;
 				changed = true;
 			}
 		} else {
-			this.settings.todaysWordCount = {};
-			this.settings.todaysWordCount[filepath] = {
-				accumulatedDelta: 0,
-				lastAcceptedCount: count,
-			};
-			this.wordCountCache.clear();
-			this.latestObservedCounts.clear();
+			const previousObserved = this.latestObservedCounts.get(filepath);
 			this.latestObservedCounts.set(filepath, count);
-			changed = true;
+			if (previousObserved === undefined) {
+				return;
+			}
+
+			const rawDelta = count - previousObserved;
+			if (Math.abs(rawDelta) < this.getShockThreshold() && rawDelta !== 0) {
+				this.settings.todaysWordCount[filepath] = {
+					accumulatedDelta: rawDelta,
+					lastAcceptedCount: count,
+				};
+				changed = true;
+			}
+			this.wordCountCache.clear();
 		}
 
 		if (changed) {
@@ -242,6 +257,9 @@ export default class WordCountStats extends Component {
 		this.registerEvent(
 			this.app.workspace.on('editor-change', (editor, view) => {
 				if (view instanceof MarkdownView && view.file) {
+					if (this.isStatsFile(view.file.path)) {
+						return;
+					}
 					const content = editor.getValue();
 					this.debouncedUpdate(content, view.file.path);
 				}
@@ -273,6 +291,10 @@ export default class WordCountStats extends Component {
 	}
 
 	onQuickPreview(file: TFile, contents: string): void {
+		if (this.isStatsFile(file.path)) {
+			return;
+		}
+
 		// Only process daily note files to avoid unnecessary computation
 		const date = this.getDateFromFile(file, "day");
 		if (date && this.plugin.app.workspace.getActiveViewOfType(MarkdownView)) {
@@ -472,6 +494,10 @@ export default class WordCountStats extends Component {
 	private resolveStatsMdPath(): string {
 		const path = this.plugin.options.wordCount.statsMdPath?.trim();
 		return path || "stats.md";
+	}
+
+	private isStatsFile(path: string): boolean {
+		return path === this.resolveStatsMdPath();
 	}
 
 	private getShockThreshold(): number {

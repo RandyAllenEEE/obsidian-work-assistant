@@ -164,6 +164,8 @@ export const defaultSettings: ISettings = {
 
 export class CalendarSettingsTab extends PluginSettingTab {
   private plugin: CalendarPlugin;
+  private pendingStatsMdPath: string | null = null;
+  private pendingShockThreshold: number | null = null;
 
   constructor(app: App, plugin: CalendarPlugin) {
     super(app, plugin);
@@ -282,6 +284,36 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
     this.addMediaSettings(lang);
     this.addPomodoroSettings(lang);
+  }
+
+  hide(): void {
+    void this.flushWordCountStorageDrafts();
+    super.hide();
+  }
+
+  private async flushWordCountStorageDrafts(): Promise<void> {
+    const nextPathRaw = this.pendingStatsMdPath;
+    const nextThresholdRaw = this.pendingShockThreshold;
+    this.pendingStatsMdPath = null;
+    this.pendingShockThreshold = null;
+
+    if (nextPathRaw === null && nextThresholdRaw === null) {
+      return;
+    }
+
+    const normalizedPath = (nextPathRaw ?? this.plugin.options.wordCount.statsMdPath).trim() || defaultSettings.wordCount.statsMdPath;
+    const normalizedThreshold = Number.isInteger(nextThresholdRaw) && nextThresholdRaw! > 0
+      ? nextThresholdRaw!
+      : this.plugin.options.wordCount.shockThreshold;
+
+    await this.plugin.writeOptions((old) => ({
+      ...old,
+      wordCount: {
+        ...old.wordCount,
+        statsMdPath: normalizedPath,
+        shockThreshold: normalizedThreshold,
+      }
+    }));
   }
 
   // Helper for sub-toggles
@@ -662,23 +694,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .addText((text) => {
         text.setPlaceholder(defaultSettings.wordCount.statsMdPath);
         text.setValue(this.plugin.options.wordCount.statsMdPath);
-        text.onChange(async (value) => {
-          const nextPath = value.trim();
-          if (!nextPath) {
-            new obsidian.Notice(
-              lang === "zh-cn"
-                ? `统计文件路径不能为空，已回退为默认值 ${defaultSettings.wordCount.statsMdPath}`
-                : `Stats file path cannot be empty. Reverted to default: ${defaultSettings.wordCount.statsMdPath}`
-            );
-          }
-
-          this.plugin.writeOptions((old) => ({
-            ...old,
-            wordCount: {
-              ...old.wordCount,
-              statsMdPath: nextPath || defaultSettings.wordCount.statsMdPath
-            }
-          }));
+        text.onChange((value) => {
+          this.pendingStatsMdPath = value.trim() || defaultSettings.wordCount.statsMdPath;
         });
       });
   }
@@ -696,7 +713,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         text.inputEl.type = "number";
         text.setPlaceholder(String(defaultSettings.wordCount.shockThreshold));
         text.setValue(String(this.plugin.options.wordCount.shockThreshold));
-        text.onChange(async (value) => {
+        text.onChange((value) => {
           const parsed = Number.parseInt(value, 10);
           const valid = Number.isInteger(parsed) && parsed > 0;
           if (!valid) {
@@ -706,14 +723,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
                 : `Shock threshold must be a positive integer. Reverted to default: ${defaultSettings.wordCount.shockThreshold}`
             );
           }
-
-          this.plugin.writeOptions((old) => ({
-            ...old,
-            wordCount: {
-              ...old.wordCount,
-              shockThreshold: valid ? parsed : defaultSettings.wordCount.shockThreshold
-            }
-          }));
+          this.pendingShockThreshold = valid ? parsed : defaultSettings.wordCount.shockThreshold;
         });
       });
   }
