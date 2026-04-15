@@ -6,6 +6,11 @@ interface WordCount {
   lastAcceptedCount: number;
 }
 
+export interface WordCountSnapshot {
+  settings: DailyStatsSettings;
+  todaysAggregate: TodaysWordCountAggregate;
+}
+
 export interface TodaysWordCountStat {
   displayDelta: number;
   lastAcceptedCount: number;
@@ -98,25 +103,25 @@ export class StatsMdStore {
     this.app.vault.on("rename", this.handleRename);
   }
 
-  async load(): Promise<DailyStatsSettings> {
+  async load(): Promise<WordCountSnapshot> {
     const statsPath = this.getPath();
 
     if (!(await this.app.vault.adapter.exists(statsPath))) {
       await this.ensureParentDirectory(statsPath);
       await this.app.vault.adapter.write(statsPath, this.buildTemplate(DEFAULT_SETTINGS));
-      return { ...DEFAULT_SETTINGS };
+      return this.buildSnapshot({ ...DEFAULT_SETTINGS });
     }
 
     try {
       const content = await this.app.vault.adapter.read(statsPath);
-      return this.parse(content);
+      return this.buildSnapshot(this.parse(content));
     } catch (error) {
       console.error("[Work Assistant] Failed to read stats.md, using defaults", error);
-      return { ...DEFAULT_SETTINGS };
+      return this.buildSnapshot({ ...DEFAULT_SETTINGS });
     }
   }
 
-  async save(settings: DailyStatsSettings): Promise<DailyStatsSettings> {
+  async save(settings: DailyStatsSettings): Promise<WordCountSnapshot> {
     const statsPath = this.getPath();
     await this.ensureParentDirectory(statsPath);
     const existingContent = (await this.app.vault.adapter.exists(statsPath))
@@ -124,7 +129,21 @@ export class StatsMdStore {
       : "";
     const nextContent = this.buildTemplate(settings, existingContent);
     await this.app.vault.adapter.write(statsPath, nextContent);
-    return this.parse(nextContent);
+    return this.buildSnapshot(this.parse(nextContent));
+  }
+
+  buildSnapshot(settings: DailyStatsSettings): WordCountSnapshot {
+    const normalizedSettings = {
+      dayCounts: settings.dayCounts ?? {},
+      todaysWordCount: settings.todaysWordCount ?? {},
+      pomoCounts: settings.pomoCounts ?? {},
+    };
+
+    const todaysAggregate = this.getTodaysWordCountAggregate(normalizedSettings.todaysWordCount);
+    return {
+      settings: normalizedSettings,
+      todaysAggregate,
+    };
   }
 
   getTodaysWordCountAggregate(todaysWordCount: Record<string, WordCount>): TodaysWordCountAggregate {
