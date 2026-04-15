@@ -1,8 +1,8 @@
 import type { App } from "obsidian";
 
 interface WordCount {
-  initial: number;
-  current: number;
+  accumulatedDelta: number;
+  lastAcceptedCount: number;
 }
 
 export interface DailyStatsSettings {
@@ -36,17 +36,38 @@ function normalizeTodaysWordCount(values: unknown): Record<string, WordCount> {
   }
 
   return Object.entries(values as Record<string, unknown>).reduce<Record<string, WordCount>>((acc, [key, value]) => {
+    if (!value || typeof value !== "object") {
+      return acc;
+    }
+
+    const typed = value as Record<string, unknown>;
+
     if (
-      value &&
-      typeof value === "object" &&
-      typeof (value as WordCount).initial === "number" &&
-      typeof (value as WordCount).current === "number"
+      typeof typed.accumulatedDelta === "number" &&
+      Number.isFinite(typed.accumulatedDelta) &&
+      typeof typed.lastAcceptedCount === "number" &&
+      Number.isFinite(typed.lastAcceptedCount)
     ) {
       acc[key] = {
-        initial: (value as WordCount).initial,
-        current: (value as WordCount).current,
+        accumulatedDelta: typed.accumulatedDelta,
+        lastAcceptedCount: typed.lastAcceptedCount,
+      };
+      return acc;
+    }
+
+    // Backward compatibility: migrate legacy { initial, current } format.
+    if (
+      typeof typed.initial === "number" &&
+      Number.isFinite(typed.initial) &&
+      typeof typed.current === "number" &&
+      Number.isFinite(typed.current)
+    ) {
+      acc[key] = {
+        accumulatedDelta: typed.current - typed.initial,
+        lastAcceptedCount: typed.current,
       };
     }
+
     return acc;
   }, {});
 }

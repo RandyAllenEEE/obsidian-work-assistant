@@ -148,17 +148,25 @@ export default class WordCountStats extends Component {
 		let changed = false;
 		if (Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
 			if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
-				if (this.settings.todaysWordCount[filepath].current !== count) {
-					this.settings.todaysWordCount[filepath].current = count;
+				const fileStats = this.settings.todaysWordCount[filepath];
+				if (fileStats.lastAcceptedCount !== count) {
+					fileStats.accumulatedDelta += count - fileStats.lastAcceptedCount;
+					fileStats.lastAcceptedCount = count;
 					changed = true;
 				}
 			} else {
-				this.settings.todaysWordCount[filepath] = { initial: count, current: count };
+				this.settings.todaysWordCount[filepath] = {
+					accumulatedDelta: 0,
+					lastAcceptedCount: count,
+				};
 				changed = true;
 			}
 		} else {
 			this.settings.todaysWordCount = {};
-			this.settings.todaysWordCount[filepath] = { initial: count, current: count };
+			this.settings.todaysWordCount[filepath] = {
+				accumulatedDelta: 0,
+				lastAcceptedCount: count,
+			};
 			this.wordCountCache.clear();
 			changed = true;
 		}
@@ -323,7 +331,10 @@ export default class WordCountStats extends Component {
 	}
 
 	updateCounts(): void {
-		this.currentWordCount = Object.values(this.settings.todaysWordCount).map((wordCount) => Math.max(0, wordCount.current - wordCount.initial)).reduce((a, b) => a + b, 0);
+		this.currentWordCount = Object.values(this.settings.todaysWordCount)
+			.map((wordCount) => Math.max(0, wordCount.accumulatedDelta))
+			.reduce((a, b) => a + b, 0);
+		// Persist the display value for stats table-like consumers.
 		this.settings.dayCounts[this.today] = this.currentWordCount;
 		this.refreshStatusBar();
 	}
@@ -369,7 +380,7 @@ export default class WordCountStats extends Component {
 	getFileCountChange(filepath: string): number {
 		const fileData = this.settings.todaysWordCount[filepath];
 		if (!fileData) return 0;
-		return Math.max(0, fileData.current - fileData.initial);
+		return Math.max(0, fileData.accumulatedDelta);
 	}
 
 	getWeeklyWordCount(date: Moment): number {
