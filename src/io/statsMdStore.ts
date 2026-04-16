@@ -306,8 +306,9 @@ export class StatsMdStore {
     // Add note rows
     for (const row of noteRows) {
       const file = this.resolveNoteLink(row.noteLink);
-      let initial = 0;
-      let current = 0;
+      let initial = row.initialCount ?? 0;
+      let current = row.currentCount ?? 0;
+
       
       if (file) {
         const wordCount = this.settings.todaysWordCount?.[file.path];
@@ -464,10 +465,11 @@ export class StatsMdStore {
   }
 
   private parseTableCells(line: string): string[] {
-    // 不再过滤空单元格，而是保留它们的位置
-    return line
-      .split("|")
-      .map((cell) => cell.trim());
+    const trimmedLine = line.trim();
+    const withoutOuterPipes = trimmedLine.replace(/^\|/, "").replace(/\|$/, "");
+
+    // 保留空单元格位置，但去掉行首/行尾的分隔符，避免首列变成空字符串
+    return withoutOuterPipes.split("|").map((cell) => cell.trim());
   }
 
   private getRowIdFromLink(link: string, index: number): string {
