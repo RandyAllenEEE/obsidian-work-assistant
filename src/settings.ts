@@ -1,13 +1,11 @@
 import * as obsidian from "obsidian";
-import { PluginSettingTab, Setting, Platform, ToggleComponent } from "obsidian";
+import { PluginSettingTab, Setting, Platform, Notice } from "obsidian";
 import type { App } from "obsidian";
 import type { IWeekStartOption } from "obsidian-calendar-ui";
 import { DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
 import { t, getLanguage } from "./i18n";
 import type { Language } from "./i18n";
 import type { PeriodicConfig } from "src/periodic/types";
-import SettingsRouter from "./periodic/settings/pages/Router.svelte";
-import { mount } from "svelte";
 
 import type CalendarPlugin from "./main";
 import { DEFAULT_PERIODIC_CONFIG } from "./periodic/constants";
@@ -55,6 +53,10 @@ export interface ISettings {
     statusBar: boolean;
     statsMdPath: string;
     shockThreshold: number;
+    debounceDelay: number;        // 防抖延迟时间（毫秒）
+    autoSaveInterval: number;    // 自动保存间隔（毫秒）
+    immediateInitOnOpen: boolean;  // 打开文件时是否立即初始化
+    
     heatmap: {
       enabled: boolean;
       refreshInterval: number;
@@ -127,6 +129,10 @@ export const defaultSettings: ISettings = {
     statusBar: true,
     statsMdPath: "stats.md",
     shockThreshold: 1000,
+    debounceDelay: 2000,        // 防抖延迟时间（毫秒）
+    autoSaveInterval: 30000,    // 自动保存间隔（毫秒）
+    immediateInitOnOpen: true,  // 打开文件时是否立即初始化
+    
     heatmap: {
       enabled: true,
       refreshInterval: DEFAULT_REFRESH_INTERVAL,
@@ -177,21 +183,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const lang = getLanguage();
 
     // Deconstruct NEW properties
-    const { assistant, periodicNotes, wordCount } = this.plugin.options;
+    const { periodicNotes, wordCount } = this.plugin.options;
 
     // 1. General Settings (Locale)
-    new Setting(this.containerEl)
-      .setName(t("settings-general-title", lang) || "General") // Fallback if key missing, but should be added
-      .setHeading();
+    // 移除最上面的“常规设置”标题
+    // new Setting(this.containerEl)
+    //   .setName(t("settings-general-title", lang) || "General") // Fallback if key missing, but should be added
+    //   .setHeading();
 
     this.addLocaleOverrideSetting(this.containerEl, lang);
 
     // 2. Assistant Panel
     this.addAssistantSettings(lang);
-
-    // Dependent State: Is Calendar Active?
-    // Correctly accessing nested prop
-    const isCalendarActive = assistant.calendar.enabled;
 
     // 2. Periodic Notes
     this.addCollapsibleSection(
@@ -203,32 +206,60 @@ export class CalendarSettingsTab extends PluginSettingTab {
         periodicNotes: { ...old.periodicNotes, enabled }
       })),
       (container) => {
-        // 2.1 Calendar Linkage
-        this.addSubToggle(
+        // Calendar Linkage
+        this.addCollapsibleSection(
           container,
           t('settings-calendar-linkage-title', lang),
-          t('settings-calendar-linkage-desc', lang),
           periodicNotes.calendarLinkage,
-          isCalendarActive,
           (val) => this.plugin.writeOptions((old) => ({
             ...old,
             periodicNotes: { ...old.periodicNotes, calendarLinkage: val }
-          }))
+          })),
+          (_contentEl) => {
+            // No additional settings for calendar linkage
+          },
+          false // Default closed
         );
 
-        if (periodicNotes.calendarLinkage && isCalendarActive) {
-          const linkageSubContainer = this.createIndentedContainer(container);
-          this.addDotThresholdSetting(linkageSubContainer, lang);
-          this.addConfirmCreateSetting(linkageSubContainer, lang);
-        }
+        // Periodic Note Configurations
+        this.addCollapsibleSection(
+          container,
+          t('settings-periodic-note-configs', lang),
+          true,
+          null,  // No state persistence - use internal state for collapsing
+          (configsContainer) => {
+            // Daily Notes
+            this.addPeriodicNoteSetting(configsContainer, "day", t('label-periodicity-daily', lang), periodicNotes.day, lang);
 
-        mount(SettingsRouter, {
-          target: container,
-          props: {
-            app: this.app,
-            settings: this.plugin.settings,
+            // Weekly Notes
+            this.addPeriodicNoteSetting(configsContainer, "week", t('label-periodicity-weekly', lang), periodicNotes.week, lang);
+
+            // Monthly Notes
+            this.addPeriodicNoteSetting(configsContainer, "month", t('label-periodicity-monthly', lang), periodicNotes.month, lang);
+
+            // Quarterly Notes
+            this.addPeriodicNoteSetting(configsContainer, "quarter", t('label-periodicity-quarterly', lang), periodicNotes.quarter, lang);
+
+            // Yearly Notes
+            this.addPeriodicNoteSetting(configsContainer, "year", t('label-periodicity-yearly', lang), periodicNotes.year, lang);
           },
-        });
+          false, // Default closed
+          true   // Show toggle for collapsing/expanding
+        );
+
+        // Timeline Complication
+        new Setting(container)
+          .setName(t('settings-timeline-title', lang))
+          .setDesc(t('settings-timeline-desc', lang))
+          .addToggle((toggle) => {
+            toggle.setValue(periodicNotes.timelineComplication);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions((old) => ({
+                ...old,
+                periodicNotes: { ...old.periodicNotes, timelineComplication: value }
+              }));
+            });
+          });
       }
     );
 
@@ -257,63 +288,33 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
         this.addWordCountStatsMdPathSetting(container, lang);
         this.addWordCountShockThresholdSetting(container, lang);
+        this.addWordCountDebounceDelaySetting(container, lang);
+        this.addWordCountAutoSaveIntervalSetting(container, lang);
+        this.addWordCountImmediateInitSetting(container, lang);
 
         // 3.2 Heatmap
-        this.addSubToggle(
+        this.addCollapsibleSection(
           container,
           t('settings-word-count-bg-title', lang),
-          t('settings-word-count-heatmap-desc', lang),
           wordCount.heatmap.enabled,
-          isCalendarActive,
           (val) => this.plugin.writeOptions((old) => ({
             ...old,
             wordCount: {
               ...old.wordCount,
               heatmap: { ...old.wordCount.heatmap, enabled: val }
             }
-          }))
+          })),
+          (contentEl) => {
+            this.addWordCountColorRangeSettings(contentEl, lang);
+            this.addHeatmapRefreshIntervalSetting(contentEl, lang);
+          },
+          false // Default closed
         );
-
-        if (wordCount.heatmap.enabled && isCalendarActive) {
-          const heatmapSubContainer = this.createIndentedContainer(container);
-          this.addWordCountColorRangeSettings(heatmapSubContainer, lang);
-          this.addHeatmapRefreshIntervalSetting(heatmapSubContainer, lang);
-        }
       }
     );
 
     this.addMediaSettings(lang);
     this.addPomodoroSettings(lang);
-  }
-
-  hide(): void {
-    void this.flushWordCountStorageDrafts();
-    super.hide();
-  }
-
-  private async flushWordCountStorageDrafts(): Promise<void> {
-    const nextPathRaw = this.pendingStatsMdPath;
-    const nextThresholdRaw = this.pendingShockThreshold;
-    this.pendingStatsMdPath = null;
-    this.pendingShockThreshold = null;
-
-    if (nextPathRaw === null && nextThresholdRaw === null) {
-      return;
-    }
-
-    const normalizedPath = (nextPathRaw ?? this.plugin.options.wordCount.statsMdPath).trim() || defaultSettings.wordCount.statsMdPath;
-    const normalizedThreshold = Number.isInteger(nextThresholdRaw) && nextThresholdRaw! > 0
-      ? nextThresholdRaw!
-      : this.plugin.options.wordCount.shockThreshold;
-
-    await this.plugin.writeOptions((old) => ({
-      ...old,
-      wordCount: {
-        ...old.wordCount,
-        statsMdPath: normalizedPath,
-        shockThreshold: normalizedThreshold,
-      }
-    }));
   }
 
   // Helper for sub-toggles
@@ -341,124 +342,241 @@ export class CalendarSettingsTab extends PluginSettingTab {
     }
   }
 
-  addAssistantSettings(lang: Language): void {
-    // Wrap entire Assistant Panel in a collapsible section to match UI style
+  private addAssistantSettings(lang: Language): void {
     const { assistant } = this.plugin.options;
 
     this.addCollapsibleSection(
-      this.containerEl,
-      t("settings-assistant-panel-title", lang),
-      assistant.enabled, // Master toggle
-      (enabled) => {
-        this.plugin.writeOptions((old) => {
-          const updates: Partial<ISettings> = {
-            ...old,
-            assistant: { ...old.assistant, enabled }
-          };
-          // If master assistant is disabled, we should also disable its specific coupled features across the plugin
-          if (!enabled) {
-            updates.periodicNotes = { ...old.periodicNotes, calendarLinkage: false };
-            updates.wordCount = { ...old.wordCount, heatmap: { ...old.wordCount.heatmap, enabled: false } };
-          }
-          return updates;
-        });
-        this.display();
-      },
-      (container) => {
-        // Widget Order
-        new Setting(container)
-          .setName(t("settings-widget-order", lang))
-          .setDesc(t("settings-widget-order-desc", lang))
-          .addText(text => text
-            .setValue(this.plugin.options.assistant.widgetOrder.join(", "))
-            .onChange(async (value) => {
-              const order = value.split(/,|，/).map(s => s.trim()).filter(s => s);
-              this.plugin.writeOptions((old) => ({
+        this.containerEl,
+        t("settings-assistant-panel-title", lang),
+        assistant.enabled, // Master toggle
+        (enabled) => {
+            this.plugin.writeOptions((old) => ({
                 ...old,
-                assistant: { ...old.assistant, widgetOrder: order }
-              }));
+                assistant: { ...old.assistant, enabled }
             }));
+        },
+        (container) => {
+            // Add individual settings under Assistant Panel
 
-        new Setting(container)
-          .setName(t("settings-widgets-title", lang))
-          .setHeading();
+            // Widget Order
+            new Setting(container)
+                .setName(t('settings-widget-order', lang))
+                .setDesc(t('settings-widget-order-desc', lang))
+                .addTextArea(textArea => {
+                    textArea
+                        .setValue(this.plugin.options.assistant.widgetOrder.join(', '))
+                        .onChange(async (value) => {
+                            const newOrder = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                            this.plugin.writeOptions(old => ({
+                                ...old,
+                                assistant: {
+                                    ...old.assistant,
+                                    widgetOrder: newOrder
+                                }
+                            }));
+                            this.display();
+                        });
+                    textArea.inputEl.rows = 3;
+                    textArea.inputEl.cols = 30;
+                });
 
-        // Flip Clock
-        this.addFlipClockSetting(container, lang);
+            // Flip Clock
+            this.addCollapsibleSection(
+                container,
+                t('settings-show-flip-clock', lang),
+                assistant.flipClock.enabled,
+                (value) => {
+                    this.plugin.writeOptions((old) => ({
+                        ...old,
+                        assistant: {
+                            ...old.assistant,
+                            flipClock: {
+                                ...old.assistant.flipClock,
+                                enabled: value
+                            }
+                        }
+                    }));
+                },
+                (_contentEl) => {
+                    // No additional settings for Flip Clock currently, but placeholder for future expansion
+                },
+                false // Default closed
+            );
 
-        // Calendar
-        this.addCalendarWidgetSettings(container, lang);
+            // Calendar View
+            this.addCollapsibleSection(
+                container,
+                t('settings-calendar-view-title', lang),
+                assistant.calendar.enabled,
+                (value) => {
+                    this.plugin.writeOptions((old) => ({
+                        ...old,
+                        assistant: {
+                            ...old.assistant,
+                            calendar: {
+                                ...old.assistant.calendar,
+                                enabled: value
+                            }
+                        }
+                    }));
+                },
+                (contentEl) => {
+                    this.addDotThresholdSetting(contentEl, lang);
+                    this.addWeekStartSetting(contentEl, lang);
+                    this.addConfirmCreateSetting(contentEl, lang);
+                },
+                false // 默认收起
+            );
 
-        // Weather
-        this.addWeatherSettings(lang, container);
-        // Note: addWeatherSettings internally adds directly to this.containerEl in current impl?
-        // Wait, I need to check addWeatherSettings usage of container.
-        // It uses this.containerEl. I need to pass container to it.
-        // But addWeatherSettings doesn't accept a container arg yet.
-        // I will need to refactor addWeatherSettings to accept a container.
-        // For now, let's assume I fix that in next step or now.
-        // Actually, addWeatherSettings accesses this.containerEl directly. 
-        // This refactor requires updating addWeatherSettings signature too.
-      },
-      true // Default open
+            // Weather
+            this.addCollapsibleSection(
+                container,
+                t('settings-weather-title', lang),
+                assistant.weather.enabled,
+                (value) => {
+                    this.plugin.writeOptions((old) => ({
+                        ...old,
+                        assistant: {
+                            ...old.assistant,
+                            weather: {
+                                ...old.assistant.weather,
+                                enabled: value
+                            }
+                        }
+                    }));
+                },
+                (contentEl) => {
+                    // City
+                    new Setting(contentEl)
+                      .setName(t("settings-weather-city", lang))
+                      .setDesc(t("settings-weather-city-desc", lang))
+                      .addText(text => {
+                        text.setPlaceholder("Beijing, Shanghai");
+                        text.setValue(assistant.weather.city);
+                        text.onChange(async (value) => {
+                          this.plugin.writeOptions((old) => ({
+                            ...old,
+                            assistant: {
+                              ...old.assistant,
+                              weather: { ...old.assistant.weather, city: value }
+                            }
+                          }));
+                        });
+                      });
+
+                    // Token Secret
+                    const tokenSetting = new Setting(contentEl)
+                      .setName(t("settings-weather-token", lang))
+                      .setDesc(t("settings-weather-token-desc", lang));
+                    const SecretComponent = (obsidian as any).SecretComponent;
+                    if (SecretComponent && this.app.secretStorage) {
+                      const sc = new SecretComponent(this.app, tokenSetting.controlEl);
+                      sc.setValue(assistant.weather.tokenSecretId || "");
+                      sc.onChange(async (value: string) => {
+                        this.plugin.writeOptions((old) => ({
+                          ...old,
+                          assistant: { ...old.assistant, weather: { ...old.assistant.weather, tokenSecretId: value } }
+                        }));
+                      });
+                    } else {
+                      tokenSetting.addText(text => {
+                        text.inputEl.type = "password";
+                        text.setValue(assistant.weather.tokenSecretId || "");
+                        text.onChange(async (value) => {
+                          this.plugin.writeOptions((old) => ({
+                            ...old,
+                            assistant: { ...old.assistant, weather: { ...old.assistant.weather, tokenSecretId: value } }
+                          }));
+                        });
+                      });
+                    }
+
+                    // Host Secret
+                    const hostSetting = new Setting(contentEl)
+                      .setName(t("settings-weather-host", lang))
+                      .setDesc(t("settings-weather-host-desc", lang));
+                    if (SecretComponent && this.app.secretStorage) {
+                      const sc = new SecretComponent(this.app, hostSetting.controlEl);
+                      sc.setValue(assistant.weather.hostSecretId || "");
+                      sc.onChange(async (value: string) => {
+                        this.plugin.writeOptions((old) => ({
+                          ...old,
+                          assistant: { ...old.assistant, weather: { ...old.assistant.weather, hostSecretId: value } }
+                        }));
+                      });
+                    } else {
+                      hostSetting.addText(text => {
+                        text.setPlaceholder("e.g. abc-123.qweatherapi.com");
+                        text.setValue(assistant.weather.hostSecretId || "");
+                        text.onChange(async (value) => {
+                          this.plugin.writeOptions((old) => ({
+                            ...old,
+                            assistant: { ...old.assistant, weather: { ...old.assistant.weather, hostSecretId: value } }
+                          }));
+                        });
+                      });
+                    }
+
+                    // Refresh Interval
+                    new Setting(contentEl)
+                      .setName(t("settings-weather-interval", lang))
+                      .setDesc(t("settings-weather-interval-desc", lang))
+                      .addText(text => {
+                        text.inputEl.type = "number";
+                        text.setValue(String(assistant.weather.refreshInterval));
+                        text.onChange(async (value) => {
+                          const num = parseInt(value);
+                          this.plugin.writeOptions((old) => ({
+                            ...old,
+                            assistant: {
+                              ...old.assistant,
+                              weather: { ...old.assistant.weather, refreshInterval: num }
+                            }
+                          }));
+                        });
+                      });
+
+                    // Daily Refresh Interval
+                    new Setting(contentEl)
+                      .setName(t("settings-weather-daily-interval", lang))
+                      .setDesc(t("settings-weather-daily-interval-desc", lang))
+                      .addText(text => {
+                        text.inputEl.type = "number";
+                        text.setValue(String(assistant.weather.dailyRefreshInterval));
+                        text.onChange(async (value) => {
+                          const num = parseInt(value);
+                          this.plugin.writeOptions((old) => ({
+                            ...old,
+                            assistant: {
+                              ...old.assistant,
+                              weather: { ...old.assistant.weather, dailyRefreshInterval: num }
+                            }
+                          }));
+                        });
+                      });
+
+                    // Warnings
+                    new Setting(contentEl)
+                      .setName(t("settings-weather-warnings-enable", lang))
+                      .setDesc(t("settings-weather-warnings-desc", lang))
+                      .addToggle(toggle => {
+                        toggle.setValue(assistant.weather.warnings);
+                        toggle.onChange(async (value) => {
+                          this.plugin.writeOptions((old) => ({
+                            ...old,
+                            assistant: {
+                              ...old.assistant,
+                              weather: { ...old.assistant.weather, warnings: value }
+                            }
+                          }));
+                        });
+                      });
+                },
+                false // 默认收起
+            );
+        }
     );
-  }
-
-  addFlipClockSetting(container: HTMLElement, lang: Language): void {
-    const { flipClock } = this.plugin.options.assistant;
-
-    this.addCollapsibleSection(
-      container,
-      t("settings-show-flip-clock", lang),
-      flipClock.enabled,
-      (value) => {
-        this.plugin.writeOptions((old) => ({
-          ...old,
-          assistant: {
-            ...old.assistant,
-            flipClock: { enabled: value }
-          }
-        }));
-      },
-      (subContainer) => {
-        // Description inside
-        subContainer.createDiv({
-          text: t("settings-show-flip-clock-desc", lang),
-          cls: "setting-item-description",
-          attr: { style: "padding: 0 0 10px 0; color: var(--text-muted);" }
-        });
-      }
-    );
-  }
-
-  addCalendarWidgetSettings(container: HTMLElement, lang: Language): void {
-    this.addCollapsibleSection(
-      container,
-      t('settings-calendar-view-title', lang),
-      this.plugin.options.assistant.calendar.enabled,
-      (enabled) => {
-        this.plugin.writeOptions((old) => {
-          const updates: Partial<ISettings> = {
-            ...old,
-            assistant: {
-              ...old.assistant,
-              calendar: { ...old.assistant.calendar, enabled }
-            }
-          };
-          // Also dependencies
-          if (!enabled) {
-            updates.periodicNotes = { ...old.periodicNotes, calendarLinkage: false };
-            updates.wordCount = { ...old.wordCount, heatmap: { ...old.wordCount.heatmap, enabled: false } };
-          }
-          return updates;
-        });
-        this.display();
-      },
-      (subContainer) => {
-        this.addWeekStartSetting(subContainer, lang);
-      }
-    );
-  }
+}
 
   addDotThresholdSetting(container: HTMLElement, lang: Language): void {
     new Setting(container)
@@ -577,7 +695,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         minInput.value = "0";
       }
 
-      minInput.addEventListener('change', (e) => {
+      minInput.addEventListener('change', (e: Event) => {
         const target = e.target as HTMLInputElement;
         // Deep copy ranges
         const newRanges = JSON.parse(JSON.stringify(this.plugin.options.wordCount.heatmap.colorRanges));
@@ -683,47 +801,116 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   addWordCountStatsMdPathSetting(container: HTMLElement, lang: Language): void {
-    const title = lang === "zh-cn" ? "统计文件路径 (wordCount.statsMdPath)" : "Stats file path (wordCount.statsMdPath)";
-    const desc = lang === "zh-cn"
-      ? "用于保存字数统计的 Markdown 文件路径，不能为空。默认值：stats.md。"
-      : "Markdown file path used to persist word count stats. Cannot be empty. Default: stats.md.";
+    const title = t("settings-word-count-stats-md-path", lang);
+    const desc = t("settings-word-count-stats-md-path-desc", lang);
 
     new Setting(container)
       .setName(title)
       .setDesc(desc)
-      .addText((text) => {
-        text.setPlaceholder(defaultSettings.wordCount.statsMdPath);
-        text.setValue(this.plugin.options.wordCount.statsMdPath);
-        text.onChange((value) => {
-          this.pendingStatsMdPath = value.trim() || defaultSettings.wordCount.statsMdPath;
+      .addText((textfield) => {
+        textfield.setPlaceholder("stats.md");
+        textfield.setValue(this.plugin.options.wordCount.statsMdPath);
+        textfield.onChange(async (value) => {
+          this.pendingStatsMdPath = value.trim();
+          // We'll save in onSettingsUpdate which is debounced
         });
       });
   }
 
   addWordCountShockThresholdSetting(container: HTMLElement, lang: Language): void {
-    const title = lang === "zh-cn" ? "剧烈变化阈值 (wordCount.shockThreshold)" : "Shock threshold (wordCount.shockThreshold)";
-    const desc = lang === "zh-cn"
-      ? "用于过滤字数增减的异常跳变，需为正整数。默认值：1000。"
-      : "Filters abnormal jumps in both positive/negative word-count deltas. Must be a positive integer. Default: 1000.";
+    const title = t("settings-word-count-shock-threshold", lang);
+    const desc = t("settings-word-count-shock-threshold-desc", lang);
 
     new Setting(container)
       .setName(title)
       .setDesc(desc)
-      .addText((text) => {
-        text.inputEl.type = "number";
-        text.setPlaceholder(String(defaultSettings.wordCount.shockThreshold));
-        text.setValue(String(this.plugin.options.wordCount.shockThreshold));
-        text.onChange((value) => {
-          const parsed = Number.parseInt(value, 10);
-          const valid = Number.isInteger(parsed) && parsed > 0;
+      .addText((textfield) => {
+        textfield.setPlaceholder("1000");
+        textfield.inputEl.type = "number";
+        textfield.setValue(String(this.plugin.options.wordCount.shockThreshold));
+        textfield.onChange(async (value) => {
+          const parsed = value !== "" ? Number(value) : 1000;
+          const valid = Number.isInteger(parsed) && (parsed === -1 || parsed > 0);
           if (!valid) {
-            new obsidian.Notice(
+            new Notice(
               lang === "zh-cn"
-                ? `剧烈变化阈值必须为正整数，已回退为默认值 ${defaultSettings.wordCount.shockThreshold}`
-                : `Shock threshold must be a positive integer. Reverted to default: ${defaultSettings.wordCount.shockThreshold}`
+                ? `大变化阈值必须为 -1（禁用）或正整数，已回退为默认值 ${defaultSettings.wordCount.shockThreshold}`
+                : `Shock threshold must be -1 (disable) or a positive integer. Reverted to default: ${defaultSettings.wordCount.shockThreshold}`
             );
+            this.pendingShockThreshold = defaultSettings.wordCount.shockThreshold;
+          } else {
+            this.pendingShockThreshold = parsed;
           }
-          this.pendingShockThreshold = valid ? parsed : defaultSettings.wordCount.shockThreshold;
+          // We'll save in onSettingsUpdate which is debounced
+        });
+      });
+  }
+
+  addWordCountDebounceDelaySetting(container: HTMLElement, lang: Language): void {
+    const title = t("settings-word-count-debounce-delay", lang);
+    const desc = t("settings-word-count-debounce-delay-desc", lang);
+
+    new Setting(container)
+      .setName(title)
+      .setDesc(desc)
+      .addText((textfield) => {
+        textfield.setPlaceholder("2000");
+        textfield.inputEl.type = "number";
+        textfield.setValue(String(this.plugin.options.wordCount.debounceDelay));
+        textfield.onChange(async (value) => {
+          const num = value !== "" ? Number(value) : 2000;
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            wordCount: {
+              ...old.wordCount,
+              debounceDelay: num
+            }
+          }));
+        });
+      });
+  }
+
+  addWordCountAutoSaveIntervalSetting(container: HTMLElement, lang: Language): void {
+    const title = t("settings-word-count-auto-save-interval", lang);
+    const desc = t("settings-word-count-auto-save-interval-desc", lang);
+
+    new Setting(container)
+      .setName(title)
+      .setDesc(desc)
+      .addText((textfield) => {
+        textfield.setPlaceholder("30000");
+        textfield.inputEl.type = "number";
+        textfield.setValue(String(this.plugin.options.wordCount.autoSaveInterval));
+        textfield.onChange(async (value) => {
+          const num = value !== "" ? Number(value) : 30000;
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            wordCount: {
+              ...old.wordCount,
+              autoSaveInterval: num
+            }
+          }));
+        });
+      });
+  }
+
+  addWordCountImmediateInitSetting(container: HTMLElement, lang: Language): void {
+    const title = t("settings-word-count-immediate-init", lang);
+    const desc = t("settings-word-count-immediate-init-desc", lang);
+
+    new Setting(container)
+      .setName(title)
+      .setDesc(desc)
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.options.wordCount.immediateInitOnOpen);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            wordCount: {
+              ...old.wordCount,
+              immediateInitOnOpen: value
+            }
+          }));
         });
       });
   }
@@ -748,39 +935,33 @@ export class CalendarSettingsTab extends PluginSettingTab {
           contentEl.createDiv({ text: "Media Control is currently only supported on Windows.", cls: "setting-item-description" });
         }
 
-        // System Media Integration (part of 'enabled' top level, but previously shown as toggle)
-        // If the section is enabled, system media is enabled.
-        // But the previous list of toggles included "System Media Integration" disabled toggle.
-        // Let's keep the explicit toggles if meaningful, or simplify.
-        // User asked for "Media Control" as top level module.
-        // Assuming "enabled" on the collapsible section controls the active media features.
-
-        // White Noise
-        new Setting(contentEl)
-          .setName(t("settings-white-noise", lang))
-          .setDesc(t("settings-white-noise-desc", lang))
-          .addToggle((toggle) => {
-            toggle.setValue(whiteNoise);
-            toggle.onChange(async (value) => {
-              this.plugin.writeOptions((old) => ({
-                ...old,
-                media: { ...old.media, whiteNoise: value }
-              }));
-            });
-          });
-
-        new Setting(contentEl)
-          .setName(t("settings-pomo-background-noise", lang))
-          .setDesc(t("settings-pomo-background-noise-desc", lang))
-          .addText((text) => {
-            text.setValue(backgroundNoiseFile);
-            text.onChange(async (value) => {
-              this.plugin.writeOptions((old) => ({
-                ...old,
-                media: { ...old.media, backgroundNoiseFile: value }
-              }));
-            });
-          });
+        // White Noise (as a sub-collapsible section)
+        this.addCollapsibleSection(
+          contentEl,
+          t("settings-white-noise", lang),
+          whiteNoise,
+          (value) => {
+            this.plugin.writeOptions((old) => ({
+              ...old,
+              media: { ...old.media, whiteNoise: value }
+            }));
+          },
+          (subContentEl) => {
+            new Setting(subContentEl)
+              .setName(t("settings-pomo-background-noise", lang))
+              .setDesc(t("settings-pomo-background-noise-desc", lang))
+              .addText((text) => {
+                text.setValue(backgroundNoiseFile);
+                text.onChange(async (value) => {
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    media: { ...old.media, backgroundNoiseFile: value }
+                  }));
+                });
+              });
+          },
+          false // Default closed
+        );
       }
     );
   }
@@ -798,306 +979,302 @@ export class CalendarSettingsTab extends PluginSettingTab {
         pomodoro: { ...old.pomodoro, enabled }
       })),
       (container) => {
-        new Setting(container)
-          .setName(t("settings-pomo-work", lang))
-          .setDesc(t("settings-pomo-work-desc", lang))
-          .addText((text) => {
-            text.inputEl.type = "number";
-            text.setValue(String(pomo.work));
-            text.onChange(async (value) => {
-              const num = parseInt(value);
-              this.plugin.writeOptions((old) => ({
-                ...old,
-                pomodoro: { ...old.pomodoro, work: num }
-              }));
-            });
-          });
-
-        // ... (Similar for shortBreak, longBreak, etc.)
-        // I will assume standard update pattern for rest for brevity in this full-rewrite file.
-        // Actually, to avoid breaking, I must include all.
-
-        const addNum = (name: string, desc: string, key: keyof typeof pomo) => {
-          new Setting(container)
-            .setName(name)
-            .setDesc(desc)
-            .addText((text) => {
-              text.inputEl.type = "number";
-              text.setValue(String(pomo[key]));
-              text.onChange(async (value) => {
-                const num = parseInt(value);
-                this.plugin.writeOptions((old) => ({
-                  ...old,
-                  pomodoro: { ...old.pomodoro, [key]: num }
-                }));
+        // Time Settings (sub-collapsible section with expand/collapse toggle)
+        this.addCollapsibleSection(
+          container,
+          t("settings-pomo-time-settings", lang),
+          true,
+          null,  // No state change
+          (timeContentEl) => {
+            new Setting(timeContentEl)
+              .setName(t("settings-pomo-work", lang))
+              .setDesc(t("settings-pomo-work-desc", lang))
+              .addText((text) => {
+                text.inputEl.type = "number";
+                text.setValue(String(pomo.work));
+                text.onChange(async (value) => {
+                  const num = parseInt(value);
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    pomodoro: { ...old.pomodoro, work: num }
+                  }));
+                });
               });
-            });
-        };
 
-        addNum(t("settings-pomo-short-break", lang), t("settings-pomo-short-break-desc", lang), 'shortBreak');
-        addNum(t("settings-pomo-long-break", lang), t("settings-pomo-long-break-desc", lang), 'longBreak');
-        addNum(t("settings-pomo-long-break-interval", lang), t("settings-pomo-long-break-interval-desc", lang), 'longBreakInterval');
-        addNum(t("settings-pomo-auto-cycles", lang), t("settings-pomo-auto-cycles-desc", lang), 'autoCycles');
+            new Setting(timeContentEl)
+              .setName(t("settings-pomo-short-break", lang))
+              .setDesc(t("settings-pomo-short-break-desc", lang))
+              .addText((text) => {
+                text.inputEl.type = "number";
+                text.setValue(String(pomo.shortBreak));
+                text.onChange(async (value) => {
+                  const num = parseInt(value);
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    pomodoro: { ...old.pomodoro, shortBreak: num }
+                  }));
+                });
+              });
 
-        new Setting(container)
-          .setName(t("settings-pomo-continuous", lang))
-          .setDesc(t("settings-pomo-continuous-desc", lang))
-          .addToggle(toggle => toggle
-            .setValue(pomo.continuous)
-            .onChange(val => this.plugin.writeOptions((old) => ({
-              ...old,
-              pomodoro: { ...old.pomodoro, continuous: val }
-            })))
-          );
+            new Setting(timeContentEl)
+              .setName(t("settings-pomo-long-break", lang))
+              .setDesc(t("settings-pomo-long-break-desc", lang))
+              .addText((text) => {
+                text.inputEl.type = "number";
+                text.setValue(String(pomo.longBreak));
+                text.onChange(async (value) => {
+                  const num = parseInt(value);
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    pomodoro: { ...old.pomodoro, longBreak: num }
+                  }));
+                });
+              });
 
-        new Setting(container)
-          .setName(t("settings-notification-sound", lang))
-          .setDesc(t("settings-notification-sound-desc", lang))
-          .addToggle(toggle => toggle
-            .setValue(pomo.notification.sound)
-            .onChange(val => this.plugin.writeOptions((old) => ({
-              ...old,
-              pomodoro: {
-                ...old.pomodoro,
-                notification: { ...old.pomodoro.notification, sound: val }
-              }
-            })))
-          );
+            new Setting(timeContentEl)
+              .setName(t("settings-pomo-long-break-interval", lang))
+              .setDesc(t("settings-pomo-long-break-interval-desc", lang))
+              .addText((text) => {
+                text.inputEl.type = "number";
+                text.setValue(String(pomo.longBreakInterval));
+                text.onChange(async (value) => {
+                  const num = parseInt(value);
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    pomodoro: { ...old.pomodoro, longBreakInterval: num }
+                  }));
+                });
+              });
 
-        // Use System Notification
-        new Setting(container)
-          .setName(t("settings-use-system-notification", lang))
-          .setDesc(t("settings-use-system-notification-desc", lang))
-          .addToggle(toggle => toggle
-            .setValue(pomo.notification.system)
-            .onChange(val => this.plugin.writeOptions((old) => ({
-              ...old,
-              pomodoro: {
-                ...old.pomodoro,
-                notification: { ...old.pomodoro.notification, system: val }
-              }
-            })))
-          );
-      }
-    );
-  }
+            new Setting(timeContentEl)
+              .setName(t("settings-pomo-auto-cycles", lang))
+              .setDesc(t("settings-pomo-auto-cycles-desc", lang))
+              .addText((text) => {
+                text.inputEl.type = "number";
+                text.setValue(String(pomo.autoCycles));
+                text.onChange(async (value) => {
+                  const num = parseInt(value);
+                  this.plugin.writeOptions((old) => ({
+                    ...old,
+                    pomodoro: { ...old.pomodoro, autoCycles: num }
+                  }));
+                });
+              });
 
-  addWeatherSettings(lang: Language, container: HTMLElement = this.containerEl): void {
-    // Managed manually under Assistant -> Weather
-    // Reusing same logic but mapping to new options path
-    const { weather } = this.plugin.options.assistant;
-
-    this.addCollapsibleSection(
-      container,
-      t("settings-weather-title", lang),
-      weather.enabled,
-      (value) => {
-        this.plugin.writeOptions((old) => ({
-          ...old,
-          assistant: {
-            ...old.assistant,
-            weather: { ...old.assistant.weather, enabled: value }
-          }
-        }));
-        this.display(); // Refresh to show/hide sub-settings if needed or just update state?
-        // Note: addCollapsibleSection handles expansion. But display() redraws everything.
-        // Redrawing might be jarring but ensures dependent UI states if any.
-        // Actually addCollapsibleSection's default behavior is enough for expansion.
-        // But if we want to refresh other parts, display() is ok. 
-        // However, standard addCollapsibleSection usage in this file often re-calls display() ONLY if dependencies change outside the box.
-        // Here, weather enabled might affect potential other things?
-        // Let's keep it simple: just update options. The UI expands/collapses locally.
-        // Wait, if I call display(), it destroys DOM and rebuilds. That closes the toggle if I'm not careful.
-        // addCollapsibleSection calls onToggle.
-        // If I call display() inside onToggle, I lose focus and position.
-        // Better to NOT call display() if not strictly needed.
-        // Previous implementations (Calendar) call display() because it affects other sections (Linkage).
-        // Weather doesn't seem to have external dependencies in UI.
-      },
-      (subContainer) => {
-        new Setting(subContainer)
-          .setName(t("settings-weather-warnings-enable", lang))
-          .setDesc(t("settings-weather-warnings-desc", lang))
-          .addToggle((toggle) => {
-            toggle.setValue(weather.warnings);
-            toggle.onChange(async (value) => {
-              this.plugin.writeOptions((old) => ({
-                ...old,
-                assistant: {
-                  ...old.assistant,
-                  weather: { ...old.assistant.weather, warnings: value }
-                }
-              }));
-            });
-          });
-
-        const SecretComponent = (obsidian as any).SecretComponent;
-
-        // Token
-        const tokenSetting = new Setting(subContainer)
-          .setName(t("settings-weather-token", lang))
-          .setDesc(t("settings-weather-token-desc", lang));
-
-        if (SecretComponent && this.app.secretStorage) {
-          const sc = new SecretComponent(this.app, tokenSetting.controlEl);
-          sc.setValue(weather.tokenSecretId || "");
-          sc.onChange(async (id: string) => {
-            this.plugin.writeOptions((old) => ({
-              ...old,
-              assistant: {
-                ...old.assistant,
-                weather: { ...old.assistant.weather, tokenSecretId: id }
-              }
-            }));
-          });
-        } else {
-          // Fallback if SecretComponent is unavailable
-          tokenSetting.addText(text => {
-            text.inputEl.type = "password";
-            text.setValue(weather.tokenSecretId || "");
-            text.onChange(async (id: string) => {
-              this.plugin.writeOptions((old) => ({
-                ...old,
-                assistant: {
-                  ...old.assistant,
-                  weather: { ...old.assistant.weather, tokenSecretId: id }
-                }
-              }));
-            });
-          });
-        }
-
-        // Host
-        const hostSetting = new Setting(subContainer)
-          .setName(t("settings-weather-host", lang))
-          .setDesc(t("settings-weather-host-desc", lang));
-
-        if (SecretComponent && this.app.secretStorage) {
-          const sc = new SecretComponent(this.app, hostSetting.controlEl);
-          sc.setValue(weather.hostSecretId || "");
-          sc.onChange(async (id: string) => {
-            this.plugin.writeOptions((old) => ({
-              ...old,
-              assistant: {
-                ...old.assistant,
-                weather: { ...old.assistant.weather, hostSecretId: id }
-              }
-            }));
-          });
-        } else {
-          hostSetting.addText(text => {
-            text.setPlaceholder("e.g. abc-123.qweatherapi.com");
-            text.setValue(weather.hostSecretId || "");
-            text.onChange(async (id: string) => {
-              this.plugin.writeOptions((old) => ({
-                ...old,
-                assistant: {
-                  ...old.assistant,
-                  weather: { ...old.assistant.weather, hostSecretId: id }
-                }
-              }));
-            });
-          });
-        }
-
-        const addText = (name: string, desc: string, key: keyof typeof weather, placeholder?: string, isNumber?: boolean) => {
-          new Setting(subContainer)
-            .setName(name)
-            .setDesc(desc)
-            .addText(text => {
-              if (isNumber) text.inputEl.type = "number";
-              if (placeholder) text.setPlaceholder(placeholder);
-              text.setValue(String(weather[key]));
-              text.onChange(async (val) => {
-                const value = isNumber ? parseInt(val) : val;
-                this.plugin.writeOptions((old) => ({
+            new Setting(timeContentEl)
+              .setName(t("settings-pomo-continuous", lang))
+              .setDesc(t("settings-pomo-continuous-desc", lang))
+              .addToggle(toggle => toggle
+                .setValue(pomo.continuous)
+                .onChange(val => this.plugin.writeOptions((old) => ({
                   ...old,
-                  assistant: {
-                    ...old.assistant,
-                    weather: { ...old.assistant.weather, [key]: value }
+                  pomodoro: { ...old.pomodoro, continuous: val }
+                })))
+              );
+          },
+          false, // Default closed
+          true   // Show toggle for collapsing/expanding
+        );
+
+        // Notification Settings (sub-collapsible section with expand/collapse toggle)
+        this.addCollapsibleSection(
+          container,
+          t("settings-notification-settings", lang),
+          true,
+          null,  // No state change
+          (notificationContentEl) => {
+            new Setting(notificationContentEl)
+              .setName(t("settings-notification-sound", lang))
+              .setDesc(t("settings-notification-sound-desc", lang))
+              .addToggle(toggle => toggle
+                .setValue(pomo.notification.sound)
+                .onChange(val => this.plugin.writeOptions((old) => ({
+                  ...old,
+                  pomodoro: {
+                    ...old.pomodoro,
+                    notification: { ...old.pomodoro.notification, sound: val }
                   }
-                }));
-              });
-            });
-        };
+                })))
+              );
 
-        // Determine default city placeholder based on current moment locale (which follows override)
-        const currentLocale = window.moment.locale().toLowerCase();
-        let defaultCityPlaceholder = "Beijing";
-        if (currentLocale.startsWith("en")) defaultCityPlaceholder = "New York";
-        else if (currentLocale.startsWith("ja")) defaultCityPlaceholder = "Tokyo";
-        // Add more if needed, or just keep generic.
-
-        addText(t("settings-weather-city", lang), t("settings-weather-city-desc", lang), 'city', `e.g. ${defaultCityPlaceholder}`);
-        addText(t("settings-weather-interval", lang), t("settings-weather-interval-desc", lang), 'refreshInterval', "60", true);
-        addText(t("settings-weather-daily-interval", lang), t("settings-weather-daily-interval-desc", lang), 'dailyRefreshInterval', "4", true);
+            new Setting(notificationContentEl)
+              .setName(t("settings-use-system-notification", lang))
+              .setDesc(t("settings-use-system-notification-desc", lang))
+              .addToggle(toggle => toggle
+                .setValue(pomo.notification.system)
+                .onChange(val => this.plugin.writeOptions((old) => ({
+                  ...old,
+                  pomodoro: {
+                    ...old.pomodoro,
+                    notification: { ...old.pomodoro.notification, system: val }
+                  }
+                })))
+              );
+          },
+          false, // Default closed
+          true   // Show toggle for collapsing/expanding
+        );
       }
     );
-  }
-
-  // Helpers
-  private addCollapsibleSection(
-    container: HTMLElement,
-    name: string,
-    isEnabled: boolean | null,
-    onToggle: ((enabled: boolean) => void) | null,
-    renderContent: (contentEl: HTMLElement) => void,
-    defaultOpen = false
-  ): void {
-    const details = container.createEl("details");
-    details.style.border = "1px solid var(--background-modifier-border)";
-    details.style.borderRadius = "5px";
-    details.style.padding = "10px";
-    details.style.marginBottom = "10px";
-
-    // Default open state: if isEnabled is explicitly true, OR if no toggle is present (pure container) and defaultOpen is true
-    // If it has a toggle, usually we want it open if enabled?
-    if (isEnabled !== null) {
-      details.open = isEnabled;
-    } else {
-      details.open = defaultOpen;
-    }
-
-    const summary = details.createEl("summary");
-    summary.style.display = "flex";
-    summary.style.alignItems = "center";
-    summary.style.justifyContent = "space-between";
-    summary.style.listStyle = "none";
-    summary.style.cursor = "pointer";
-    summary.style.outline = "none";
-
-    const titleEl = summary.createDiv();
-    titleEl.style.fontWeight = "bold";
-    titleEl.innerText = name;
-
-    if (onToggle && isEnabled !== null) {
-      const toggleDiv = summary.createDiv();
-      toggleDiv.addEventListener('click', e => e.stopPropagation());
-      new ToggleComponent(toggleDiv)
-        .setValue(isEnabled)
-        .onChange((val) => {
-          onToggle(val);
-          details.open = val; // Force open if enabled? Or user preference? 
-          // Usually enabling expands it.
-          // Disabling might collapse it or keep it open?
-          // Let's mimic previous: details.open = val;
-        });
-    }
-
-    const content = details.createDiv();
-    content.style.marginTop = '10px';
-    content.style.paddingLeft = '10px';
-    content.style.borderLeft = '2px solid var(--background-modifier-border)';
-    renderContent(content);
   }
 
   private createIndentedContainer(parent: HTMLElement): HTMLElement {
     const container = parent.createDiv();
-    container.style.borderLeft = "2px solid var(--background-modifier-border)";
-    container.style.paddingLeft = "18px";
-    container.style.marginLeft = "4px";
-    container.style.marginTop = "8px";
-    container.style.marginBottom = "8px";
+    container.style.paddingLeft = "15px";
     return container;
+  }
+
+  private addPeriodicNoteSetting(
+    container: HTMLElement,
+    granularity: "day" | "week" | "month" | "quarter" | "year",
+    label: string,
+    config: PeriodicConfig,
+    lang: Language
+  ): void {
+    const capitalLabel = label.charAt(0).toUpperCase() + label.slice(1);
+    this.addCollapsibleSection(
+      container,
+      capitalLabel,
+      config.enabled,
+      (enabled) => {
+        this.plugin.writeOptions((old) => ({
+          ...old,
+          periodicNotes: {
+            ...old.periodicNotes,
+            [granularity]: { ...old.periodicNotes[granularity], enabled }
+          }
+        }));
+      },
+      (contentEl) => {
+        // Format
+        new Setting(contentEl)
+          .setName(t("settings-periodic-format", lang))
+          .setDesc(t("settings-periodic-format-desc", lang))
+          .addText((textfield) => {
+            textfield.setPlaceholder("YYYY-MM-DD");
+            textfield.setValue(config.format);
+            textfield.onChange(async (value) => {
+              this.plugin.writeOptions((old) => ({
+                ...old,
+                periodicNotes: {
+                  ...old.periodicNotes,
+                  [granularity]: { ...old.periodicNotes[granularity], format: value }
+                }
+              }));
+            });
+          });
+
+        // Folder
+        new Setting(contentEl)
+          .setName(t("settings-periodic-folder", lang))
+          .setDesc(t("settings-periodic-folder-desc", lang))
+          .addText((textfield) => {
+            textfield.setPlaceholder("Daily/");
+            textfield.setValue(config.folder);
+            textfield.onChange(async (value) => {
+              this.plugin.writeOptions((old) => ({
+                ...old,
+                periodicNotes: {
+                  ...old.periodicNotes,
+                  [granularity]: { ...old.periodicNotes[granularity], folder: value }
+                }
+              }));
+            });
+          });
+
+        // Open at Startup
+        new Setting(contentEl)
+          .setName(t("settings-periodic-open-at-startup", lang))
+          .setDesc(t("settings-periodic-open-at-startup-desc", lang))
+          .addToggle((toggle) => {
+            toggle.setValue(config.openAtStartup);
+            toggle.onChange(async (value) => {
+              this.plugin.writeOptions((old) => ({
+                ...old,
+                periodicNotes: {
+                  ...old.periodicNotes,
+                  [granularity]: { ...old.periodicNotes[granularity], openAtStartup: value }
+                }
+              }));
+            });
+          });
+      },
+      false // Default closed
+    );
+  }
+
+  private addCollapsibleSection(
+    parent: HTMLElement,
+    title: string,
+    enabled: boolean,
+    onToggle: ((enabled: boolean) => void) | null,
+    contentBuilder: (container: HTMLElement) => void,
+    defaultOpen = false,
+    showToggle = true
+  ): void {
+    let section: Setting;
+    let currentState = enabled;  // Internal state for stateless containers
+    
+    if (showToggle) {
+      section = new Setting(parent)
+          .setName(title)
+          .addToggle(toggle => {
+              toggle.setValue(currentState).onChange((value) => {
+                  currentState = value;  // Update internal state
+                  // Only call onToggle if it's provided (not null)
+                  if (onToggle !== null) {
+                      onToggle(value);
+                  }
+              });
+          });
+    } else {
+      // Create a pure container/label without toggle
+      section = new Setting(parent)
+          .setName(title);
+      section.settingEl.style.fontSize = "0.9rem";
+      section.settingEl.style.fontWeight = "500";
+    }
+
+    const contentContainer = parent.createDiv();
+    // Apply indentation based on parent's padding
+    const parentPaddingLeft = window.getComputedStyle(parent).paddingLeft;
+    const currentIndent = parentPaddingLeft ? parseInt(parentPaddingLeft) : 0;
+    contentContainer.style.paddingLeft = (currentIndent + 15) + "px";
+    contentContainer.style.marginBottom = "10px";
+    
+    let hasBuiltContent = false;
+    
+    const toggleContent = () => {
+        if (contentContainer.style.display === "none") {
+            contentContainer.style.display = "block";
+            if (!hasBuiltContent) {
+                contentBuilder(contentContainer);
+                hasBuiltContent = true;
+            }
+        } else {
+            contentContainer.style.display = "none";
+        }
+    };
+
+    // If no toggle, always show content
+    if (showToggle) {
+        if (!defaultOpen) {
+            contentContainer.style.display = currentState ? "block" : "none";
+        } else {
+            contentContainer.style.display = "block";
+        }
+
+        if (currentState || defaultOpen) {
+            contentBuilder(contentContainer);
+            hasBuiltContent = true;
+        }
+
+        section.settingEl.addEventListener('click', toggleContent);
+    } else {
+        // No toggle - always show content
+        contentContainer.style.display = "block";
+        contentBuilder(contentContainer);
+        hasBuiltContent = true;
+    }
   }
 }

@@ -128,7 +128,7 @@ export default class CalendarView extends ItemView {
     return Promise.resolve();
   }
 
-  async onOpen(): Promise<void> {
+  public async onOpen(): Promise<void> {
     const sources = this.createSources();
     this.app.workspace.trigger(TRIGGER_ON_OPEN, sources);
 

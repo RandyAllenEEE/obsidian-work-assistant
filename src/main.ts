@@ -70,6 +70,7 @@ export default class CalendarPlugin extends Plugin {
   private statusBarPlayer: StatusBarPlayer | null = null;
   private statusBarPlayerEl: HTMLElement | null = null;
   private browserSMTC: BrowserSMTC | null = null;
+  private settingsTab: CalendarSettingsTab;
 
   private getObsidianLanguage(): Language {
     const momentLang = window.moment.locale();
@@ -165,12 +166,13 @@ export default class CalendarPlugin extends Plugin {
 
     this.registerView(
       VIEW_TYPE_CALENDAR,
-      (leaf: WorkspaceLeaf) => (this.view = new CalendarView(leaf, this))
+      (leaf: WorkspaceLeaf) => new CalendarView(leaf, this)
     );
 
     this.configureAssistant();
 
-    this.addSettingTab(new CalendarSettingsTab(this.app, this));
+    this.settingsTab = new CalendarSettingsTab(this.app, this);
+    this.addSettingTab(this.settingsTab);
 
     this.registerInterval(
       window.setInterval(async () => {
@@ -243,7 +245,7 @@ export default class CalendarPlugin extends Plugin {
       if (typeof finalSettings.wordCount.statsMdPath !== "string" || !finalSettings.wordCount.statsMdPath.trim()) {
         finalSettings.wordCount.statsMdPath = defaultSettings.wordCount.statsMdPath;
       }
-      if (!Number.isInteger(finalSettings.wordCount.shockThreshold) || finalSettings.wordCount.shockThreshold <= 0) {
+      if (!Number.isInteger(finalSettings.wordCount.shockThreshold) || (finalSettings.wordCount.shockThreshold < -1 || finalSettings.wordCount.shockThreshold === 0)) {
         finalSettings.wordCount.shockThreshold = defaultSettings.wordCount.shockThreshold;
       }
       if (loadedData.pomodoro?.notification) finalSettings.pomodoro.notification = { ...defaultSettings.pomodoro.notification, ...loadedData.pomodoro.notification };
@@ -784,12 +786,5 @@ export default class CalendarPlugin extends Plugin {
     if (this.weatherService) {
       this.weatherService.stopWarningPolling();
     }
-
-    this.app.workspace
-      .getLeavesOfType(VIEW_TYPE_CALENDAR)
-      .forEach((leaf) => leaf.detach());
-
-    this.app.commands.removeCommand(`${this.manifest.id}: show - calendar - view`);
-    this.app.commands.removeCommand(`${this.manifest.id}: reveal - active - note`);
   }
 }

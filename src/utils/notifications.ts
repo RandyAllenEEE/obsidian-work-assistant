@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const electron = require("electron");
 
-export function sendSystemNotification(title: string, body: string, silent = true): void {
+export function showNotification(title: string, body: string, silent?: boolean): void {
     if (!electron || !electron.remote) {
         console.warn("[Work Assistant] System notifications not supported or Electron not found.");
         return;
@@ -14,8 +14,7 @@ export function sendSystemNotification(title: string, body: string, silent = tru
             show(): void;
             close(): void;
         }
-        const n = new Notification({
-            title: title,
+        const n = new Notification(title, {
             body: body,
             silent: silent
         }) as IElectronNotification;
@@ -27,3 +26,6 @@ export function sendSystemNotification(title: string, body: string, silent = tru
         console.error("[Work Assistant] Failed to send system notification:", e);
     }
 }
+
+// Alias for compatibility
+export const sendSystemNotification = showNotification;

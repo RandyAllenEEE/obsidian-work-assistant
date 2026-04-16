@@ -275,3 +275,34 @@ export class SystemMediaMonitor extends Component {
         this.stopMonitoring();
     }
 }
+
+export function getActiveWindow(): Promise<Window> {
+    return new Promise((resolve) => {
+        const child = spawn('powershell', [
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-Command', 'Get-Process -Id $PID | Select-Object -ExpandProperty MainWindowTitle'
+        ], {
+            windowsHide: true,
+        });
+
+        child.stdout.on('data', (data: Buffer) => {
+            const title = data.toString().trim();
+            resolve({ title } as unknown as Window);
+        });
+
+        child.stderr.on('data', (data: Buffer) => {
+            console.error(`[SMTC] GetActiveWindow Stderr: ${data.toString()}`);
+        });
+
+        child.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`[SMTC] GetActiveWindow failed with code ${code}`);
+            }
+        });
+
+        child.on('error', (err) => {
+            console.error("[SMTC] Failed to run GetActiveWindow:", err);
+        });
+    });
+}

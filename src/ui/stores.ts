@@ -126,3 +126,52 @@ export interface PluginCache {
 }
 
 export const pluginCache = writable<PluginCache>({});
+
+export interface FlipClockState {
+  hours: number;
+  minutes: number;
+  seconds: number;
+}
+
+export const defaultFlipClockState: FlipClockState = {
+  hours: 0,
+  minutes: 0,
+  seconds: 0,
+};
+
+export const flipClockStore = writable<FlipClockState>(defaultFlipClockState);
+
+export interface CalendarViewState {
+  view: string;
+  date: string;
+}
+
+export const defaultCalendarViewState: CalendarViewState = {
+  view: "day",
+  date: "",
+};
+
+export const calendarViewStore = writable<CalendarViewState>(defaultCalendarViewState);
+
+export interface WeatherState {
+  locationId?: string;
+  locationName?: string;
+  weatherData?: {
+    temp: string;
+    icon: string;
+    text: string;
+    [key: string]: any;
+  };
+  lastWeatherFetch?: number; // For "Now"
+  hourlyData?: any[]; // For 24h
+  lastHourlyFetch?: number;
+  dailyData?: any[]; // For 3d
+  lastDailyFetch?: number;
+  warningData?: any[];
+  lastWarningFetch?: number;
+  dismissedWarningIds?: string[];
+}
+
+export const defaultWeatherState: WeatherState = {};
+
+export const weatherStore = writable<WeatherState>(defaultWeatherState);

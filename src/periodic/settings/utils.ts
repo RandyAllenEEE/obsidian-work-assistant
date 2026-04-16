@@ -6,6 +6,7 @@ import {
 import { get, type Updater, type Writable } from "svelte/store";
 
 import type { ISettings } from ".";
+import { Setting } from "obsidian";
 
 export const clearStartupNote: Updater<ISettings> = (settings: ISettings) => {
   for (const granularity of granularities) {
@@ -73,4 +74,17 @@ export function getWeekStartOptions(): { label: string; value: string }[] {
     { label: `Locale default (${localeWeekStart})`, value: "locale" },
     ...localizedWeekdays.map((day, i) => ({ value: weekdays[i], label: day })),
   ];
+}
+
+export function createSetting(container: HTMLElement, name: string, desc: string, callback: (value: boolean) => void): Setting {
+  const setting = new Setting(container)
+    .setName(name)
+    .setDesc(desc)
+    .addToggle((toggle) =>
+      toggle
+        .setValue(false)
+        .onChange(callback)
+    );
+
+  return setting;
 }

@@ -1,6 +1,5 @@
-import { requestUrl } from "obsidian";
+import { requestUrl, type RequestUrlResponse } from "obsidian";
 import type CalendarPlugin from "../main";
-import { sendSystemNotification } from "../utils/notifications";
 import { type WeatherCache } from "../ui/stores";
 
 export interface WeatherWarning {
@@ -48,6 +47,17 @@ export interface WeatherData {
     warning?: WeatherWarning[];
     hourly?: HourlyForecast[];
     daily?: DailyForecast[];
+}
+
+interface WeatherApiResponse<T = any> {
+    code: string;
+    updateTime?: string;
+    fxLink?: string;
+    now?: T;
+    hourly?: T[];
+    daily?: T[];
+    warning?: T[];
+    location?: T[];
 }
 
 export class QWeatherService {
@@ -159,9 +169,9 @@ export class QWeatherService {
             try {
                 const geoRes = await requestUrl({ url, throw: false });
                 if (geoRes.status === 200) {
-                    const data = geoRes.json;
+                    const data = geoRes.json as WeatherApiResponse;
                     if (data.code === "200" && data.location && data.location.length > 0) {
-                        locationId = data.location[0].id;
+                        locationId = (data.location[0] as any).id;
 
                         await this.plugin.cacheManager.updateWeather({
                             ...cache,
@@ -235,8 +245,7 @@ export class QWeatherService {
         }
 
         // Prepare fetches
-        interface RequestResult { json: any; status: number }
-        const promises: Promise<RequestResult | { error: any }>[] = [];
+        const promises: Promise<RequestUrlResponse | { error: unknown }>[] = [];
         // Map indices to result types
         let fetchNowIndex = -1, fetchWarningIndex = -1, fetchHourlyIndex = -1, fetchDailyIndex = -1;
         let pIndex = 0;
@@ -269,55 +278,68 @@ export class QWeatherService {
             // Process Now
             if (fetchNowIndex !== -1) {
                 const res = results[fetchNowIndex];
-                if (res && 'json' in res && res.json && res.json.code === "200") {
-                    newTask.weatherData = res.json.now;
-                    newTask.lastWeatherFetch = now;
-                    hasUpdates = true;
+                if (res && 'json' in res && res.json) {
+                    const data = res.json as WeatherApiResponse;
+                    if (data.code === "200" && data.now) {
+                        newTask.weatherData = data.now;
+                        newTask.lastWeatherFetch = now;
+                        hasUpdates = true;
+                    }
                 }
             }
 
             // Process Hourly
             if (fetchHourlyIndex !== -1) {
                 const res = results[fetchHourlyIndex];
-                if (res && 'json' in res && res.json && res.json.code === "200") {
-                    newTask.hourlyData = res.json.hourly; // list of 24 objects
-                    newTask.lastHourlyFetch = now;
-                    hasUpdates = true;
+                if (res && 'json' in res && res.json) {
+                    const data = res.json as WeatherApiResponse<HourlyForecast>;
+                    if (data.code === "200" && data.hourly) {
+                        newTask.hourlyData = data.hourly;
+                        newTask.lastHourlyFetch = now;
+                        hasUpdates = true;
+                    }
                 }
             }
 
             // Process Warning
             if (fetchWarningIndex !== -1) {
                 const res = results[fetchWarningIndex];
-                if (res && 'json' in res && res.json && res.json.code === "200") {
-                    const warnings = res.json.warning || [];
-                    newTask.warningData = warnings;
-                    newTask.lastWarningFetch = now;
+                if (res && 'json' in res && res.json) {
+                    const data = res.json as WeatherApiResponse<WeatherWarning>;
+                    if (data.code === "200") {
+                        const warnings = data.warning || [];
+                        newTask.warningData = warnings;
+                        newTask.lastWarningFetch = now;
 
-                    // Notification Logic
-                    const cachedWarnings = cache.warningData as WeatherWarning[] || [];
-                    const newWarnings = warnings.filter((w: WeatherWarning) => !cachedWarnings.some(cw => cw.id === w.id));
-                    if (newWarnings.length > 0) {
-                        newWarnings.forEach((w: WeatherWarning) => {
-                            sendSystemNotification(`⚠️ ${w.typeName} ${w.level} Warning`, `${w.title}`, false);
-                        });
+                        // Notification Logic
+                        const cachedWarnings = cache.warningData as WeatherWarning[] || [];
+                        const newWarnings = warnings.filter((w: WeatherWarning) => !cachedWarnings.some(cw => cw.id === w.id));
+                        if (newWarnings.length > 0) {
+                            const { showNotification } = await import('../utils/notifications');
+                            newWarnings.forEach((w: WeatherWarning) => {
+                                showNotification(`⚠️ ${w.typeName} ${w.level} Warning`, `${w.title}`, false);
+                            });
+                        }
+
+                        // Prune dismissed
+                        const currentDismissed = cache.dismissedWarningIds || [];
+                        const activeWarningIds = new Set(warnings.map((w: WeatherWarning) => w.id));
+                        newTask.dismissedWarningIds = currentDismissed.filter(id => activeWarningIds.has(id));
+                        hasUpdates = true;
                     }
-
-                    // Prune dismissed
-                    const currentDismissed = cache.dismissedWarningIds || [];
-                    const activeWarningIds = new Set(warnings.map((w: WeatherWarning) => w.id));
-                    newTask.dismissedWarningIds = currentDismissed.filter(id => activeWarningIds.has(id));
-                    hasUpdates = true;
                 }
             }
 
             // Process Daily
             if (fetchDailyIndex !== -1) {
                 const res = results[fetchDailyIndex];
-                if (res && 'json' in res && res.json && res.json.code === "200") {
-                    newTask.dailyData = res.json.daily;
-                    newTask.lastDailyFetch = now;
-                    hasUpdates = true;
+                if (res && 'json' in res && res.json) {
+                    const data = res.json as WeatherApiResponse<DailyForecast>;
+                    if (data.code === "200" && data.daily) {
+                        newTask.dailyData = data.daily;
+                        newTask.lastDailyFetch = now;
+                        hasUpdates = true;
+                    }
                 }
             }
 

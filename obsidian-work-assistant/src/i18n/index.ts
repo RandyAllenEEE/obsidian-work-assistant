@@ -1,6 +1,3 @@
-import en from './en';
-import zhCN from './zh-cn';
-
 export interface Translation {
   // Plugin info
   "plugin-name": string;
@@ -10,9 +7,6 @@ export interface Translation {
   "command-open-view": string;
   "command-open-weekly-note": string;
   "command-reveal-active-note": string;
-  "command-pomo-start": string;
-  "command-pomo-pause": string;
-  "command-pomo-quit": string;
 
   "command-open-note": string;
   "command-next-note": string;
@@ -37,22 +31,6 @@ export interface Translation {
   "settings-confirm-create-desc": string;
   "settings-show-week-number": string;
   "settings-show-week-number-desc": string;
-
-  // Settings - Weather
-  "settings-weather-title": string;
-  "settings-weather-desc": string;
-  "settings-weather-city": string;
-  "settings-weather-city-desc": string;
-  "settings-weather-token": string;
-  "settings-weather-token-desc": string;
-  "settings-weather-host": string;
-  "settings-weather-host-desc": string;
-  "settings-weather-interval": string;
-  "settings-weather-interval-desc": string;
-  "settings-weather-daily-interval": string;
-  "settings-weather-daily-interval-desc": string;
-  "settings-weather-warnings-enable": string;
-  "settings-weather-warnings-desc": string;
 
   // Settings - Weekly Note
   "settings-weekly-note-title": string;
@@ -139,8 +117,6 @@ export interface Translation {
 
   // Calendar UI
   "calendar-week": string;
-  "calendar-tooltip-words": string;
-  "calendar-tooltip-pomo": string;
 
   // Word Count Ranges
   "word-count-range-0": string;
@@ -152,20 +128,6 @@ export interface Translation {
 
   // Pomodoro
   "pomo-title": string;
-  "pomo-notice-paused": string;
-  "pomo-notice-start": string;
-  "pomo-notice-quit": string;
-  "pomo-notice-restart": string;
-  "pomo-mode-work": string;
-  "pomo-mode-break": string;
-  "pomo-unit-minute": string;
-  "pomo-unit-minute-plural": string;
-  "pomo-unit-second": string;
-  "pomo-unit-second-plural": string;
-  "pomo-sys-notif-pomo-end": string;
-  "pomo-sys-notif-break-end": string;
-  "pomo-sys-notif-title": string;
-  "pomo-status-bar-aria": string;
   "settings-pomo-work": string;
   "settings-pomo-work-desc": string;
   "settings-pomo-short-break": string;
@@ -178,8 +140,6 @@ export interface Translation {
   "settings-pomo-continuous-desc": string;
   "settings-pomo-auto-cycles": string;
   "settings-pomo-auto-cycles-desc": string;
-  "settings-pomo-time-settings": string;
-  "settings-notification-settings": string;
   "settings-white-noise": string;
   "settings-white-noise-desc": string;
   "settings-pomo-background-noise": string;
@@ -200,15 +160,8 @@ export interface Translation {
   "settings-show-flip-clock": string;
   "settings-show-flip-clock-desc": string;
   "settings-periodic-notes-section": string;
-  "settings-periodic-format": string;
-  "settings-periodic-format-desc": string;
-  "settings-periodic-folder": string;
-  "settings-periodic-folder-desc": string;
-  "settings-periodic-open-at-startup": string;
-  "settings-periodic-open-at-startup-desc": string;
   "settings-calendar-linkage-title": string;
   "settings-calendar-linkage-desc": string;
-  "settings-periodic-note-configs": string;
   "settings-word-count-section-title": string;
   "settings-word-count-status-bar-title": string;
   "settings-word-count-status-bar-desc": string;
@@ -218,29 +171,4 @@ export interface Translation {
 
   // 新增翻译键
   "settings-calendar-view-title-desc": string;
-}
-
-export type Language = 'en' | 'zh-cn';
-
-export const translations: Record<Language, Translation> = {
-  'en': en,
-  'zh-cn': zhCN
-};
-
-export function getTranslation(lang: Language): Translation {
-  return translations[lang] || translations['en'];
-}
-
-export function getLanguage(): Language {
-  const momentLang = window.moment.locale();
-  if (momentLang.startsWith('zh')) {
-    return 'zh-cn';
-  }
-  return 'en';
-}
-
-export function t(key: keyof Translation, lang?: Language): string {
-  const selectedLang = lang || getLanguage();
-  const translation = getTranslation(selectedLang);
-  return translation[key] || key;
 }

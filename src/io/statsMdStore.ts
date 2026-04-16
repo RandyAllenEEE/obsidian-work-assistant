@@ -2,8 +2,8 @@ import { TFile } from "obsidian";
 import type { App, TAbstractFile } from "obsidian";
 
 interface WordCount {
-  accumulatedDelta: number;
-  lastAcceptedCount: number;
+  initial: number;    // 文件当天首次记录时的字数（基准）
+  current: number;    // 文件当前的字数
 }
 
 export interface WordCountSnapshot {
@@ -13,7 +13,7 @@ export interface WordCountSnapshot {
 
 export interface TodaysWordCountStat {
   displayDelta: number;
-  lastAcceptedCount: number;
+  // 移除lastAcceptedCount字段
 }
 
 export interface TodaysWordCountAggregate {
@@ -25,7 +25,9 @@ interface NoteTableRow {
   rowId: string;
   noteLink: string;
   countsByDate: Record<string, number>;
-  lastModified: number;  // 添加最后修改时间追踪
+  lastModified: number;
+  initialCount?: number;   // 基准字数
+  currentCount?: number;   // 当前字数
 }
 
 interface TableModel {
@@ -46,39 +48,33 @@ const DEFAULT_SETTINGS: DailyStatsSettings = {
   pomoCounts: {},
 };
 
+export const DEFAULT_DAILY_STATS_SETTINGS = DEFAULT_SETTINGS;
+
 const DATE_COLUMN_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-function normalizeRecord(values: unknown): Record<string, number> {
-  if (!values || typeof values !== "object") {
-    return {};
-  }
-
-  return Object.entries(values as Record<string, unknown>).reduce<Record<string, number>>((acc, [key, value]) => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      acc[key] = value;
-    }
-    return acc;
-  }, {});
-}
-
 export class StatsMdStore {
-  private readonly filePathToRowId = new Map<string, string>();
-  private renameHandlerRef: ((file: TAbstractFile, oldPath: string) => void) | null = null;  // 保留对处理器的引用
-  
-  // 添加用于跟踪文件更新时间的映射
-  private readonly fileLastModified = new Map<string, number>();
+  private readonly app: App;
+  private readonly getStatsMdPath: () => string;
+  private filePathToRowId = new Map<string, string>();
+  private fileLastModified = new Map<string, number>();
+  // 添加settings属性
+  public settings: DailyStatsSettings;
+  // 添加renameHandlerRef属性
+  private renameHandlerRef: ((file: TAbstractFile, oldPath: string) => void) | null = null;
 
-  constructor(
-    private readonly app: App,
-    private readonly getPath: () => string,
-  ) {
-    // 创建一个命名函数以便稍后可以移除监听器
-    this.renameHandlerRef = this.handleRename;
-    this.app.vault.on("rename", this.renameHandlerRef);
+  constructor(app: App, getStatsMdPath: () => string) {
+    this.app = app;
+    this.getStatsMdPath = getStatsMdPath;
+    this.settings = Object.assign({}, DEFAULT_DAILY_STATS_SETTINGS);
   }
-  
+
+  // 添加getPath方法
+  private getPath(): string {
+    return this.getStatsMdPath();
+  }
+
   // 添加清理方法
-  cleanup() {
+  cleanup(): void {
     if (this.renameHandlerRef) {
       this.app.vault.off("rename", this.renameHandlerRef);
       this.renameHandlerRef = null;
@@ -142,12 +138,13 @@ export class StatsMdStore {
     let total = 0;
 
     for (const [filePath, wordCount] of Object.entries(todaysWordCount ?? {})) {
-      const displayDelta = Math.max(0, wordCount.accumulatedDelta);
+      // 计算当天的净变化量
+      // 允许负数显示（用户删除内容时），以提供完整的统计信息
+      const netChange = wordCount.current - wordCount.initial;
       byFile[filePath] = {
-        displayDelta,
-        lastAcceptedCount: wordCount.lastAcceptedCount,
+        displayDelta: netChange,  // 显示实际的增/减量，不做下限限制
       };
-      total += displayDelta;
+      total += netChange;
     }
 
     return { total, byFile };
@@ -170,7 +167,6 @@ export class StatsMdStore {
 
   private parse(content: string): DailyStatsSettings {
     const model = this.parseTable(content);
-    const baselines = normalizeRecord(this.readSection(content, "Baselines"));
 
     const dayCounts: Record<string, number> = {};
     model.dates.forEach((date) => {
@@ -182,20 +178,20 @@ export class StatsMdStore {
       dayCounts[date] = total;
     });
 
-    const today = window.moment().format("YYYY-MM-DD");
     const todaysWordCount: Record<string, WordCount> = {};
     model.noteRows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
       if (!file) return;
       
-      const accumulatedDelta = row.countsByDate[today] ?? 0;
-      const baseline = baselines[file.path];
+      // 从解析的表格数据中获取initial和current值
+      const initial = row.initialCount ?? 0;
+      const current = row.currentCount ?? 0;
+      
       todaysWordCount[file.path] = {
-        accumulatedDelta,
-        lastAcceptedCount: Number.isFinite(baseline) ? baseline : accumulatedDelta,
+        initial: initial,
+        current: current,
       };
       this.filePathToRowId.set(file.path, row.rowId);
-      // 记录文件的最后修改时间
       this.fileLastModified.set(file.path, row.lastModified || Date.now());
     });
 
@@ -206,25 +202,10 @@ export class StatsMdStore {
     };
   }
 
-  private readSection(content: string, sectionName: string): unknown {
-    const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const fence = "```";
-    const regex = new RegExp(`## ${escaped}\\n\\n${fence}json\\n([\\s\\S]*?)\\n${fence}`, "m");
-    const match = content.match(regex);
-
-    if (!match || !match[1]) {
-      return {};
-    }
-
-    try {
-      return JSON.parse(match[1]);
-    } catch (error) {
-      console.warn(`[Work Assistant] Invalid JSON in stats.md section: ${sectionName}`, error);
-      return {};
-    }
-  }
-
   private buildTemplate(settings: DailyStatsSettings, existingContent = ""): string {
+    // 更新实例的settings以供buildMainTable使用
+    this.settings = settings;
+    
     const existingModel = this.parseTable(existingContent);
     const today = window.moment().format("YYYY-MM-DD");
 
@@ -263,19 +244,27 @@ export class StatsMdStore {
       let row = (knownRowId ? rowById.get(knownRowId) : undefined) ?? rowByPath.get(target.path);
 
       if (!row) {
+        // 新行：设置 Initial 和 Current 都为当前字数
         row = {
           rowId: this.createRowId(target.path),
           noteLink: this.toNoteLink(target),
           countsByDate: {},
-          lastModified: this.getFileLastModified(target.path), // 记录文件修改时间
+          lastModified: this.getFileLastModified(target.path),
+          initialCount: wordCount.initial,
+          currentCount: wordCount.current,
         };
       } else {
-        // 更新修改时间
+        // 既有行：保留旧的 Initial（历史数据），只更新 Current
+        // ✅ 关键修复：不覆盖 initialCount，只更新 currentCount
+        row.initialCount = row.initialCount ?? wordCount.initial;
+        row.currentCount = wordCount.current;
         row.lastModified = this.getFileLastModified(target.path);
       }
 
       row.noteLink = this.toNoteLink(target);
-      row.countsByDate[today] = wordCount.accumulatedDelta;
+      // 计算当天的净增量（基于 initial/current 的差）
+      const netChange = wordCount.current - wordCount.initial;
+      row.countsByDate[today] = netChange;
       rowById.set(row.rowId, row);
       rowByPath.set(target.path, row);
       this.filePathToRowId.set(target.path, row.rowId);
@@ -288,13 +277,6 @@ export class StatsMdStore {
       pomoByDate[date] = settings.pomoCounts?.[date] ?? existingModel.pomoByDate[date] ?? 0;
     });
 
-    const baselinePayload = Object.entries(settings.todaysWordCount ?? {}).reduce<Record<string, number>>((acc, [path, stat]) => {
-      if (Number.isFinite(stat.lastAcceptedCount)) {
-        acc[path] = stat.lastAcceptedCount;
-      }
-      return acc;
-    }, {});
-
     const table = this.buildMainTable(dates, noteRows, pomoByDate);
 
     return [
@@ -303,14 +285,56 @@ export class StatsMdStore {
       "> This file is managed by Work Assistant. Edit with care.",
       "",
       table,
-      "",
-      "## Baselines",
-      "",
-      "```json",
-      JSON.stringify(baselinePayload, null, 2),
-      "```",
-      "",
+      ""
     ].join("\n");
+  }
+
+  private buildMainTable(dates: string[], noteRows: NoteTableRow[], pomoByDate: Record<string, number>): string {
+    if (dates.length === 0) return "";
+
+    // Build header including Initial and Current columns
+    const headers = ["Note", "Initial", "Current", ...dates];
+    const headerRow = `| ${headers.join(" | ")} |`;
+    const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
+
+    const rows: string[] = [];
+
+    // Add POMO row
+    const pomoCells = ["🍅 POMO", "", "", ...dates.map((date) => String(pomoByDate[date] ?? 0))];
+    rows.push(`| ${pomoCells.join(" | ")} |`);
+
+    // Add note rows
+    for (const row of noteRows) {
+      const file = this.resolveNoteLink(row.noteLink);
+      let initial = 0;
+      let current = 0;
+      
+      if (file) {
+        const wordCount = this.settings.todaysWordCount?.[file.path];
+        if (wordCount) {
+          initial = wordCount.initial;
+          current = wordCount.current;
+        }
+      }
+
+      const noteCells = [
+        row.noteLink,
+        String(initial),
+        String(current),
+        ...dates.map((date) => {
+          // 对于当前日期，显示净变化（允许负数）；对于历史日期，显示存储的值
+          if (date === window.moment().format("YYYY-MM-DD")) {
+            // ✅ 修复：当天增量 = current - initial（不再使用 Math.max）
+            return String(current - initial);
+          } else {
+            return String(row.countsByDate[date] ?? 0);
+          }
+        }),
+      ];
+      rows.push(`| ${noteCells.join(" | ")} |`);
+    }
+
+    return [headerRow, separatorRow, ...rows].join("\n");
   }
 
   private handleRename = (file: TAbstractFile, oldPath: string): void => {
@@ -364,11 +388,15 @@ export class StatsMdStore {
       return { dates: [], pomoByDate: {}, noteRows: [] };
     }
 
-    const dates = headerCells.slice(1).filter((date) => DATE_COLUMN_PATTERN.test(date));
-    if (dates.length === 0) {
-      return { dates: [], pomoByDate: {}, noteRows: [] };
+    // Identify date columns. Note that columns 1 and 2 are Initial and Current.
+    const dates = headerCells.slice(3).filter((date) => DATE_COLUMN_PATTERN.test(date));
+    if (dates.length === 0 && headerCells.length > 3) {
+       // Fallback or strict check? Let's stick to finding dates after Initial/Current
     }
-
+    
+    // If no dates found after Initial/Current, maybe the table format is different (legacy?)
+    // For now, assume standard format: Note | Initial | Current | Date1 | Date2 ...
+    
     const pomoByDate: Record<string, number> = {};
     dates.forEach((date) => {
       pomoByDate[date] = 0;
@@ -384,8 +412,9 @@ export class StatsMdStore {
       if (!label) continue;
 
       if (label === "🍅 POMO") {
+        // POMO row: cells[1]=Initial(empty), cells[2]=Current(empty), cells[3]=Date1...
         dates.forEach((date, idx) => {
-          const raw = Number(cells[idx + 1]);
+          const raw = Number(cells[idx + 3]);
           if (Number.isFinite(raw)) {
             pomoByDate[date] = raw;
           }
@@ -397,11 +426,28 @@ export class StatsMdStore {
         rowId: this.getRowIdFromLink(label, i),
         noteLink: label,
         countsByDate: {},
-        lastModified: Date.now(), // 为新解析的行设置当前时间作为默认值
+        lastModified: Date.now(),
+        initialCount: 0,
+        currentCount: 0,
       };
 
+      // Parse Initial and Current
+      if (cells.length > 1) {
+        const initialVal = Number(cells[1]);
+        if (Number.isFinite(initialVal)) {
+          row.initialCount = initialVal;
+        }
+      }
+      if (cells.length > 2) {
+        const currentVal = Number(cells[2]);
+        if (Number.isFinite(currentVal)) {
+          row.currentCount = currentVal;
+        }
+      }
+
+      // Parse Dates
       dates.forEach((date, idx) => {
-        const raw = Number(cells[idx + 1]);
+        const raw = Number(cells[idx + 3]);
         if (Number.isFinite(raw)) {
           row.countsByDate[date] = raw;
         }
@@ -424,50 +470,33 @@ export class StatsMdStore {
       .map((cell) => cell.trim());
   }
 
-  private buildMainTable(
-    dates: string[],
-    noteRows: NoteTableRow[],
-    pomoByDate: Record<string, number>,
-  ): string {
-    const header = `| Note | ${dates.join(" | ")} |`;
-    const separator = `| --- | ${dates.map(() => "---:").join(" | ")} |`;
-    const pomoRow = `| 🍅 POMO | ${dates.map((date) => String(pomoByDate[date] ?? 0)).join(" | ")} |`;
-
-    const bodyRows = noteRows.map((row) => {
-      const values = dates.map((date) => String(row.countsByDate[date] ?? 0));
-      return `| ${row.noteLink} | ${values.join(" | ")} |`;
-    });
-
-    return [header, separator, pomoRow, ...bodyRows].join("\n");
+  private getRowIdFromLink(link: string, index: number): string {
+    const file = this.resolveNoteLink(link);
+    if (file) {
+      return file.path;
+    }
+    return `row-${index}-${link}`;
   }
 
   private resolveNoteLink(noteLink: string): TFile | null {
-    const match = noteLink.match(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/);
-    if (!match || !match[1]) return null;
-
-    const path = match[1].trim();
-    const file = this.app.metadataCache.getFirstLinkpathDest(path, this.getPath());
-    return file ?? null;
+    // 如果是文件路径链接
+    if (noteLink.startsWith("[[")) {
+      const path = noteLink.slice(2, -2);
+      const file = this.app.vault.getAbstractFileByPath(path);
+      return file instanceof TFile ? file : null;
+    }
+    // 如果是纯路径
+    const file = this.app.vault.getAbstractFileByPath(noteLink);
+    return file instanceof TFile ? file : null;
   }
 
   private toNoteLink(file: TFile): string {
-    const linkPath = file.path.replace(/\.md$/i, "");
-    return `[[${linkPath}]]`;
+    // 使用Obsidian的内部链接格式
+    return `[[${file.path}]]`;
   }
 
   private createRowId(filePath: string): string {
-    return `${filePath}::${Date.now()}`;
-  }
-
-  private getRowIdFromLink(noteLink: string, rowIndex: number): string {
-    const file = this.resolveNoteLink(noteLink);
-    if (file) {
-      const known = this.filePathToRowId.get(file.path);
-      if (known) return known;
-      return this.createRowId(file.path);
-    }
-    return `row::${rowIndex}`;
+    // 为文件路径生成唯一ID
+    return `file-${filePath}-${Date.now()}`;
   }
 }
-
-export const DEFAULT_DAILY_STATS_SETTINGS = DEFAULT_SETTINGS;

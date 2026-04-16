@@ -111,7 +111,7 @@ This project is built upon the excellent work of the open-source community. We e
 1.  **[Liam Cain](https://github.com/liamcain)** - Creator of **calendar-plugin** and **periodic-notes**
     *   The core logic of our calendar view and periodic notes management functionality deeply integrates his pioneering work.
     
-2.  **[Dhruvik Parikh](https://github.com/dalede)** - Creator of **daily-stats-for-obsidian**
+2.  **[Richardsl](https://github.com/Richardsl/heatmap-calendar-obsidiane)** - Creator of **heatmap-calendar-obsidian**
     *   Provided core inspiration for our high-performance background word count and heatmap rendering.
 
 It is their open-source spirit that makes this tool possible.

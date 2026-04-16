@@ -81,6 +81,11 @@ export class WhiteNoiseService extends Component {
         return this.isPlaying;
     }
 
+    private async decodeAudioData(arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
+        const audioContext = new AudioContext();
+        return await audioContext.decodeAudioData(arrayBuffer);
+    }
+
     onunload(): void {
         this.stop();
         this.audio = null as any;

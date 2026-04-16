@@ -1,8 +1,8 @@
 import { Notice } from 'obsidian';
 import { notificationUrl } from './audio_urls';
 import { WhiteNoiseService } from '../services/audio/WhiteNoiseService';
-import type CalendarPlugin from '../main'; // Import type to avoid circular dependency issues at runtime if possible, or just import class
-
+import type CalendarPlugin from "../main";
+import { showNotification } from '../utils/notifications';
 import { t } from '../i18n';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -319,8 +319,6 @@ function playNotification(): void {
     audio.play();
 }
 
-import { sendSystemNotification } from "../utils/notifications";
-
 function showSystemNotification(mode: Mode): void {
     let text = "";
     const emojiStr = " 🍅";
@@ -343,5 +341,5 @@ function showSystemNotification(mode: Mode): void {
     }
     const title = t("pomo-sys-notif-title").replace("{emoji}", emojiStr);
 
-    sendSystemNotification(title, text, true);
+    showNotification(title, text, true);
 }

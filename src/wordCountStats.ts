@@ -27,14 +27,14 @@ export default class WordCountStats extends Component {
 	private worker: Worker | null = null;
 	private lastNonce = 0;
 	private nonces = new Map<string, number>();
-	private pendingHashes = new Map<number, string>(); // Deprecated: Hash computed in worker now
+	private pendingHashes = new Map<number, string>; // Deprecated: Hash computed in worker now
 	private dirty = false; // Check for unsaved changes
 	private activeStatsMdPath: string;
 
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
-// Runtime baseline to apply shock filtering before persisting to settings.
-	private latestObservedCounts: Map<string, number> = new Map();
+	// 内存中维护每个文件的initial值（不保存到磁盘）
+	private fileInitialCounts: Map<string, number> = new Map();
 
 	constructor(plugin: CalendarPlugin, app: App) {
 		super();
@@ -119,13 +119,15 @@ export default class WordCountStats extends Component {
 		// Initialize Worker if enabled
 		this.initWorker();
 
+		// 使用配置的防抖延迟时间
+		const debounceDelay = this.plugin.options.wordCount.debounceDelay || 2000;
 		this.debouncedUpdate = debounce((contents: string, filepath: string) => {
 			this.updateWordCount(contents, filepath);
-		}, 400, false);
+		}, debounceDelay, false);
 
 		this.debouncedSave = debounce(async () => {
 			await this.saveSettings();
-		}, 2000, true);
+		}, debounceDelay, true);
 
 		// Register events
 		this.registerEvent(
@@ -143,14 +145,15 @@ export default class WordCountStats extends Component {
 			})
 		);
 
-		// Save settings periodically (every 30 seconds) as a safety measure
+		// 使用配置的自动保存间隔
+		const autoSaveInterval = this.plugin.options.wordCount.autoSaveInterval || 30000;
+		// Save settings periodically as a safety measure
 		this.registerInterval(window.setInterval(() => {
 			this.updateDate();
 			if (this.dirty) {
 				this.debouncedSave();
 			}
-		}, 30000)); // Trigger debounced save every 30 seconds
-
+		}, autoSaveInterval));
 
 		// Initialize status bar based on initial state? We'll let main.ts call updateStatusBar.
 		// this.statusBarEl = this.plugin.addStatusBarItem();
@@ -178,7 +181,6 @@ export default class WordCountStats extends Component {
 			return;
 		}
 
-		// We rely on handleWorkerMessage to update the cache now.
 		let changed = false;
 
 		this.updateDate();
@@ -187,41 +189,49 @@ export default class WordCountStats extends Component {
 			this.settings.dayCounts[this.today] = 0;
 			this.settings.todaysWordCount = {};
 			this.wordCountCache.clear();
-			this.latestObservedCounts.clear();
 		}
 
-		if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
-			const fileStats = this.settings.todaysWordCount[filepath];
-			const baseline = this.latestObservedCounts.get(filepath) ?? fileStats.lastAcceptedCount;
-			const rawDelta = count - baseline;
-			this.latestObservedCounts.set(filepath, count);
+		// 检查是否已经有当天的记录
+		const hasRecord = Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath);
 
-			if (Math.abs(rawDelta) >= this.getShockThreshold()) {
-				if (fileStats.lastAcceptedCount !== count) {
-					fileStats.lastAcceptedCount = count;
-					changed = true;
-				}
-			} else if (rawDelta !== 0) {
-				fileStats.accumulatedDelta += rawDelta;
-				fileStats.lastAcceptedCount = count;
-				changed = true;
-			}
+		if (!hasRecord) {
+			// 对于新文件，设置initial和current都为当前字数
+			this.settings.todaysWordCount[filepath] = {
+				initial: count,
+				current: count
+			};
+			changed = true;
 		} else {
-			const previousObserved = this.latestObservedCounts.get(filepath);
-			this.latestObservedCounts.set(filepath, count);
-			if (previousObserved === undefined) {
+			// 获取现有记录
+			const existingRecord = this.settings.todaysWordCount[filepath];
+			
+			// 计算变化量（相对于当前值的变化）
+			const delta = count - existingRecord.current;
+			
+			// 如果变化超过阈值，则移动基线（而不是完全忽略）
+			if (Math.abs(delta) >= this.getShockThreshold()) {
+				// ✅ 智能处理：将大变化加到 initial 和 current
+				// 这样既忽略了这次冲击，又不影响后续的计数
+				// 原理：新增长 = new_current - new_initial = (old_current + delta) - (old_initial + delta) = old_growth
+				this.settings.todaysWordCount[filepath] = {
+					initial: existingRecord.initial + delta,
+					current: count
+				};
+				this.dirty = true;
+				this.updateCounts();
+				// ✅ 冲击是特殊事件，立即保存（不等防抖）
+				void this.saveSettings();
 				return;
 			}
-
-			const rawDelta = count - previousObserved;
-			if (Math.abs(rawDelta) < this.getShockThreshold() && rawDelta !== 0) {
+			
+			// 更新current值
+			if (existingRecord.current !== count) {
 				this.settings.todaysWordCount[filepath] = {
-					accumulatedDelta: rawDelta,
-					lastAcceptedCount: count,
+					initial: existingRecord.initial,
+					current: count
 				};
 				changed = true;
 			}
-			this.wordCountCache.clear();
 		}
 
 		if (changed) {
@@ -257,6 +267,10 @@ export default class WordCountStats extends Component {
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
 				this.refreshStatusBar();
+				// 添加：打开笔记时立即初始化字数统计（如果启用）
+				if (this.shouldImmediateInitOnOpen()) {
+					this.initializeActiveFileWordCount();
+				}
 			})
 		);
 
@@ -275,20 +289,107 @@ export default class WordCountStats extends Component {
 		);
 	}
 
+	private async initializeActiveFileWordCount(): Promise<void> {
+		const activeFile = this.app.workspace.getActiveFile();
+		if (activeFile && activeFile.extension === 'md' && !this.isStatsFile(activeFile.path)) {
+			// 检查是否已经有当天的记录
+			if (!Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, activeFile.path)) {
+				// 立即读取文件内容并初始化
+				try {
+					const contents = await this.app.vault.read(activeFile);
+					const count = this.countWords(contents);
+					
+					// 立即更新store（不经过防抖）
+					this.updateStoreImmediate(activeFile.path, count);
+				} catch (error) {
+					console.warn("[Work Assistant] Failed to initialize word count for active file:", error);
+				}
+			}
+		}
+	}
+
+	private updateStoreImmediate(filepath: string, count: number): void {
+		if (this.isStatsFile(filepath)) {
+			return;
+		}
+
+		let changed = false;
+
+		this.updateDate();
+
+		if (!Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
+			this.settings.dayCounts[this.today] = 0;
+			this.settings.todaysWordCount = {};
+			this.wordCountCache.clear();
+		}
+
+		// 检查是否已经有当天的记录
+		const hasRecord = Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath);
+
+		if (!hasRecord) {
+			// 对于新文件，设置initial和current都为当前字数
+			this.settings.todaysWordCount[filepath] = {
+				initial: count,
+				current: count
+			};
+			changed = true;
+		} else {
+			// 获取现有记录
+			const existingRecord = this.settings.todaysWordCount[filepath];
+			
+			// 计算变化量（相对于当前值的变化）
+			const delta = count - existingRecord.current;
+			
+			// 如果变化超过阈值，则移动基线（而不是完全忽略）
+			if (Math.abs(delta) >= this.getShockThreshold()) {
+				// ✅ 智能处理：将大变化加到 initial 和 current
+				// 这样既忽略了这次冲击，又不影响后续的计数
+				this.settings.todaysWordCount[filepath] = {
+					initial: existingRecord.initial + delta,
+					current: count
+				};
+				this.dirty = true;
+				this.updateCounts();
+				// ✅ 冲击是特殊事件，立即保存
+				void this.saveSettings();
+				return;
+			}
+			
+			// 更新current值
+			if (existingRecord.current !== count) {
+				this.settings.todaysWordCount[filepath] = {
+					initial: existingRecord.initial,
+					current: count
+				};
+				changed = true;
+			}
+		}
+
+		if (changed) {
+			this.dirty = true;
+			this.updateCounts();
+			// 立即保存，不使用防抖
+			void this.saveSettings();
+		}
+	}
+
 	refreshStatusBar(): void {
 		if (!this.statusBarEl) return;
 
 		const lang = this.getObsidianLanguage();
 		const currentWordCount = this.todaysAggregate.total || 0;
+		// 格式化显示，处理负数情况
+		const formattedCount = currentWordCount < 0 ? `${currentWordCount}` : currentWordCount.toString();
 
-		let text = t('status-bar-words-today', lang).replace('{count}', currentWordCount.toString());
+		let text = t('status-bar-words-today', lang).replace('{count}', formattedCount);
 
 		const activeFile = this.app.workspace.getActiveFile();
 		if (activeFile && activeFile.extension === 'md') {
 			const fileChange = this.getFileCountChange(activeFile.path);
+			const formattedFileChange = fileChange < 0 ? `${fileChange}` : fileChange.toString();
 			const detailText = t('status-bar-words-today-detail', lang)
-				.replace('{file}', fileChange.toString())
-				.replace('{total}', currentWordCount.toString());
+				.replace('{file}', formattedFileChange)
+				.replace('{total}', formattedCount);
 
 			if (detailText !== 'status-bar-words-today-detail') {
 				text = detailText;
@@ -364,6 +465,7 @@ export default class WordCountStats extends Component {
 	}
 
 	private countWords(text: string): number {
+		// Use the same algorithm as in ui/utils.ts to ensure consistency
 		let words = 0;
 		const matches = text.match(
 			/[a-zA-Z0-9_\u0392-\u03c9\u00c0-\u00ff\u0600-\u06ff]+|[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\uac00-\ud7af]+/gm
@@ -371,9 +473,12 @@ export default class WordCountStats extends Component {
 
 		if (matches) {
 			for (let i = 0; i < matches.length; i++) {
+				// CJK字符判定：字符编码 > 19968 (0x4e00)
 				if (matches[i].charCodeAt(0) > 19968) {
+					// CJK (中日韩)：按字符数计
 					words += matches[i].length;
 				} else {
+					// 英文/数字等：按单词数计
 					words += 1;
 				}
 			}
@@ -383,12 +488,27 @@ export default class WordCountStats extends Component {
 
 	updateDate(): void {
 		const newToday = window.moment().format("YYYY-MM-DD");
-		// If date has changed, clear the cache for better performance
+		// 如果日期已改变，执行跨天处理
 		if (newToday !== this.today) {
+			// 清空缓存以提升性能
 			this.wordCountCache.clear();
-			this.latestObservedCounts.clear();
+			
+			// ✅ 处理跨天边界：保存前一天的数据到历史记录
+			if (this.dirty) {
+				// 如果前一天有未保存的数据，立即保存以确保数据完整性
+				// 此时 this.settings.todaysWordCount 中的数据会被存入 dayCounts 和 stats.md
+				void this.saveSettings();
+			} else {
+				// 即使没有未保存的修改，也需要确保当天的 dayCounts 已更新
+				this.updateCounts();
+			}
+			
+			// ✅ 关键修复：跨天时必须清空当天的 todaysWordCount
+			// 防止上一天的 initial/current 值被继承到新的一天
+			this.today = newToday;
+			this.settings.todaysWordCount = {};
+			this.settings.dayCounts[this.today] = 0;
 		}
-		this.today = newToday;
 	}
 
 	updateCounts(): void {
@@ -437,9 +557,7 @@ export default class WordCountStats extends Component {
 	async loadSettings(): Promise<void> {
 		const snapshot = await this.statsStore.load();
 		this.applySnapshot(snapshot);
-		this.latestObservedCounts = new Map(
-			Object.entries(this.settings.todaysWordCount).map(([filepath, stats]) => [filepath, stats.lastAcceptedCount])
-		);
+		// 不需要特殊初始化wordCountCache，因为它会在updateStore中按需填充
 	}
 
 	async saveSettings(): Promise<void> {
@@ -465,7 +583,8 @@ export default class WordCountStats extends Component {
 	}
 
 	getFileCountChange(filepath: string): number {
-		return this.todaysAggregate.byFile[filepath]?.displayDelta || 0;
+		// 返回实际的增减值（允许负数），不作为 0 处理
+		return this.todaysAggregate.byFile[filepath]?.displayDelta ?? 0;
 	}
 
 	getWeeklyWordCount(date: Moment): number {
@@ -515,6 +634,23 @@ export default class WordCountStats extends Component {
 
 	private getShockThreshold(): number {
 		const threshold = this.plugin.options.wordCount.shockThreshold;
+		if (threshold === -1) return Infinity; // -1 means disabled (never trigger shock)
 		return Number.isInteger(threshold) && threshold > 0 ? threshold : 1000;
 	}
+
+	private getDebounceDelay(): number {
+		const delay = this.plugin.options.wordCount.debounceDelay;
+		return Number.isInteger(delay) && delay > 0 ? delay : 2000;
+	}
+
+	private getAutoSaveInterval(): number {
+		const interval = this.plugin.options.wordCount.autoSaveInterval;
+		return Number.isInteger(interval) && interval > 0 ? interval : 30000;
+	}
+
+	private shouldImmediateInitOnOpen(): boolean {
+		// 直接返回配置值，避免不必要的类型比较
+		return this.plugin.options.wordCount.immediateInitOnOpen === true;
+	}
+
 }

@@ -5,3 +5,6 @@ main.js
 .vscode/
 *.code-workspace
 /.lingma
+/reference
+WORD_COUNT_FIXES_SUMMARY.md
+WORD_COUNT_LOGIC_ANALYSIS.md
