@@ -55,6 +55,7 @@ export interface ISettings {
     shockThreshold: number;
     debounceDelay: number;        // 防抖延迟时间（毫秒）
     autoSaveInterval: number;    // 自动保存间隔（毫秒）
+    ignoredFiles: string[];      // 忽略计数的文件/文件夹列表
     
     heatmap: {
       enabled: boolean;
@@ -130,6 +131,7 @@ export const defaultSettings: ISettings = {
     shockThreshold: 1000,
     debounceDelay: 2000,        // 防抖延迟时间（毫秒）
     autoSaveInterval: 30000,    // 自动保存间隔（毫秒）
+    ignoredFiles: [],           // 忽略计数的文件/文件夹列表
     
     heatmap: {
       enabled: true,
@@ -288,6 +290,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         this.addWordCountShockThresholdSetting(container, lang);
         this.addWordCountDebounceDelaySetting(container, lang);
         this.addWordCountAutoSaveIntervalSetting(container, lang);
+        this.addWordCountIgnoredFilesSetting(container, lang);
 
         // 3.2 Heatmap
         this.addCollapsibleSection(
@@ -887,6 +890,46 @@ export class CalendarSettingsTab extends PluginSettingTab {
               autoSaveInterval: num
             }
           }));
+        });
+      });
+  }
+
+  addWordCountIgnoredFilesSetting(container: HTMLElement, lang: Language): void {
+    const title = t("settings-word-count-ignored-files", lang);
+    const desc = t("settings-word-count-ignored-files-desc", lang);
+    const placeholder = `Inbox/example.md    # Exact file match
+Inbox/              # Folder prefix match (includes subfolders)
+/^tmp-.*$/         # Regex (wrapped in / /)`;
+
+    // Debounce helper - waits for user to stop typing before applying
+    const debouncedUpdate = (() => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      return (fn: () => void, delay = 1000) => {
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(fn, delay);
+      };
+    })();
+
+    new Setting(container)
+      .setName(title)
+      .setDesc(desc)
+      .addTextArea((textArea) => {
+        textArea.setPlaceholder(placeholder);
+        textArea.setValue(this.plugin.options.wordCount.ignoredFiles?.join("\n") ?? "");
+        textArea.inputEl.rows = 5;
+        textArea.inputEl.style.width = "100%";
+        textArea.onChange((value) => {
+          const lines = value.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+          // Debounce the settings update to avoid frequent triggering
+          debouncedUpdate(() => {
+            this.plugin.writeOptions((old) => ({
+              ...old,
+              wordCount: {
+                ...old.wordCount,
+                ignoredFiles: lines
+              }
+            }));
+          }, 1000);
         });
       });
   }

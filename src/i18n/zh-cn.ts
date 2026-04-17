@@ -75,6 +75,8 @@ export default {
   "settings-word-count-debounce-delay-desc": "字数变化后的防抖延迟时间（毫秒），在此时间内多次变化只会保存最后一次。默认值：2000ms。",
   "settings-word-count-auto-save-interval": "自动保存间隔",
   "settings-word-count-auto-save-interval-desc": "自动保存字数统计的间隔时间（毫秒）。即使没有变化也会定期保存以确保数据安全。默认值：30000ms（30秒）。",
+  "settings-word-count-ignored-files": "忽略计数对象",
+  "settings-word-count-ignored-files-desc": "不进行字数统计的文件或文件夹列表（每行一个）。支持精确路径和正则表达式匹配。路径基于obsidian库根目录。",
 
   // Settings - Advanced
   "settings-override-locale": "覆盖区域设置：",

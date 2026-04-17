@@ -73,8 +73,10 @@ export default {
   "settings-word-count-shock-threshold-desc": "When a single word count change exceeds this threshold, it will be ignored to prevent abnormal data. Set to -1 to disable this feature. Default: 1000.",
   "settings-word-count-debounce-delay": "Debounce delay",
   "settings-word-count-debounce-delay-desc": "Debounce delay time (milliseconds) after word count changes. Multiple changes within this time will only save the last one. Default: 2000ms.",
-  "settings-word-count-auto-save-interval": "Auto-save interval", 
+  "settings-word-count-auto-save-interval": "Auto-save interval",
   "settings-word-count-auto-save-interval-desc": "Auto-save interval for word count statistics (milliseconds). Saves periodically even without changes to ensure data safety. Default: 30000ms (30 seconds).",
+  "settings-word-count-ignored-files": "Ignored files/folders",
+  "settings-word-count-ignored-files-desc": "List of files or folders to exclude from word count (one per line). Supports exact paths and regex patterns. Paths are relative to vault root.",
 
   // Settings - Advanced
   "settings-override-locale": "Override locale:",

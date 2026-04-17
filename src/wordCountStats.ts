@@ -164,7 +164,7 @@ export default class WordCountStats extends Component {
 		this.registerEvent(
 			this.app.vault.on("modify", async (file: TFile) => {
 				// Only process markdown files
-				if (file instanceof TFile && file.extension === "md" && !this.isStatsFile(file.path)) {
+				if (file instanceof TFile && file.extension === "md" && !this.isStatsFile(file.path) && !this.shouldIgnoreFile(file.path)) {
 					// We need to read the file content to update the word count
 					const contents = await this.app.vault.read(file);
 					this.debouncedUpdate(contents, file.path);
@@ -190,18 +190,23 @@ export default class WordCountStats extends Component {
 
 		public async handleSettingsChanged(): Promise<void> {
 		const nextPath = this.resolveStatsMdPath();
-		if (nextPath === this.activeStatsMdPath) {
-			return;
-		}
+		const pathChanged = nextPath !== this.activeStatsMdPath;
 
 		if (this.dirty) {
 			await this.saveSettings();
 		}
 
-		this.activeStatsMdPath = nextPath;
+		if (pathChanged) {
+			this.activeStatsMdPath = nextPath;
+		}
+
+		// Always reload settings to pick up changes like ignoredFiles
 		await this.loadSettings();
-		this.updateDate();
-		this.updateCounts();
+
+		if (pathChanged) {
+			this.updateDate();
+			this.updateCounts();
+		}
 	}
 
 	private updateStore(filepath: string, count: number): void {
@@ -209,6 +214,9 @@ export default class WordCountStats extends Component {
 			return;
 		}
 		if (this.isStatsFile(filepath)) {
+			return;
+		}
+		if (this.shouldIgnoreFile(filepath)) {
 			return;
 		}
 
@@ -304,7 +312,7 @@ export default class WordCountStats extends Component {
 		this.registerEvent(
 			this.app.workspace.on('editor-change', (editor, view) => {
 				if (view instanceof MarkdownView && view.file) {
-					if (this.isStatsFile(view.file.path)) {
+					if (this.isStatsFile(view.file.path) || this.shouldIgnoreFile(view.file.path)) {
 						return;
 					}
 					const content = editor.getValue();
@@ -316,7 +324,7 @@ export default class WordCountStats extends Component {
 
 	private async initializeActiveFileWordCount(): Promise<void> {
 		const activeFile = this.app.workspace.getActiveFile();
-		if (activeFile && activeFile.extension === 'md' && !this.isStatsFile(activeFile.path)) {
+		if (activeFile && activeFile.extension === 'md' && !this.isStatsFile(activeFile.path) && !this.shouldIgnoreFile(activeFile.path)) {
 			// 检查是否已经有当天的记录
 			if (!Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, activeFile.path)) {
 				// 立即读取文件内容并初始化
@@ -338,6 +346,9 @@ export default class WordCountStats extends Component {
 			return;
 		}
 		if (this.isStatsFile(filepath)) {
+			return;
+		}
+		if (this.shouldIgnoreFile(filepath)) {
 			return;
 		}
 
@@ -435,7 +446,7 @@ export default class WordCountStats extends Component {
 	}
 
 	onQuickPreview(file: TFile, contents: string): void {
-		if (this.isStatsFile(file.path)) {
+		if (this.isStatsFile(file.path) || this.shouldIgnoreFile(file.path)) {
 			return;
 		}
 
@@ -466,6 +477,9 @@ export default class WordCountStats extends Component {
 
 	updateWordCount(contents: string, filepath: string): void {
 		if (this.isUnloading) {
+			return;
+		}
+		if (this.shouldIgnoreFile(filepath)) {
 			return;
 		}
 		if (this.worker) {
@@ -638,7 +652,7 @@ export default class WordCountStats extends Component {
 
 	private async reconcileActiveFileBaselineAfterLoad(hasTodayInSnapshot: boolean): Promise<void> {
 		const activeFile = this.app.workspace.getActiveFile();
-		if (!activeFile || activeFile.extension !== 'md' || this.isStatsFile(activeFile.path)) {
+		if (!activeFile || activeFile.extension !== 'md' || this.isStatsFile(activeFile.path) || this.shouldIgnoreFile(activeFile.path)) {
 			return;
 		}
 
@@ -777,6 +791,45 @@ export default class WordCountStats extends Component {
 
 	private isStatsFile(path: string): boolean {
 		return path === this.resolveStatsMdPath();
+	}
+
+	private shouldIgnoreFile(filepath: string): boolean {
+		const { ignoredFiles } = this.plugin.options.wordCount;
+		if (!ignoredFiles || ignoredFiles.length === 0) {
+			return false;
+		}
+
+		// Normalize filepath to use forward slashes for consistent matching
+		const normalizedFilepath = filepath.replace(/\\/g, '/');
+
+		for (const pattern of ignoredFiles) {
+			const trimmed = pattern.trim();
+			if (!trimmed) continue;
+
+			try {
+				// Regex format: /pattern/ or /pattern/flags
+				// Must have content between the slashes to be considered a regex
+				if (trimmed.startsWith('/') && trimmed.endsWith('/') && trimmed.length > 2) {
+					const regex = new RegExp(trimmed.slice(1, -1));
+					if (regex.test(normalizedFilepath)) return true;
+				} else {
+					// Normalize pattern to use forward slashes
+					const normalizedPattern = trimmed.replace(/\\/g, '/');
+					// Exact path match for files (patterns without trailing /)
+					if (normalizedFilepath === normalizedPattern) {
+						return true;
+					}
+					// Folder prefix match: pattern ending with / matches all files under that folder
+					// e.g., "Inbox/" matches "Inbox/note.md", "Inbox/subfolder/note.md"
+					if (normalizedPattern.endsWith('/') && normalizedFilepath.startsWith(normalizedPattern)) {
+						return true;
+					}
+				}
+			} catch (e) {
+				console.warn(`[Work Assistant] Invalid ignore pattern: ${trimmed}`);
+			}
+		}
+		return false;
 	}
 
 	private getShockThreshold(): number {
