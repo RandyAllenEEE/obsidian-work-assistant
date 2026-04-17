@@ -75,8 +75,6 @@ export default {
   "settings-word-count-debounce-delay-desc": "字数变化后的防抖延迟时间（毫秒），在此时间内多次变化只会保存最后一次。默认值：2000ms。",
   "settings-word-count-auto-save-interval": "自动保存间隔",
   "settings-word-count-auto-save-interval-desc": "自动保存字数统计的间隔时间（毫秒）。即使没有变化也会定期保存以确保数据安全。默认值：30000ms（30秒）。",
-  "settings-word-count-immediate-init": "打开文件时立即初始化",
-  "settings-word-count-immediate-init-desc": "当打开笔记文件时是否立即计算并初始化字数统计。启用后可以确保新文件有正确的初始记录。",
 
   // Settings - Advanced
   "settings-override-locale": "覆盖区域设置：",

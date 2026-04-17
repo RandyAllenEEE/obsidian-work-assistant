@@ -75,8 +75,6 @@ export default {
   "settings-word-count-debounce-delay-desc": "Debounce delay time (milliseconds) after word count changes. Multiple changes within this time will only save the last one. Default: 2000ms.",
   "settings-word-count-auto-save-interval": "Auto-save interval", 
   "settings-word-count-auto-save-interval-desc": "Auto-save interval for word count statistics (milliseconds). Saves periodically even without changes to ensure data safety. Default: 30000ms (30 seconds).",
-  "settings-word-count-immediate-init": "Immediate initialization on file open",
-  "settings-word-count-immediate-init-desc": "Whether to immediately calculate and initialize word count statistics when opening a note file. Enabling ensures new files have correct initial records.",
 
   // Settings - Advanced
   "settings-override-locale": "Override locale:",

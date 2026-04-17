@@ -79,8 +79,6 @@ export interface Translation {
   "settings-word-count-debounce-delay-desc": string;
   "settings-word-count-auto-save-interval": string;
   "settings-word-count-auto-save-interval-desc": string;
-  "settings-word-count-immediate-init": string;
-  "settings-word-count-immediate-init-desc": string;
 
   // Settings - Advanced
   "settings-override-locale": string;

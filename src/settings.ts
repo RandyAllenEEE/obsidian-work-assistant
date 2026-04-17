@@ -55,7 +55,6 @@ export interface ISettings {
     shockThreshold: number;
     debounceDelay: number;        // 防抖延迟时间（毫秒）
     autoSaveInterval: number;    // 自动保存间隔（毫秒）
-    immediateInitOnOpen: boolean;  // 打开文件时是否立即初始化
     
     heatmap: {
       enabled: boolean;
@@ -131,7 +130,6 @@ export const defaultSettings: ISettings = {
     shockThreshold: 1000,
     debounceDelay: 2000,        // 防抖延迟时间（毫秒）
     autoSaveInterval: 30000,    // 自动保存间隔（毫秒）
-    immediateInitOnOpen: true,  // 打开文件时是否立即初始化
     
     heatmap: {
       enabled: true,
@@ -290,7 +288,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
         this.addWordCountShockThresholdSetting(container, lang);
         this.addWordCountDebounceDelaySetting(container, lang);
         this.addWordCountAutoSaveIntervalSetting(container, lang);
-        this.addWordCountImmediateInitSetting(container, lang);
 
         // 3.2 Heatmap
         this.addCollapsibleSection(
@@ -888,27 +885,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
             wordCount: {
               ...old.wordCount,
               autoSaveInterval: num
-            }
-          }));
-        });
-      });
-  }
-
-  addWordCountImmediateInitSetting(container: HTMLElement, lang: Language): void {
-    const title = t("settings-word-count-immediate-init", lang);
-    const desc = t("settings-word-count-immediate-init-desc", lang);
-
-    new Setting(container)
-      .setName(title)
-      .setDesc(desc)
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.options.wordCount.immediateInitOnOpen);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions((old) => ({
-            ...old,
-            wordCount: {
-              ...old.wordCount,
-              immediateInitOnOpen: value
             }
           }));
         });

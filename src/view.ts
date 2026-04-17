@@ -32,6 +32,7 @@ export default class CalendarView extends ItemView {
   private settings: ISettings;
   private wordCountStats: WordCountStats;
   private refreshInterval: number | undefined;
+  private settingsUnsubscribe: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: CalendarPlugin) {
     super(leaf);
@@ -71,7 +72,7 @@ export default class CalendarView extends ItemView {
     this.registerEvent(this.app.workspace.on("file-open", this.onFileOpen));
 
     this.settings = null;
-    settings.subscribe((val) => {
+    this.settingsUnsubscribe = settings.subscribe((val) => {
       this.settings = val;
       this.resetRefreshInterval();
       this.updateHeatmapStyles();
@@ -122,6 +123,10 @@ export default class CalendarView extends ItemView {
 
   onClose(): Promise<void> {
     this.stopRefreshInterval();
+    if (this.settingsUnsubscribe) {
+      this.settingsUnsubscribe();
+      this.settingsUnsubscribe = null;
+    }
     if (this.calendar) {
       unmount(this.calendar);
     }

@@ -17,35 +17,23 @@ const DEFAULT_COLOR_MAPPING = [
 
 export class WordCountBackgroundSource {
   private wordCountStats: WordCountStats;
-  private colorMapping: Array<{ min: number; max: number; opacity: number }>;
 
   constructor(wordCountStats: WordCountStats) {
     this.wordCountStats = wordCountStats;
-    // Initialize with default color mapping
-    this.colorMapping = DEFAULT_COLOR_MAPPING;
-
-    // Subscribe to settings changes to update color mapping dynamically
-    settings.subscribe((settings) => {
-      if (settings && settings.wordCount.heatmap.colorRanges) {
-        this.colorMapping = settings.wordCount.heatmap.colorRanges;
-      }
-    });
   }
 
-  // Get opacity value based on word count
-  private getOpacityForWordCount(wordCount: number): number {
-    for (const range of this.colorMapping) {
-      if (wordCount >= range.min && wordCount <= range.max) {
-        return range.opacity;
-      }
-    }
-    return 0; // Default to transparent if no range matches
+  private getColorMapping(): Array<{ min: number; max: number; opacity: number }> {
+    const currentSettings = get(settings);
+    return currentSettings?.wordCount?.heatmap?.colorRanges ?? DEFAULT_COLOR_MAPPING;
   }
 
   // Get heatmap level (0-4) based on word count
-  private getLevelForWordCount(wordCount: number): number {
-    for (let i = 0; i < this.colorMapping.length; i++) {
-      const range = this.colorMapping[i];
+  private getLevelForWordCount(
+    wordCount: number,
+    colorMapping: Array<{ min: number; max: number; opacity: number }>
+  ): number {
+    for (let i = 0; i < colorMapping.length; i++) {
+      const range = colorMapping[i];
       if (wordCount >= range.min && wordCount <= range.max) {
         return i;
       }
@@ -58,13 +46,14 @@ export class WordCountBackgroundSource {
 
     // Get word count for this date
     const dateString = date.format("YYYY-MM-DD"); // Match the format used in wordCountStats
-    const wordCount = this.wordCountStats.getWordCountForDate(dateString);
+    const wordCount = Math.max(0, this.wordCountStats.getWordCountForDate(dateString));
+    const colorMapping = this.getColorMapping();
 
     // Check if we should ignore 0 word counts.
     // Logic update: If wordCount is 0, we treat it as "no data" (transparent), unless explicitly mapped otherwise.
     // However, the user complained about future dates (0 words) being grey. 
     // So we force level -1 if wordCount is 0.
-    const level = wordCount === 0 ? -1 : this.getLevelForWordCount(wordCount);
+    const level = wordCount === 0 ? -1 : this.getLevelForWordCount(wordCount, colorMapping);
 
     const classes = file ? ["has-note"] : [];
 

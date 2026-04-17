@@ -66,6 +66,8 @@ export class StatsMdStore {
     this.app = app;
     this.getStatsMdPath = getStatsMdPath;
     this.settings = Object.assign({}, DEFAULT_DAILY_STATS_SETTINGS);
+    this.renameHandlerRef = this.handleRename;
+    this.app.vault.on("rename", this.renameHandlerRef);
   }
 
   // 添加getPath方法
@@ -79,6 +81,8 @@ export class StatsMdStore {
       this.app.vault.off("rename", this.renameHandlerRef);
       this.renameHandlerRef = null;
     }
+    this.filePathToRowId.clear();
+    this.fileLastModified.clear();
   }
 
   // 添加一个方法来获取文件的最后修改时间
@@ -121,12 +125,15 @@ export class StatsMdStore {
   }
 
   private normalizeParsedModel(model: TableModel): DailyStatsSettings {
+    this.filePathToRowId.clear();
+    this.fileLastModified.clear();
+
     const dayCounts: Record<string, number> = {};
     model.dates.forEach((date) => {
       let total = 0;
       model.noteRows.forEach((row) => {
         const raw = row.countsByDate[date] ?? 0;
-        total += Math.max(0, raw);
+        total += raw;
       });
       dayCounts[date] = total;
     });
@@ -202,13 +209,15 @@ export class StatsMdStore {
 
   private parse(content: string): DailyStatsSettings {
     const model = this.parseTable(content);
+    this.filePathToRowId.clear();
+    this.fileLastModified.clear();
 
     const dayCounts: Record<string, number> = {};
     model.dates.forEach((date) => {
       let total = 0;
       model.noteRows.forEach((row) => {
         const raw = row.countsByDate[date] ?? 0;
-        total += Math.max(0, raw);
+        total += raw;
       });
       dayCounts[date] = total;
     });
@@ -240,9 +249,12 @@ export class StatsMdStore {
   private buildTemplate(settings: DailyStatsSettings, existingContent = ""): { content: string; model: TableModel } {
     // 更新实例的settings以供buildMainTable使用
     this.settings = settings;
+    this.filePathToRowId.clear();
+    this.fileLastModified.clear();
 
     const existingModel = this.parseTable(existingContent);
     const today = window.moment().format("YYYY-MM-DD");
+    const isFirstWriteForToday = !existingModel.dates.includes(today);
 
     const dateSet = new Set<string>(existingModel.dates);
     Object.keys(settings.dayCounts ?? {}).forEach((date) => dateSet.add(date));
@@ -267,6 +279,15 @@ export class StatsMdStore {
         this.filePathToRowId.set(file.path, normalized.rowId);
       }
     });
+
+    if (isFirstWriteForToday) {
+      rowById.forEach((row) => {
+        // Reset runtime baseline on day boundary so old initial/current do not leak.
+        row.initialCount = 0;
+        row.currentCount = 0;
+        row.countsByDate[today] = 0;
+      });
+    }
 
     // apply current-day values from runtime settings
     Object.entries(settings.todaysWordCount ?? {}).forEach(([filePath, wordCount]) => {
@@ -312,7 +333,7 @@ export class StatsMdStore {
       pomoByDate[date] = settings.pomoCounts?.[date] ?? existingModel.pomoByDate[date] ?? 0;
     });
 
-    const table = this.buildMainTable(dates, noteRows, pomoByDate);
+    const table = this.buildMainTable(dates, noteRows, pomoByDate, today);
 
     const content = [
       "# Work Assistant Stats",
@@ -333,7 +354,12 @@ export class StatsMdStore {
     return { content, model };
   }
 
-  private buildMainTable(dates: string[], noteRows: NoteTableRow[], pomoByDate: Record<string, number>): string {
+  private buildMainTable(
+    dates: string[],
+    noteRows: NoteTableRow[],
+    pomoByDate: Record<string, number>,
+    today: string
+  ): string {
     if (dates.length === 0) return "";
 
     // Build header including Initial and Current columns
@@ -368,7 +394,10 @@ export class StatsMdStore {
         String(current),
         ...dates.map((date) => {
           // 对于当前日期，显示净变化（允许负数）；对于历史日期，显示存储的值
-          if (date === window.moment().format("YYYY-MM-DD")) {
+          if (date === today) {
+            if (!file || !this.settings.todaysWordCount?.[file.path]) {
+              return "0";
+            }
             // ✅ 修复：当天增量 = current - initial（不再使用 Math.max）
             return String(current - initial);
           } else {

@@ -26,16 +26,20 @@ export default class WordCountStats extends Component {
 	// Worker related
 	private worker: Worker | null = null;
 	private lastNonce = 0;
-	private nonces = new Map<string, number>();
-	private pendingHashes = new Map<number, string>; // Deprecated: Hash computed in worker now
+	private latestNonceByPath = new Map<string, number>();
+	private pathByNonce = new Map<number, string>();
 	private dirty = false; // Check for unsaved changes
 	private activeStatsMdPath: string;
 
 	// Cache for file word counts to improve performance
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
-	// 内存中维护每个文件的initial值（不保存到磁盘）
-	private fileInitialCounts: Map<string, number> = new Map();
 	private isSaving = false; // Guard against concurrent save operations
+	private isDayTransitioning = false;
+	private isUnloading = false;
+	private saveDrainPromise: Promise<void> | null = null;
+	private saveRequested = false;
+	private pendingSkipUpdateDateCheck = true;
+	private bufferedUpdatesDuringTransition = new Map<string, number>();
 
 	constructor(plugin: CalendarPlugin, app: App) {
 		super();
@@ -52,18 +56,34 @@ export default class WordCountStats extends Component {
 	}
 
 	onunload(): void {
+		this.isUnloading = true;
 		if (this.statusBarEl) {
 			this.statusBarEl.remove();
 			this.statusBarEl = null;
 		}
-		// 强制保存脏数据，防止会话统计丢失
+
+		// 强制保存脏数据，防止会话统计丢失（best effort）
 		if (this.dirty) {
-			void this.saveSettings();
+			void this.flushOnUnload();
+			return;
 		}
 		
-		// 清理StatsMdStore中的事件监听器
+		this.finalizeUnload();
+	}
+
+	private async flushOnUnload(): Promise<void> {
+		try {
+			await Promise.race([
+				this.requestSave({ skipUpdateDateCheck: true }),
+				new Promise<void>((resolve) => setTimeout(resolve, 500))
+			]);
+		} finally {
+			this.finalizeUnload();
+		}
+	}
+
+	private finalizeUnload(): void {
 		this.statsStore.cleanup();
-		
 		this.terminateWorker();
 	}
 
@@ -92,23 +112,29 @@ export default class WordCountStats extends Component {
 			this.worker.terminate();
 			this.worker = null;
 		}
+		this.latestNonceByPath.clear();
+		this.pathByNonce.clear();
 	}
 
 	private handleWorkerMessage(nonce: number, count: number, hash: string): void {
-		// Find which file this nonce belongs to
-		for (const [filepath, storedNonce] of this.nonces.entries()) {
-			if (storedNonce === nonce) {
-				// Update cache with the HASH from worker
-				this.wordCountCache.set(filepath, {
-					contentHash: hash,
-					wordCount: count,
-					timestamp: Date.now()
-				});
-
-				this.updateStore(filepath, count);
-				break;
-			}
+		const filepath = this.pathByNonce.get(nonce);
+		if (!filepath) {
+			return;
 		}
+
+		this.pathByNonce.delete(nonce);
+		if (this.latestNonceByPath.get(filepath) !== nonce) {
+			return; // Stale worker response, ignore safely.
+		}
+
+		this.latestNonceByPath.delete(filepath);
+		this.wordCountCache.set(filepath, {
+			contentHash: hash,
+			wordCount: count,
+			timestamp: Date.now()
+		});
+
+		this.updateStore(filepath, count);
 	}
 
 	async initialize(): Promise<void> {
@@ -159,6 +185,7 @@ export default class WordCountStats extends Component {
 		// Initialize status bar based on initial state? We'll let main.ts call updateStatusBar.
 		// this.statusBarEl = this.plugin.addStatusBarItem();
 		this.registerStatusBarUpdates();
+		void this.initializeActiveFileWordCount();
 	}
 
 		public async handleSettingsChanged(): Promise<void> {
@@ -178,6 +205,9 @@ export default class WordCountStats extends Component {
 	}
 
 	private updateStore(filepath: string, count: number): void {
+		if (this.isUnloading) {
+			return;
+		}
 		if (this.isStatsFile(filepath)) {
 			return;
 		}
@@ -185,6 +215,10 @@ export default class WordCountStats extends Component {
 		let changed = false;
 
 		this.updateDate();
+		if (this.isDayTransitioning) {
+			this.bufferedUpdatesDuringTransition.set(filepath, count);
+			return;
+		}
 
 		if (!Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
 			this.settings.dayCounts[this.today] = 0;
@@ -192,15 +226,7 @@ export default class WordCountStats extends Component {
 			this.wordCountCache.clear();
 		}
 
-		// 检查是否已经有当天的记录
-		const hasRecord = Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath);
-
-		if (!hasRecord) {
-			// 对于新文件，设置initial和current都为当前字数
-			this.settings.todaysWordCount[filepath] = {
-				initial: count,
-				current: count
-			};
+		if (this.ensureBaselineForFile(filepath, count)) {
 			changed = true;
 		} else {
 			// 获取现有记录
@@ -268,10 +294,8 @@ export default class WordCountStats extends Component {
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
 				this.refreshStatusBar();
-				// 添加：打开笔记时立即初始化字数统计（如果启用）
-				if (this.shouldImmediateInitOnOpen()) {
-					this.initializeActiveFileWordCount();
-				}
+				// Ensure daily baseline exists when user enters a note.
+				void this.initializeActiveFileWordCount();
 			})
 		);
 
@@ -301,7 +325,7 @@ export default class WordCountStats extends Component {
 					const count = this.countWords(contents);
 					
 					// 立即更新store（不经过防抖）
-					this.updateStoreImmediate(activeFile.path, count);
+					this.updateStoreImmediate(activeFile.path, count, true);
 				} catch (error) {
 					console.warn("[Work Assistant] Failed to initialize word count for active file:", error);
 				}
@@ -309,7 +333,10 @@ export default class WordCountStats extends Component {
 		}
 	}
 
-	private updateStoreImmediate(filepath: string, count: number): void {
+	private updateStoreImmediate(filepath: string, count: number, allowDuringDayTransition = false): void {
+		if (this.isUnloading) {
+			return;
+		}
 		if (this.isStatsFile(filepath)) {
 			return;
 		}
@@ -317,6 +344,10 @@ export default class WordCountStats extends Component {
 		let changed = false;
 
 		this.updateDate();
+		if (this.isDayTransitioning && !allowDuringDayTransition) {
+			this.bufferedUpdatesDuringTransition.set(filepath, count);
+			return;
+		}
 
 		if (!Object.prototype.hasOwnProperty.call(this.settings.dayCounts, this.today)) {
 			this.settings.dayCounts[this.today] = 0;
@@ -324,15 +355,7 @@ export default class WordCountStats extends Component {
 			this.wordCountCache.clear();
 		}
 
-		// 检查是否已经有当天的记录
-		const hasRecord = Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath);
-
-		if (!hasRecord) {
-			// 对于新文件，设置initial和current都为当前字数
-			this.settings.todaysWordCount[filepath] = {
-				initial: count,
-				current: count
-			};
+		if (this.ensureBaselineForFile(filepath, count)) {
 			changed = true;
 		} else {
 			// 获取现有记录
@@ -374,20 +397,31 @@ export default class WordCountStats extends Component {
 		}
 	}
 
+	private ensureBaselineForFile(filepath: string, count: number): boolean {
+		if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
+			return false;
+		}
+
+		this.settings.todaysWordCount[filepath] = {
+			initial: count,
+			current: count
+		};
+		return true;
+	}
+
 	refreshStatusBar(): void {
 		if (!this.statusBarEl) return;
 
 		const lang = this.getObsidianLanguage();
-		const currentWordCount = this.todaysAggregate.total || 0;
-		// 格式化显示，处理负数情况
-		const formattedCount = currentWordCount < 0 ? `${currentWordCount}` : currentWordCount.toString();
+		const currentWordCount = Math.max(0, this.todaysAggregate.total || 0);
+		const formattedCount = currentWordCount.toString();
 
 		let text = t('status-bar-words-today', lang).replace('{count}', formattedCount);
 
 		const activeFile = this.app.workspace.getActiveFile();
 		if (activeFile && activeFile.extension === 'md') {
-			const fileChange = this.getFileCountChange(activeFile.path);
-			const formattedFileChange = fileChange < 0 ? `${fileChange}` : fileChange.toString();
+			const fileChange = Math.max(0, this.getFileCountChange(activeFile.path));
+			const formattedFileChange = fileChange.toString();
 			const detailText = t('status-bar-words-today-detail', lang)
 				.replace('{file}', formattedFileChange)
 				.replace('{total}', formattedCount);
@@ -431,9 +465,17 @@ export default class WordCountStats extends Component {
 	}
 
 	updateWordCount(contents: string, filepath: string): void {
+		if (this.isUnloading) {
+			return;
+		}
 		if (this.worker) {
 			const nonce = ++this.lastNonce;
-			this.nonces.set(filepath, nonce);
+			const previousNonce = this.latestNonceByPath.get(filepath);
+			if (previousNonce !== undefined) {
+				this.pathByNonce.delete(previousNonce);
+			}
+			this.latestNonceByPath.set(filepath, nonce);
+			this.pathByNonce.set(nonce, filepath);
 			this.worker.postMessage({ id: nonce, text: contents });
 		} else {
 			// Fallback to main thread
@@ -490,27 +532,51 @@ export default class WordCountStats extends Component {
 	updateDate(): void {
 		const newToday = window.moment().format("YYYY-MM-DD");
 		// 如果日期已改变，执行跨天处理
-		if (newToday !== this.today) {
-			// 清空缓存以提升性能
-			this.wordCountCache.clear();
-
-			// ✅ 处理跨天边界：保存前一天的数据到历史记录
-			if (this.dirty && !this.isSaving) {
-				// 如果前一天有未保存的数据，立即保存以确保数据完整性
-				// 此时 this.settings.todaysWordCount 中的数据会被存入 dayCounts 和 stats.md
-				this.isSaving = true;
-				void this.saveSettings().finally(() => { this.isSaving = false; });
-			} else {
-				// 即使没有未保存的修改，也需要确保当天的 dayCounts 已更新
-				this.updateCounts();
-			}
-
-			// ✅ 关键修复：跨天时必须清空当天的 todaysWordCount
-			// 防止上一天的 initial/current 值被继承到新的一天
-			this.today = newToday;
-			this.settings.todaysWordCount = {};
-			this.settings.dayCounts[this.today] = 0;
+		if (newToday !== this.today && !this.isDayTransitioning) {
+			void this.transitionToNewDay(newToday);
 		}
+	}
+
+	private resetDailyTracking(newToday: string): void {
+		this.today = newToday;
+		// New day starts with a clean baseline to avoid stale initial/current carry-over.
+		this.settings.todaysWordCount = {};
+		this.settings.dayCounts[this.today] = 0;
+		this.updateCounts();
+		this.dirty = true;
+	}
+
+	private async transitionToNewDay(newToday: string): Promise<void> {
+		if (this.isDayTransitioning) {
+			return;
+		}
+		this.isDayTransitioning = true;
+		try {
+			this.wordCountCache.clear();
+			if (this.dirty) {
+				await this.requestSave({ skipUpdateDateCheck: true });
+			}
+			this.resetDailyTracking(newToday);
+			await this.requestSave({ skipUpdateDateCheck: true });
+			// Cold-start and midnight-running both initialize current active note baseline.
+			await this.initializeActiveFileWordCount();
+			if (this.dirty) {
+				await this.requestSave({ skipUpdateDateCheck: true });
+			}
+		} finally {
+			this.isDayTransitioning = false;
+			this.replayBufferedUpdatesAfterTransition();
+		}
+	}
+
+	private replayBufferedUpdatesAfterTransition(): void {
+		if (this.bufferedUpdatesDuringTransition.size === 0) {
+			return;
+		}
+
+		const buffered = [...this.bufferedUpdatesDuringTransition.entries()];
+		this.bufferedUpdatesDuringTransition.clear();
+		buffered.forEach(([filepath, count]) => this.updateStore(filepath, count));
 	}
 
 	updateCounts(): void {
@@ -558,26 +624,101 @@ export default class WordCountStats extends Component {
 
 	async loadSettings(): Promise<void> {
 		const snapshot = await this.statsStore.load();
+		const hasTodayInSnapshot = Object.prototype.hasOwnProperty.call(
+			snapshot.settings.dayCounts ?? {},
+			this.today
+		);
 		this.applySnapshot(snapshot);
+		if (!hasTodayInSnapshot && !this.isDayTransitioning) {
+			void this.transitionToNewDay(this.today);
+		}
+		await this.reconcileActiveFileBaselineAfterLoad(hasTodayInSnapshot);
 		// 不需要特殊初始化wordCountCache，因为它会在updateStore中按需填充
 	}
 
-	async saveSettings(): Promise<void> {
-		if (!this.dirty || this.isSaving) {
-			return; // Skip if clean or already saving
+	private async reconcileActiveFileBaselineAfterLoad(hasTodayInSnapshot: boolean): Promise<void> {
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile || activeFile.extension !== 'md' || this.isStatsFile(activeFile.path)) {
+			return;
 		}
-		this.isSaving = true;
+
+		let contents = "";
 		try {
-			const refreshedSnapshot = await this.statsStore.save(this.settings);
-			this.applySnapshot(refreshedSnapshot);
-			this.updateDate();
-			this.dirty = false;
-			this.emitStatsUpdated();
+			contents = await this.app.vault.read(activeFile);
 		} catch (error) {
-			console.error("[Work Assistant] Failed to save stats.md data:", error);
-		} finally {
-			this.isSaving = false;
+			console.warn("[Work Assistant] Failed to read active file for baseline reconciliation:", error);
+			return;
 		}
+
+		const count = this.countWords(contents);
+		const existing = this.settings.todaysWordCount[activeFile.path];
+		if (!existing) {
+			this.updateStoreImmediate(activeFile.path, count, true);
+			return;
+		}
+
+		if (!hasTodayInSnapshot) {
+			return;
+		}
+
+		// If today already exists but active baseline drifts too much, treat it as stale baseline.
+		if (Math.abs(count - existing.current) >= this.getShockThreshold()) {
+			this.settings.todaysWordCount[activeFile.path] = { initial: count, current: count };
+			this.dirty = true;
+			this.updateCounts();
+			void this.requestSave();
+			return;
+		}
+
+		if (existing.current !== count) {
+			this.updateStoreImmediate(activeFile.path, count, true);
+		}
+	}
+
+	private requestSave(options?: { skipUpdateDateCheck?: boolean }): Promise<void> {
+		this.saveRequested = true;
+		const shouldSkipUpdateDateCheck = options?.skipUpdateDateCheck === true;
+		if (!shouldSkipUpdateDateCheck) {
+			this.pendingSkipUpdateDateCheck = false;
+		}
+
+		if (!this.saveDrainPromise) {
+			this.saveDrainPromise = this.drainSaveRequests().finally(() => {
+				this.saveDrainPromise = null;
+			});
+		}
+		return this.saveDrainPromise;
+	}
+
+	private async drainSaveRequests(): Promise<void> {
+		while (this.saveRequested) {
+			const skipUpdateDateCheck = this.pendingSkipUpdateDateCheck;
+			this.saveRequested = false;
+			this.pendingSkipUpdateDateCheck = true;
+
+			if (!this.dirty || this.isSaving) {
+				continue;
+			}
+
+			this.isSaving = true;
+			try {
+				const refreshedSnapshot = await this.statsStore.save(this.settings);
+				this.applySnapshot(refreshedSnapshot);
+				this.dirty = false;
+				this.emitStatsUpdated();
+				if (!skipUpdateDateCheck) {
+					this.updateDate();
+				}
+			} catch (error) {
+				console.error("[Work Assistant] Failed to save stats.md data:", error);
+			} finally {
+				this.isSaving = false;
+			}
+		}
+	}
+
+	async saveSettings(options?: { skipUpdateDateCheck?: boolean }): Promise<void> {
+		await this.requestSave(options);
 	}
 
 	// Get word count for a specific date
@@ -652,11 +793,6 @@ export default class WordCountStats extends Component {
 	private getAutoSaveInterval(): number {
 		const interval = this.plugin.options.wordCount.autoSaveInterval;
 		return Number.isInteger(interval) && interval > 0 ? interval : 30000;
-	}
-
-	private shouldImmediateInitOnOpen(): boolean {
-		// 直接返回配置值，避免不必要的类型比较
-		return this.plugin.options.wordCount.immediateInitOnOpen === true;
 	}
 
 }
