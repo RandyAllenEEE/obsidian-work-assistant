@@ -35,6 +35,7 @@ export default class WordCountStats extends Component {
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
 	// 内存中维护每个文件的initial值（不保存到磁盘）
 	private fileInitialCounts: Map<string, number> = new Map();
+	private isSaving = false; // Guard against concurrent save operations
 
 	constructor(plugin: CalendarPlugin, app: App) {
 		super();
@@ -119,8 +120,8 @@ export default class WordCountStats extends Component {
 		// Initialize Worker if enabled
 		this.initWorker();
 
-		// 使用配置的防抖延迟时间
-		const debounceDelay = this.plugin.options.wordCount.debounceDelay || 2000;
+		// 使用带校验的配置值，避免异常配置直接生效
+		const debounceDelay = this.getDebounceDelay();
 		this.debouncedUpdate = debounce((contents: string, filepath: string) => {
 			this.updateWordCount(contents, filepath);
 		}, debounceDelay, false);
@@ -145,8 +146,8 @@ export default class WordCountStats extends Component {
 			})
 		);
 
-		// 使用配置的自动保存间隔
-		const autoSaveInterval = this.plugin.options.wordCount.autoSaveInterval || 30000;
+		// 使用带校验的配置值，避免异常配置直接生效
+		const autoSaveInterval = this.getAutoSaveInterval();
 		// Save settings periodically as a safety measure
 		this.registerInterval(window.setInterval(() => {
 			this.updateDate();
@@ -492,17 +493,18 @@ export default class WordCountStats extends Component {
 		if (newToday !== this.today) {
 			// 清空缓存以提升性能
 			this.wordCountCache.clear();
-			
+
 			// ✅ 处理跨天边界：保存前一天的数据到历史记录
-			if (this.dirty) {
+			if (this.dirty && !this.isSaving) {
 				// 如果前一天有未保存的数据，立即保存以确保数据完整性
 				// 此时 this.settings.todaysWordCount 中的数据会被存入 dayCounts 和 stats.md
-				void this.saveSettings();
+				this.isSaving = true;
+				void this.saveSettings().finally(() => { this.isSaving = false; });
 			} else {
 				// 即使没有未保存的修改，也需要确保当天的 dayCounts 已更新
 				this.updateCounts();
 			}
-			
+
 			// ✅ 关键修复：跨天时必须清空当天的 todaysWordCount
 			// 防止上一天的 initial/current 值被继承到新的一天
 			this.today = newToday;
@@ -561,8 +563,10 @@ export default class WordCountStats extends Component {
 	}
 
 	async saveSettings(): Promise<void> {
-		if (!this.dirty) return; // Optimization: Skip if no changes
-
+		if (!this.dirty || this.isSaving) {
+			return; // Skip if clean or already saving
+		}
+		this.isSaving = true;
 		try {
 			const refreshedSnapshot = await this.statsStore.save(this.settings);
 			this.applySnapshot(refreshedSnapshot);
@@ -571,6 +575,8 @@ export default class WordCountStats extends Component {
 			this.emitStatsUpdated();
 		} catch (error) {
 			console.error("[Work Assistant] Failed to save stats.md data:", error);
+		} finally {
+			this.isSaving = false;
 		}
 	}
 

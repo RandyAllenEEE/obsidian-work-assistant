@@ -41,8 +41,14 @@ export class WhiteNoiseService extends Component {
         const wasPlaying = this.isPlaying;
         this.stop();
         this.currentUrl = url;
-        this.audio = new Audio(url);
-        this.audio.loop = true;
+        // Reuse existing Audio element and just update the src to avoid orphaning the old element
+        if (this.audio) {
+            this.audio.src = url;
+            this.audio.loop = true;
+        } else {
+            this.audio = new Audio(url);
+            this.audio.loop = true;
+        }
 
         if (wasPlaying) {
             this.play();

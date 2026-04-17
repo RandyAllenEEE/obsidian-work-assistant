@@ -83,6 +83,7 @@ export class PeriodicNotesCache extends Component {
   }
 
   public onunload(): void {
+    super.onunload();
     this.unloaded = true;
     if (this.deferredTimer) {
       window.clearTimeout(this.deferredTimer);
@@ -125,9 +126,9 @@ export class PeriodicNotesCache extends Component {
 
     // We want to prioritize files that look like they belong to this month or nearby
     const priorityFiles = this.app.vault.getMarkdownFiles().filter(file => {
-      // Very basic filter: does path contain current year/month?
-      // This is efficient and catches "2023-10-01.md" or "2023/10/01.md"
-      return file.path.includes(currentMonth);
+      // Check path segments (not substring) to avoid false matches like "2024-04-15" matching "2024-04"
+      const pathParts = file.path.split('/');
+      return pathParts.some(part => part === currentMonth || part.startsWith(currentMonth + '-'));
     });
 
     console.debug(`[Work Assistant] Fast Scanning ${priorityFiles.length} priority files`);
@@ -267,16 +268,27 @@ export class PeriodicNotesCache extends Component {
       const folder = config.folder || "";
       if (!file.path.startsWith(folder)) continue;
 
-      // Use a helper to get formats? Or just assume we need to replicate getPossibleFormats logic
-      // Since Utils may still depend on calendarSet, we might need to update that too.
-      // But for now, let's assume we can implement simple format usage.
-      // Actually, getPossibleFormats takes settings. 
-      // We'll update getPossibleFormats later. For now, let's assume valid config.
+      // Try each format until one matches (Issue 5 fix: match getDateInput to the format used)
       const formats = getPossibleFormats(this.plugin.options, granularity);
-      const dateInputStr = getDateInput(file, formats[0], granularity);
-      const date = window.moment(dateInputStr, formats, true);
+      let matchedFormat: string | null = null;
+      let date: Moment | null = null;
 
-      const metadata = {
+      for (const fmt of formats) {
+        const dateInputStr = getDateInput(file, fmt, granularity);
+        const parsed = window.moment(dateInputStr, fmt, true);
+        if (parsed.isValid()) {
+          matchedFormat = fmt;
+          date = parsed;
+          break;
+        }
+      }
+
+      // Skip this granularity if no format matched
+      if (!date || !matchedFormat) {
+        continue;
+      }
+
+      const metadata: PeriodicNoteCachedMetadata = {
         filePath: file.path,
         date,
         granularity,
@@ -285,7 +297,7 @@ export class PeriodicNotesCache extends Component {
           exact: true,
           matchType: "filename",
         },
-      } as PeriodicNoteCachedMetadata;
+      };
       this.cachedFiles.set(file.path, metadata);
       this.dateIndex.set(this.getIndexKey(granularity, date), metadata);
       console.debug(`[Calendar] Resolved ${granularity} note: ${file.path} (date: ${metadata.canonicalDateStr})`);
@@ -432,6 +444,10 @@ export class PeriodicNotesCache extends Component {
     const activeNoteIndex = sortedCache.findIndex((m) => m.filePath === filePath);
 
     const offset = direction === "forwards" ? 1 : -1;
-    return sortedCache[activeNoteIndex + offset];
+    const nextIndex = activeNoteIndex + offset;
+    if (nextIndex < 0 || nextIndex >= sortedCache.length) {
+        return null;
+    }
+    return sortedCache[nextIndex];
   }
 }

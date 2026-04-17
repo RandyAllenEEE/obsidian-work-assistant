@@ -52,6 +52,41 @@ declare global {
 
 import { CacheManager } from "./services/CacheManager";
 
+/**
+ * Recursively deep merges source into target. Arrays are replaced, not concatenated.
+ * Handles up to any nesting depth - no longer limited to 3 levels.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
+  const result: Record<string, unknown> = { ...target };
+
+  for (const key of Object.keys(source)) {
+    const sourceValue = source[key];
+    const targetValue = target[key];
+
+    if (
+      sourceValue !== null &&
+      sourceValue !== undefined &&
+      typeof sourceValue === 'object' &&
+      !Array.isArray(sourceValue) &&
+      typeof targetValue === 'object' &&
+      !Array.isArray(targetValue) &&
+      targetValue !== null
+    ) {
+      // Both are plain objects - recurse
+      result[key] = deepMerge(
+        targetValue as Record<string, any>,
+        sourceValue as Record<string, any>
+      );
+    } else if (sourceValue !== undefined) {
+      // Replace with source value (covers arrays, primitives, null, etc.)
+      result[key] = sourceValue;
+    }
+  }
+
+  return result;
+}
+
 export default class CalendarPlugin extends Plugin {
   public options: ISettings;
   public settings: Writable<ISettings>;
@@ -192,26 +227,16 @@ export default class CalendarPlugin extends Plugin {
       return;
     }
 
-    if (this.app.workspace.layoutReady) {
-      // Layout is ready (lazy load or reload). Defer to allow Obsidian to
-      // claim any orphan leaves (from saved workspace) after registerView.
-      setTimeout(() => {
-        if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0) {
-          this.app.workspace.getRightLeaf(false).setViewState({
-            type: VIEW_TYPE_CALENDAR,
-          });
-        }
-      }, 100); // Small delay to ensure orphan leaf revival completes
-    } else {
-      // Normal startup: use onLayoutReady callback
-      this.app.workspace.onLayoutReady(() => {
-        if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0) {
-          this.app.workspace.getRightLeaf(false).setViewState({
-            type: VIEW_TYPE_CALENDAR,
-          });
-        }
-      });
-    }
+    // Always use onLayoutReady: Obsidian calls it immediately if layout is already ready,
+    // or waits until ready if not. This avoids the race between orphan leaf revival
+    // and the setTimeout delay in the previous implementation.
+    this.app.workspace.onLayoutReady(() => {
+      if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0) {
+        this.app.workspace.getRightLeaf(false).setViewState({
+          type: VIEW_TYPE_CALENDAR,
+        });
+      }
+    });
   }
 
   async loadOptions(): Promise<void> {
@@ -222,23 +247,10 @@ export default class CalendarPlugin extends Plugin {
     let finalSettings = { ...defaultSettings };
 
     if (loadedData && loadedData.assistant) {
-      // Simple merge (deep merge ideally, but for now spread)
-      // If we strictly want to support partials, we might need a utility.
-      // Assuming loadedData is compatible.
-      finalSettings = {
-        ...defaultSettings,
-        ...loadedData,
-        assistant: { ...defaultSettings.assistant, ...loadedData.assistant },
-        periodicNotes: { ...defaultSettings.periodicNotes, ...loadedData.periodicNotes },
-        wordCount: { ...defaultSettings.wordCount, ...loadedData.wordCount },
-        pomodoro: { ...defaultSettings.pomodoro, ...loadedData.pomodoro },
-      };
-      // Restore deep fields that might be lost by shallow spread of subsections
-      if (loadedData.assistant?.calendar) finalSettings.assistant.calendar = { ...defaultSettings.assistant.calendar, ...loadedData.assistant.calendar };
-      if (loadedData.assistant?.flipClock) finalSettings.assistant.flipClock = { ...defaultSettings.assistant.flipClock, ...loadedData.assistant.flipClock };
-      if (loadedData.assistant?.weather) finalSettings.assistant.weather = { ...defaultSettings.assistant.weather, ...loadedData.assistant.weather };
+      // Proper deep merge: merge defaults with loaded data at every level
+      finalSettings = deepMerge(defaultSettings, loadedData) as ISettings;
 
-      if (loadedData.wordCount?.heatmap) finalSettings.wordCount.heatmap = { ...defaultSettings.wordCount.heatmap, ...loadedData.wordCount.heatmap };
+      // Migration: statsFile -> statsMdPath rename
       if (typeof loadedData.wordCount?.statsFile === "string" && !loadedData.wordCount?.statsMdPath) {
         finalSettings.wordCount.statsMdPath = loadedData.wordCount.statsFile;
       }
@@ -248,27 +260,10 @@ export default class CalendarPlugin extends Plugin {
       if (!Number.isInteger(finalSettings.wordCount.shockThreshold) || (finalSettings.wordCount.shockThreshold < -1 || finalSettings.wordCount.shockThreshold === 0)) {
         finalSettings.wordCount.shockThreshold = defaultSettings.wordCount.shockThreshold;
       }
-      if (loadedData.pomodoro?.notification) finalSettings.pomodoro.notification = { ...defaultSettings.pomodoro.notification, ...loadedData.pomodoro.notification };
 
-      // Deep merge periodic notes granularities
-      const granularities: Granularity[] = ["day", "week", "month", "quarter", "year"];
-      granularities.forEach(g => {
-        // Priority: nested > root (legacy)
-        const legacyConfig = (loadedData as Record<string, any>)[g];
-        const newConfig = (loadedData.periodicNotes as PeriodicNotesConfig)?.[g];
-
-        if (newConfig) {
-          (finalSettings.periodicNotes as PeriodicNotesConfig)[g] = { ...(defaultSettings.periodicNotes as PeriodicNotesConfig)[g], ...newConfig };
-        } else if (legacyConfig) {
-          // Migrate legacy settings
-          (finalSettings.periodicNotes as PeriodicNotesConfig)[g] = { ...(defaultSettings.periodicNotes as PeriodicNotesConfig)[g], ...legacyConfig };
-        }
-      });
-
-      if (loadedData.media) finalSettings.media = { ...defaultSettings.media, ...loadedData.media };
       // Migration: If old pomodoro has systemMedia, migrate it?
       if (loadedData.pomodoro && typeof loadedData.pomodoro.systemMedia === 'boolean' && !loadedData.media) {
-        finalSettings.media.enabled = loadedData.pomodoro.systemMedia; // Only if media wasn't present
+        finalSettings.media.enabled = loadedData.pomodoro.systemMedia;
       }
       if (loadedData.pomodoro && typeof loadedData.pomodoro.whiteNoise === 'boolean' && !loadedData.media) {
         finalSettings.media.whiteNoise = loadedData.pomodoro.whiteNoise;
@@ -284,7 +279,7 @@ export default class CalendarPlugin extends Plugin {
       }
 
       // Migration: weekStart and shouldConfirmBeforeCreate (Moved to assistant.calendar)
-      const oldWeekStart = (loadedData as any).weekStart;
+      const oldWeekStart = (loadedData as Record<string, any>).weekStart;
       if (oldWeekStart && finalSettings.assistant.calendar.weekStart === "locale") {
         finalSettings.assistant.calendar.weekStart = oldWeekStart;
       }

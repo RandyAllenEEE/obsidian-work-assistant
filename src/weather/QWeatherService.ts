@@ -87,8 +87,6 @@ export class QWeatherService {
         };
     }
 
-    private resolvePromise: Promise<WeatherData | null> | null = null;
-
     // Polling handles
     private warningIntervalId: number | null = null;
 

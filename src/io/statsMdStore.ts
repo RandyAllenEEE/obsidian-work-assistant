@@ -95,7 +95,7 @@ export class StatsMdStore {
 
     if (!(await this.app.vault.adapter.exists(statsPath))) {
       await this.ensureParentDirectory(statsPath);
-      await this.app.vault.adapter.write(statsPath, this.buildTemplate(DEFAULT_SETTINGS));
+      await this.app.vault.adapter.write(statsPath, this.buildTemplate(DEFAULT_SETTINGS).content);
       return this.buildSnapshot({ ...DEFAULT_SETTINGS });
     }
 
@@ -114,9 +114,44 @@ export class StatsMdStore {
     const existingContent = (await this.app.vault.adapter.exists(statsPath))
       ? await this.app.vault.adapter.read(statsPath)
       : "";
-    const nextContent = this.buildTemplate(settings, existingContent);
+    const { content: nextContent, model: nextModel } = this.buildTemplate(settings, existingContent);
     await this.app.vault.adapter.write(statsPath, nextContent);
-    return this.buildSnapshot(this.parse(nextContent));
+    // Reuse the model returned by buildTemplate instead of re-parsing
+    return this.buildSnapshot(this.normalizeParsedModel(nextModel));
+  }
+
+  private normalizeParsedModel(model: TableModel): DailyStatsSettings {
+    const dayCounts: Record<string, number> = {};
+    model.dates.forEach((date) => {
+      let total = 0;
+      model.noteRows.forEach((row) => {
+        const raw = row.countsByDate[date] ?? 0;
+        total += Math.max(0, raw);
+      });
+      dayCounts[date] = total;
+    });
+
+    const todaysWordCount: Record<string, WordCount> = {};
+    model.noteRows.forEach((row) => {
+      const file = this.resolveNoteLink(row.noteLink);
+      if (!file) return;
+
+      const initial = row.initialCount ?? 0;
+      const current = row.currentCount ?? 0;
+
+      todaysWordCount[file.path] = {
+        initial: initial,
+        current: current,
+      };
+      this.filePathToRowId.set(file.path, row.rowId);
+      this.fileLastModified.set(file.path, row.lastModified || Date.now());
+    });
+
+    return {
+      dayCounts,
+      todaysWordCount,
+      pomoCounts: model.pomoByDate,
+    };
   }
 
   buildSnapshot(settings: DailyStatsSettings): WordCountSnapshot {
@@ -202,10 +237,10 @@ export class StatsMdStore {
     };
   }
 
-  private buildTemplate(settings: DailyStatsSettings, existingContent = ""): string {
+  private buildTemplate(settings: DailyStatsSettings, existingContent = ""): { content: string; model: TableModel } {
     // 更新实例的settings以供buildMainTable使用
     this.settings = settings;
-    
+
     const existingModel = this.parseTable(existingContent);
     const today = window.moment().format("YYYY-MM-DD");
 
@@ -279,7 +314,7 @@ export class StatsMdStore {
 
     const table = this.buildMainTable(dates, noteRows, pomoByDate);
 
-    return [
+    const content = [
       "# Work Assistant Stats",
       "",
       "> This file is managed by Work Assistant. Edit with care.",
@@ -287,6 +322,15 @@ export class StatsMdStore {
       table,
       ""
     ].join("\n");
+
+    // Build the model to return without re-parsing the content
+    const model: TableModel = {
+      dates,
+      pomoByDate,
+      noteRows,
+    };
+
+    return { content, model };
   }
 
   private buildMainTable(dates: string[], noteRows: NoteTableRow[], pomoByDate: Record<string, number>): string {

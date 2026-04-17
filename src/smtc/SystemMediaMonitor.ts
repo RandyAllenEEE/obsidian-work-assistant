@@ -220,6 +220,7 @@ export class SystemMediaMonitor extends Component {
         }
 
         if (this.buffer.length > 10000) {
+            console.warn(`[SMTC] Buffer overflow (${this.buffer.length} chars), clearing`);
             this.buffer = '';
         }
     }
@@ -278,6 +279,14 @@ export class SystemMediaMonitor extends Component {
 
 export function getActiveWindow(): Promise<Window> {
     return new Promise((resolve) => {
+        let settled = false;
+        let titleBuffer = '';
+        const resolveOnce = (title: string) => {
+            if (settled) return;
+            settled = true;
+            resolve({ title } as unknown as Window);
+        };
+
         const child = spawn('powershell', [
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
@@ -287,8 +296,7 @@ export function getActiveWindow(): Promise<Window> {
         });
 
         child.stdout.on('data', (data: Buffer) => {
-            const title = data.toString().trim();
-            resolve({ title } as unknown as Window);
+            titleBuffer += data.toString();
         });
 
         child.stderr.on('data', (data: Buffer) => {
@@ -299,10 +307,12 @@ export function getActiveWindow(): Promise<Window> {
             if (code !== 0) {
                 console.error(`[SMTC] GetActiveWindow failed with code ${code}`);
             }
+            resolveOnce(titleBuffer.trim());
         });
 
         child.on('error', (err) => {
             console.error("[SMTC] Failed to run GetActiveWindow:", err);
+            resolveOnce('');
         });
     });
 }

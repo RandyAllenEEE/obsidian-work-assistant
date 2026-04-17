@@ -10,7 +10,7 @@ import { t } from '../i18n';
 
 const MILLISECS_IN_MINUTE = 60 * 1000;
 
-export const enum Mode {
+export enum Mode {
     Pomo,
     ShortBreak,
     LongBreak,
@@ -159,7 +159,15 @@ export class Timer {
 
     async loadState(): Promise<void> {
         const state = this.plugin.cacheManager.getTimer();
-        if (!state || state.mode === Mode.NoTimer) return;
+        if (!state || state.mode === Mode.NoTimer) {
+            return;
+        }
+
+        // Validate mode is a known enum value at runtime
+        if (typeof state.mode !== 'number' || state.mode < Mode.Pomo || state.mode > Mode.NoTimer) {
+            console.warn("[Work Assistant] Invalid timer mode in cache, resetting:", state.mode);
+            return;
+        }
 
         // Restore state
         this.mode = state.mode;
@@ -193,7 +201,7 @@ export class Timer {
         this.saveState();
     }
 
-    startTimer(mode: Mode = null): void {
+    startTimer(mode: Mode | null = null): void {
         this.setupTimer(mode);
         this.paused = false;
 
@@ -245,9 +253,6 @@ export class Timer {
             }
             case Mode.LongBreak: {
                 return this.plugin.options.pomodoro.longBreak * MILLISECS_IN_MINUTE;
-            }
-            case Mode.NoTimer: {
-                throw new Error("Mode NoTimer does not have an associated time value");
             }
         }
     }
