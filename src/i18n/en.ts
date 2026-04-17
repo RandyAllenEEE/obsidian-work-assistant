@@ -153,7 +153,7 @@ export default {
   // Pomodoro
   "pomo-title": "Pomodoro Timer",
   "pomo-notice-paused": "Pomodoro timer paused",
-  "pomo-notice-start": "Starting {time} minute {mode}",
+  "pomo-notice-start": "Starting {time} {unit} {mode}",
   "pomo-notice-quit": "Pomodoro timer stopped",
   "pomo-notice-restart": "Restarting {mode}",
   "pomo-mode-work": "work session",
@@ -190,7 +190,6 @@ export default {
   "settings-use-system-notification": "System Notification",
   "settings-use-system-notification-desc": "Use system notification when timer ends",
 
-  // Settings - Hierarchy Sections
   "view-name-assistant": "Assistant",
   "settings-assistant-panel-title": "Assistant Panel",
   "settings-widgets-title": "Widgets",
@@ -216,7 +215,5 @@ export default {
   "settings-word-count-heatmap-desc": "Show word count intensity on the Calendar View",
   "settings-requires-calendar-view": "Requires Calendar View",
   "settings-locale-default": "Locale default ({day})",
-
-  // 新增翻译
   "settings-calendar-view-title-desc": "Calendar view",
 }

@@ -152,7 +152,7 @@ export default {
   // Pomodoro
   "pomo-title": "番茄钟",
   "pomo-notice-paused": "番茄钟已暂停",
-  "pomo-notice-start": "开始{time}分钟{mode}",
+  "pomo-notice-start": "开始{time}{unit}{mode}",
   "pomo-notice-quit": "番茄钟已停止",
   "pomo-notice-restart": "重新开始{mode}",
   "pomo-mode-work": "工作时段",
@@ -189,7 +189,6 @@ export default {
   "settings-use-system-notification": "系统通知",
   "settings-use-system-notification-desc": "计时结束时使用系统通知",
 
-  // Settings - Hierarchy Sections
   "view-name-assistant": "助手",
   "settings-assistant-panel-title": "助手面板",
   "settings-widgets-title": "小组件",
@@ -207,13 +206,13 @@ export default {
   "settings-periodic-open-at-startup": "启动时打开",
   "settings-periodic-open-at-startup-desc": "Obsidian启动时自动打开此笔记",
   "settings-calendar-linkage-title": "日历联动",
-  "settings-calendar-linkage-desc": "启用与日历视图的交互（点击日期/周）",  "settings-periodic-note-configs": "笔记配置",  "settings-word-count-section-title": "字数统计",
+  "settings-calendar-linkage-desc": "启用与日历视图的交互（点击日期/周）",
+  "settings-periodic-note-configs": "笔记配置",
+  "settings-word-count-section-title": "字数统计",
   "settings-word-count-status-bar-title": "状态栏",
   "settings-word-count-status-bar-desc": "在状态栏显示字数统计",
   "settings-word-count-heatmap-desc": "在日历视图上显示字数统计强度",
   "settings-requires-calendar-view": "需要日历视图",
   "settings-locale-default": "区域默认 ({day})",
-
-  // 新增翻译
   "settings-calendar-view-title-desc": "日历视图",
 }
