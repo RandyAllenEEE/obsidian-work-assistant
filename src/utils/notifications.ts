@@ -1,30 +1,23 @@
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const electron = require("electron");
+import { Notice } from 'obsidian';
 
-export function showNotification(title: string, body: string, silent?: boolean): void {
-    if (!electron || !electron.remote) {
-        console.warn("[Work Assistant] System notifications not supported or Electron not found.");
+/**
+ * Show a notification using Obsidian's Notice API.
+ * Note: Obsidian Notice is the most reliable notification method in the Obsidian environment.
+ * Windows Action Center notifications via electron.remote are not used because
+ * electron.remote was removed in Electron 14+ (which Obsidian uses).
+ */
+export function showNotification(title: string, body: string, _silent?: boolean): void {
+    // Validate inputs
+    if (!title || !title.trim()) {
+        console.warn("[Work Assistant] Empty notification title, skipping.");
         return;
     }
 
-    try {
-        const Notification = (electron as any).remote.Notification;
-        interface IElectronNotification {
-            on(event: string, cb: () => void): void;
-            show(): void;
-            close(): void;
-        }
-        const n = new Notification(title, {
-            body: body,
-            silent: silent
-        }) as IElectronNotification;
-        n.on("click", () => {
-            n.close();
-        });
-        n.show();
-    } catch (e) {
-        console.error("[Work Assistant] Failed to send system notification:", e);
-    }
+    const safeBody = body && body.trim() ? body : "";
+
+    // Use Obsidian Notice - always show the body if available, otherwise show title
+    // Notice takes (message, duration) format
+    new Notice(safeBody || title, 5000);
 }
 
 // Alias for compatibility

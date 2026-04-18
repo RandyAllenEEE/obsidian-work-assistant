@@ -145,13 +145,14 @@ export class StatsMdStore {
 
       const initial = row.initialCount ?? 0;
       const current = row.currentCount ?? 0;
+      const normalizedPath = this.normalizePathForStorage(file.path);
 
-      todaysWordCount[file.path] = {
+      todaysWordCount[normalizedPath] = {
         initial: initial,
         current: current,
       };
-      this.filePathToRowId.set(file.path, row.rowId);
-      this.fileLastModified.set(file.path, row.lastModified || Date.now());
+      this.filePathToRowId.set(normalizedPath, row.rowId);
+      this.fileLastModified.set(normalizedPath, row.lastModified || Date.now());
     });
 
     return {
@@ -226,17 +227,18 @@ export class StatsMdStore {
     model.noteRows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
       if (!file) return;
-      
+
       // 从解析的表格数据中获取initial和current值
       const initial = row.initialCount ?? 0;
       const current = row.currentCount ?? 0;
-      
-      todaysWordCount[file.path] = {
+      const normalizedPath = this.normalizePathForStorage(file.path);
+
+      todaysWordCount[normalizedPath] = {
         initial: initial,
         current: current,
       };
-      this.filePathToRowId.set(file.path, row.rowId);
-      this.fileLastModified.set(file.path, row.lastModified || Date.now());
+      this.filePathToRowId.set(normalizedPath, row.rowId);
+      this.fileLastModified.set(normalizedPath, row.lastModified || Date.now());
     });
 
     return {
@@ -275,8 +277,9 @@ export class StatsMdStore {
       rowById.set(normalized.rowId, normalized);
       const file = this.resolveNoteLink(normalized.noteLink);
       if (file) {
-        rowByPath.set(file.path, normalized);
-        this.filePathToRowId.set(file.path, normalized.rowId);
+        const normalizedPath = this.normalizePathForStorage(file.path);
+        rowByPath.set(normalizedPath, normalized);
+        this.filePathToRowId.set(normalizedPath, normalized.rowId);
       }
     });
 
@@ -296,13 +299,14 @@ export class StatsMdStore {
         return;
       }
 
-      const knownRowId = this.filePathToRowId.get(target.path);
-      let row = (knownRowId ? rowById.get(knownRowId) : undefined) ?? rowByPath.get(target.path);
+      const normalizedPath = this.normalizePathForStorage(target.path);
+      const knownRowId = this.filePathToRowId.get(normalizedPath);
+      let row = (knownRowId ? rowById.get(knownRowId) : undefined) ?? rowByPath.get(normalizedPath);
 
       if (!row) {
         // 新行：设置 Initial 和 Current 都为当前字数
         row = {
-          rowId: this.createRowId(target.path),
+          rowId: this.createRowId(normalizedPath),
           noteLink: this.toNoteLink(target),
           countsByDate: {},
           lastModified: this.getFileLastModified(target.path),
@@ -322,8 +326,8 @@ export class StatsMdStore {
       const netChange = wordCount.current - wordCount.initial;
       row.countsByDate[today] = netChange;
       rowById.set(row.rowId, row);
-      rowByPath.set(target.path, row);
-      this.filePathToRowId.set(target.path, row.rowId);
+      rowByPath.set(normalizedPath, row);
+      this.filePathToRowId.set(normalizedPath, row.rowId);
     });
 
     const noteRows = this.dedupeRows([...rowById.values()]);
@@ -381,7 +385,8 @@ export class StatsMdStore {
 
       
       if (file) {
-        const wordCount = this.settings.todaysWordCount?.[file.path];
+        const normalizedPath = this.normalizePathForStorage(file.path);
+        const wordCount = this.settings.todaysWordCount?.[normalizedPath];
         if (wordCount) {
           initial = wordCount.initial;
           current = wordCount.current;
@@ -395,7 +400,8 @@ export class StatsMdStore {
         ...dates.map((date) => {
           // 对于当前日期，显示净变化（允许负数）；对于历史日期，显示存储的值
           if (date === today) {
-            if (!file || !this.settings.todaysWordCount?.[file.path]) {
+            const normalizedPath = file ? this.normalizePathForStorage(file.path) : null;
+            if (!file || !this.settings.todaysWordCount?.[normalizedPath]) {
               return "0";
             }
             // ✅ 修复：当天增量 = current - initial（不再使用 Math.max）
@@ -414,11 +420,13 @@ export class StatsMdStore {
   private handleRename = (file: TAbstractFile, oldPath: string): void => {
     if (!(file instanceof TFile)) return;
 
-    const rowId = this.filePathToRowId.get(oldPath);
+    const normalizedOldPath = this.normalizePathForStorage(oldPath);
+    const normalizedNewPath = this.normalizePathForStorage(file.path);
+    const rowId = this.filePathToRowId.get(normalizedOldPath);
     if (!rowId) return;
 
-    this.filePathToRowId.delete(oldPath);
-    this.filePathToRowId.set(file.path, rowId);
+    this.filePathToRowId.delete(normalizedOldPath);
+    this.filePathToRowId.set(normalizedNewPath, rowId);
   };
 
   private dedupeRows(rows: NoteTableRow[]): NoteTableRow[] {
@@ -426,17 +434,19 @@ export class StatsMdStore {
 
     rows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
-      const key = file ? `file:${file.path}` : `link:${row.noteLink}`;
-      
+      // 使用规范化后的路径作为 key
+      const normalizedPath = file ? this.normalizePathForStorage(file.path) : null;
+      const key = normalizedPath ? `file:${normalizedPath}` : `link:${row.noteLink}`;
+
       // 获取文件的最后修改时间进行比较
       const currentTimestamp = row.lastModified || Date.now();
-      
+
       const existing = deduped.get(key);
       // 按照更新时间覆盖，而不是简单的"后出现行覆盖"
       if (!existing || currentTimestamp > existing.timestamp) {
         deduped.set(key, { row, timestamp: currentTimestamp });
-        if (file) {
-          this.filePathToRowId.set(file.path, row.rowId);
+        if (normalizedPath) {
+          this.filePathToRowId.set(normalizedPath, row.rowId);
         }
       } else {
         // 如果发现重复项，可以考虑记录日志
@@ -548,26 +558,47 @@ export class StatsMdStore {
   private getRowIdFromLink(link: string, index: number): string {
     const file = this.resolveNoteLink(link);
     if (file) {
-      return file.path;
+      return this.normalizePathForStorage(file.path);
     }
     return `row-${index}-${link}`;
   }
 
   private resolveNoteLink(noteLink: string): TFile | null {
-    // 如果是文件路径链接
-    if (noteLink.startsWith("[[")) {
-      const path = noteLink.slice(2, -2);
-      const file = this.app.vault.getAbstractFileByPath(path);
-      return file instanceof TFile ? file : null;
+    // 提取链接中的路径部分
+    let path = noteLink;
+    // 安全地检查是否以 [[ 开头并以 ]] 结尾
+    if (noteLink.startsWith("[[") && noteLink.endsWith("]]") && noteLink.length > 4) {
+      path = noteLink.slice(2, -2);
     }
-    // 如果是纯路径
-    const file = this.app.vault.getAbstractFileByPath(noteLink);
-    return file instanceof TFile ? file : null;
+
+    // 尝试多种路径变体以兼容不同格式
+    const pathVariants = [
+      path,
+      path + ".md",
+      path.endsWith(".md") ? path.slice(0, -3) : path,
+    ];
+
+    for (const variant of pathVariants) {
+      const file = this.app.vault.getAbstractFileByPath(variant);
+      if (file instanceof TFile) {
+        return file;
+      }
+    }
+    return null;
+  }
+
+  // 统一路径格式：移除 .md 后缀，用于 Map key 和存储
+  // 注意：只移除末尾的 .md，且确保它确实是扩展名而非文件名的一部分
+  private normalizePathForStorage(filePath: string): string {
+    if (filePath.endsWith(".md") && filePath.length > 3) {
+      return filePath.slice(0, -3);
+    }
+    return filePath;
   }
 
   private toNoteLink(file: TFile): string {
-    // 使用Obsidian的内部链接格式
-    return `[[${file.path}]]`;
+    // 使用不带 .md 后缀的 Obsidian 内部链接格式，保持与 Obsidian 官方一致
+    return `[[${this.normalizePathForStorage(file.path)}]]`;
   }
 
   private createRowId(filePath: string): string {

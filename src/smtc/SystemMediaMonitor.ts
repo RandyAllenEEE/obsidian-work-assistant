@@ -9,7 +9,7 @@ import { type MediaCache } from "../ui/stores";
 import type CalendarPlugin from '../main';
 
 // Known hashes for verification
-const KNOWN_CS_HASH = "86B272BF9CCF50CCAF554F821163588EA87D8AA0E8E24AA63CA50652FE0138DA";
+const KNOWN_CS_HASH = "7D01B8DC4E1760E466F7E1B299A2AC9F7D23D6301A3547340F78556205D4FB3F";
 const KNOWN_EXE_HASH = "638E16C97FF01683AF55C5B528D3AE58467AFF7841CE465328ACB4133AD6CCAF";
 
 export class SystemMediaMonitor extends Component {
@@ -267,8 +267,57 @@ export class SystemMediaMonitor extends Component {
                 console.error("[SMTC] Failed to spawn control:", err);
             });
 
+            // Trigger immediate poll after control action for quick UI refresh
+            child.on('close', () => {
+                setTimeout(() => this.triggerImmediatePoll(), 100);
+            });
+
         } catch (e) {
             console.error("[SMTC] Failed to control media:", e);
+        }
+    }
+
+    private triggerImmediatePoll(): void {
+        try {
+            const child = spawn(this.bridgePath, ['poll'], {
+                windowsHide: true,
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+
+            let output = '';
+            child.stdout.on('data', (data: Buffer) => {
+                output += data.toString();
+            });
+
+            child.stderr.on('data', (data: Buffer) => {
+                console.error(`[SMTC] Immediate Poll Stderr: ${data.toString()}`);
+            });
+
+            child.on('close', () => {
+                // Parse the immediate poll result
+                const startIndex = output.indexOf('JSON_START');
+                const endIndex = output.indexOf('JSON_END');
+                if (startIndex !== -1 && endIndex !== -1) {
+                    const jsonStr = output.substring(startIndex + 10, endIndex);
+                    try {
+                        if (jsonStr === 'null') {
+                            this.mediaStore.set(null);
+                        } else {
+                            const data = JSON.parse(jsonStr) as MediaCache;
+                            this.mediaStore.set(data);
+                        }
+                    } catch (e) {
+                        console.error("[SMTC] Failed to parse immediate poll result:", e);
+                    }
+                }
+            });
+
+            child.on('error', (err) => {
+                console.error("[SMTC] Failed to trigger immediate poll:", err);
+            });
+
+        } catch (e) {
+            console.error("[SMTC] Failed to trigger immediate poll:", e);
         }
     }
 

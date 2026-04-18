@@ -21,7 +21,7 @@ namespace SMTCBridge
 
             if (args.Length == 0)
             {
-                Console.WriteLine("Usage: SMTCBridge.exe [monitor | control <action>]");
+                Console.WriteLine("Usage: SMTCBridge.exe [monitor | control <action> | poll]");
                 return;
             }
 
@@ -34,6 +34,11 @@ namespace SMTCBridge
             else if (mode == "control" && args.Length > 1)
             {
                 RunControl(args[1]);
+            }
+            else if (mode == "poll")
+            {
+                // Immediate single poll for quick refresh after control actions
+                RunSinglePoll();
             }
             else
             {
@@ -75,6 +80,27 @@ namespace SMTCBridge
             catch (Exception ex)
             {
                 Console.Error.WriteLine("Error: " + ex.Message);
+            }
+        }
+
+        static void RunSinglePoll()
+        {
+            try
+            {
+                var data = GetMediaSessionInfo();
+                if (data != null)
+                {
+                    string json = EscapeJson(data);
+                    Console.WriteLine("JSON_START" + json + "JSON_END");
+                }
+                else
+                {
+                    Console.WriteLine("JSON_STARTnullJSON_END");
+                }
+            }
+            catch
+            {
+                // Ignore transient errors
             }
         }
 
@@ -131,7 +157,7 @@ namespace SMTCBridge
                 if (props == null) return null;
 
                 var playbackInfo = session.GetPlaybackInfo();
-                
+
                 // Caching Logic
                 string currentTrackId = props.Title + "|" + props.Artist;
                 string thumbBase64 = "";
@@ -143,7 +169,7 @@ namespace SMTCBridge
                 }
                 else
                 {
-                    // New track or forced refresh
+                    // New track or forced refresh - try to get thumbnail
                     if (props.Thumbnail != null)
                     {
                         try
@@ -163,14 +189,23 @@ namespace SMTCBridge
                                 }
                             }
                         }
-                        catch { 
-                            thumbBase64 = ""; 
+                        catch {
+                            // Failed to get thumbnail, will use old cache if available
                         }
                     }
-                    
-                    // Update Cache
-                    lastTrackId = currentTrackId;
-                    lastThumbBase64 = thumbBase64;
+
+                    // Only update cache if we got a valid non-empty thumbnail
+                    if (!string.IsNullOrEmpty(thumbBase64))
+                    {
+                        lastTrackId = currentTrackId;
+                        lastThumbBase64 = thumbBase64;
+                    }
+                    else if (currentTrackId != lastTrackId)
+                    {
+                        // Track changed but thumbnail fetch failed - keep old cache
+                        // but update track ID so we don't keep retrying the same (failed) thumbnail
+                        lastTrackId = currentTrackId;
+                    }
                 }
 
                 return new MediaInfo
