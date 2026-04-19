@@ -8,6 +8,7 @@ import type { DailyStatsSettings } from "./io/statsMdStore";
 import type { TodaysWordCountAggregate } from "./io/statsMdStore";
 import type { WordCountSnapshot } from "./io/statsMdStore";
 import type CalendarPlugin from "./main";
+import { normalizePathForStorage } from "./utils/path";
 
 export const WORD_COUNT_STATS_UPDATED_EVENT = "work-assistant:word-count-stats-updated";
 
@@ -35,6 +36,7 @@ export default class WordCountStats extends Component {
 	private wordCountCache: Map<string, { contentHash: string; wordCount: number; timestamp: number }> = new Map();
 	private isSaving = false; // Guard against concurrent save operations
 	private isDayTransitioning = false;
+	private isMidTransition = false; // Tracks if we're in the middle of a day transition (for crash recovery)
 	private isUnloading = false;
 	private saveDrainPromise: Promise<void> | null = null;
 	private saveRequested = false;
@@ -49,6 +51,10 @@ export default class WordCountStats extends Component {
 		this.today = window.moment().format("YYYY-MM-DD");
 		this.activeStatsMdPath = this.resolveStatsMdPath();
 		this.statsStore = new StatsMdStore(this.app, () => this.resolveStatsMdPath());
+		// 注册回调：当文件删除或外部删除检测到时，设置 dirty 标志
+		this.statsStore.registerAccumulatorChangedCallback(() => {
+			this.dirty = true;
+		});
 	}
 
 	onload(): void {
@@ -234,39 +240,60 @@ export default class WordCountStats extends Component {
 			this.wordCountCache.clear();
 		}
 
-		if (this.ensureBaselineForFile(filepath, count)) {
-			changed = true;
-		} else {
-			// 获取现有记录
-			const existingRecord = this.settings.todaysWordCount[filepath];
-			
-			// 计算变化量（相对于当前值的变化）
-			const delta = count - existingRecord.current;
-			
-			// 如果变化超过阈值，则移动基线（而不是完全忽略）
-			if (Math.abs(delta) >= this.getShockThreshold()) {
-				// ✅ 智能处理：将大变化加到 initial 和 current
-				// 这样既忽略了这次冲击，又不影响后续的计数
-				// 原理：新增长 = new_current - new_initial = (old_current + delta) - (old_initial + delta) = old_growth
-				this.settings.todaysWordCount[filepath] = {
-					initial: existingRecord.initial + delta,
+		// Use normalized path for consistent key format
+		const normalizedPath = normalizePathForStorage(filepath);
+		const existingRecord = this.settings.todaysWordCount[normalizedPath];
+
+		if (!existingRecord) {
+			// New file: check if delta >= shock threshold
+			const delta = count;  // from 0 to count
+			if (delta >= this.getShockThreshold()) {
+				// Shock handling for new file: initial=0, current=count
+				// This preserves the net change (count - 0 = count)
+				this.settings.todaysWordCount[normalizedPath] = {
+					initial: 0,
 					current: count
 				};
 				this.dirty = true;
 				this.updateCounts();
-				// ✅ 冲击是特殊事件，立即保存（不等防抖）
 				void this.saveSettings();
 				return;
 			}
-			
-			// 更新current值
-			if (existingRecord.current !== count) {
-				this.settings.todaysWordCount[filepath] = {
-					initial: existingRecord.initial,
-					current: count
-				};
-				changed = true;
-			}
+			// Normal case for new file: initial = current = count
+			this.settings.todaysWordCount[normalizedPath] = {
+				initial: count,
+				current: count
+			};
+			this.dirty = true;
+			this.updateCounts();
+			this.debouncedSave();
+			return;
+		}
+
+		// Existing record: shock handling
+		const delta = count - existingRecord.current;
+
+		// If change exceeds threshold, shift baseline to preserve net change
+		if (Math.abs(delta) >= this.getShockThreshold()) {
+			// Smart handling: add delta to both initial and current
+			// Net change = new_current - new_initial = (old_current + delta) - (old_initial + delta) = old_growth
+			this.settings.todaysWordCount[normalizedPath] = {
+				initial: existingRecord.initial + delta,
+				current: count
+			};
+			this.dirty = true;
+			this.updateCounts();
+			void this.saveSettings();
+			return;
+		}
+
+		// Normal update: only change current
+		if (existingRecord.current !== count) {
+			this.settings.todaysWordCount[normalizedPath] = {
+				initial: existingRecord.initial,
+				current: count
+			};
+			changed = true;
 		}
 
 		if (changed) {
@@ -322,18 +349,19 @@ export default class WordCountStats extends Component {
 		);
 	}
 
-	private async initializeActiveFileWordCount(): Promise<void> {
+	private async initializeActiveFileWordCount(allowDuringDayTransition = false): Promise<void> {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (activeFile && activeFile.extension === 'md' && !this.isStatsFile(activeFile.path) && !this.shouldIgnoreFile(activeFile.path)) {
-			// 检查是否已经有当天的记录
-			if (!Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, activeFile.path)) {
-				// 立即读取文件内容并初始化
+			// Check if already has today's record (use normalized path)
+			const normalizedPath = normalizePathForStorage(activeFile.path);
+			if (!Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, normalizedPath)) {
+				// Immediately read file content and initialize
 				try {
 					const contents = await this.app.vault.read(activeFile);
 					const count = this.countWords(contents);
-					
-					// 立即更新store（不经过防抖）
-					this.updateStoreImmediate(activeFile.path, count, true);
+
+					// Immediately update store (without debounce)
+					this.updateStoreImmediate(activeFile.path, count, allowDuringDayTransition);
 				} catch (error) {
 					console.warn("[Work Assistant] Failed to initialize word count for active file:", error);
 				}
@@ -352,8 +380,6 @@ export default class WordCountStats extends Component {
 			return;
 		}
 
-		let changed = false;
-
 		this.updateDate();
 		if (this.isDayTransitioning && !allowDuringDayTransition) {
 			this.bufferedUpdatesDuringTransition.set(filepath, count);
@@ -366,58 +392,48 @@ export default class WordCountStats extends Component {
 			this.wordCountCache.clear();
 		}
 
-		if (this.ensureBaselineForFile(filepath, count)) {
-			changed = true;
-		} else {
-			// 获取现有记录
-			const existingRecord = this.settings.todaysWordCount[filepath];
-			
-			// 计算变化量（相对于当前值的变化）
-			const delta = count - existingRecord.current;
-			
-			// 如果变化超过阈值，则移动基线（而不是完全忽略）
-			if (Math.abs(delta) >= this.getShockThreshold()) {
-				// ✅ 智能处理：将大变化加到 initial 和 current
-				// 这样既忽略了这次冲击，又不影响后续的计数
-				this.settings.todaysWordCount[filepath] = {
-					initial: existingRecord.initial + delta,
-					current: count
-				};
-				this.dirty = true;
-				this.updateCounts();
-				// ✅ 冲击是特殊事件，立即保存
-				void this.saveSettings();
-				return;
-			}
-			
-			// 更新current值
-			if (existingRecord.current !== count) {
-				this.settings.todaysWordCount[filepath] = {
-					initial: existingRecord.initial,
-					current: count
-				};
-				changed = true;
-			}
-		}
+		// Use normalized path for consistent key format
+		const normalizedPath = normalizePathForStorage(filepath);
+		const existingRecord = this.settings.todaysWordCount[normalizedPath];
 
-		if (changed) {
+		if (!existingRecord) {
+			// New file: initial = current = count (no shock handling for new files)
+			// Shock handling is only for existing files with sudden large changes
+			this.settings.todaysWordCount[normalizedPath] = {
+				initial: count,
+				current: count
+			};
 			this.dirty = true;
 			this.updateCounts();
-			// 立即保存，不使用防抖
+			void this.saveSettings();
+			return;
+		}
+
+		// Existing record: shock handling
+		const delta = count - existingRecord.current;
+
+		if (Math.abs(delta) >= this.getShockThreshold()) {
+			// Smart handling: add delta to both initial and current
+			this.settings.todaysWordCount[normalizedPath] = {
+				initial: existingRecord.initial + delta,
+				current: count
+			};
+			this.dirty = true;
+			this.updateCounts();
+			void this.saveSettings();
+			return;
+		}
+
+		// Normal update: only change current
+		if (existingRecord.current !== count) {
+			this.settings.todaysWordCount[normalizedPath] = {
+				initial: existingRecord.initial,
+				current: count
+			};
+			this.dirty = true;
+			this.updateCounts();
 			void this.saveSettings();
 		}
-	}
-
-	private ensureBaselineForFile(filepath: string, count: number): boolean {
-		if (Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, filepath)) {
-			return false;
-		}
-
-		this.settings.todaysWordCount[filepath] = {
-			initial: count,
-			current: count
-		};
-		return true;
 	}
 
 	refreshStatusBar(): void {
@@ -547,7 +563,9 @@ export default class WordCountStats extends Component {
 		const newToday = window.moment().format("YYYY-MM-DD");
 		// 如果日期已改变，执行跨天处理
 		if (newToday !== this.today && !this.isDayTransitioning) {
-			void this.transitionToNewDay(newToday);
+			void this.transitionToNewDay(newToday).catch((err) => {
+				console.error("[Work Assistant] Day transition failed:", err);
+			});
 		}
 	}
 
@@ -565,20 +583,27 @@ export default class WordCountStats extends Component {
 			return;
 		}
 		this.isDayTransitioning = true;
+		this.isMidTransition = true; // Track mid-transition state for crash recovery
 		try {
 			this.wordCountCache.clear();
 			if (this.dirty) {
-				await this.requestSave({ skipUpdateDateCheck: true });
+				try {
+					await this.requestSave({ skipUpdateDateCheck: true });
+				} catch (error) {
+					console.error("[Work Assistant] Failed to save previous day data:", error);
+				}
 			}
 			this.resetDailyTracking(newToday);
 			await this.requestSave({ skipUpdateDateCheck: true });
 			// Cold-start and midnight-running both initialize current active note baseline.
-			await this.initializeActiveFileWordCount();
+			// Use allowDuringDayTransition=true since we're already in the transition.
+			await this.initializeActiveFileWordCount(true);
 			if (this.dirty) {
 				await this.requestSave({ skipUpdateDateCheck: true });
 			}
 		} finally {
 			this.isDayTransitioning = false;
+			this.isMidTransition = false;
 			this.replayBufferedUpdatesAfterTransition();
 		}
 	}
@@ -595,6 +620,9 @@ export default class WordCountStats extends Component {
 
 	updateCounts(): void {
 		this.todaysAggregate = this.statsStore.getTodaysWordCountAggregate(this.settings.todaysWordCount);
+		// 加上失效链接的累计计数，使状态栏和热力图能够正确显示总字数变化
+		const brokenLinksCount = this.statsStore.getTodaysBrokenLinksCount();
+		this.todaysAggregate.total += brokenLinksCount;
 		this.currentWordCount = this.todaysAggregate.total;
 		// Persist the display value for stats table-like consumers.
 		this.settings.dayCounts[this.today] = this.currentWordCount;
@@ -605,12 +633,17 @@ export default class WordCountStats extends Component {
 		this.settings = snapshot.settings;
 		this.todaysAggregate = snapshot.todaysAggregate;
 		this.currentWordCount = this.todaysAggregate.total;
-		
+
+		// 加上失效链接的累计计数，使状态栏和热力图能够正确显示总字数变化
+		const brokenLinksCount = this.statsStore.getTodaysBrokenLinksCount();
+		this.todaysAggregate.total += brokenLinksCount;
+		this.currentWordCount = this.todaysAggregate.total;
+
 		// 修正 today 覆盖逻辑：只有当当天数据不存在时才设置
 		if (!this.settings.dayCounts[this.today] || this.settings.dayCounts[this.today] !== this.currentWordCount) {
 			this.settings.dayCounts[this.today] = this.currentWordCount;
 		}
-		
+
 		this.refreshStatusBar();
 	}
 
@@ -650,7 +683,7 @@ export default class WordCountStats extends Component {
 		// 不需要特殊初始化wordCountCache，因为它会在updateStore中按需填充
 	}
 
-	private async reconcileActiveFileBaselineAfterLoad(hasTodayInSnapshot: boolean): Promise<void> {
+	private async reconcileActiveFileBaselineAfterLoad(_hasTodayInSnapshot: boolean): Promise<void> {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile || activeFile.extension !== 'md' || this.isStatsFile(activeFile.path) || this.shouldIgnoreFile(activeFile.path)) {
 			return;
@@ -665,19 +698,19 @@ export default class WordCountStats extends Component {
 		}
 
 		const count = this.countWords(contents);
-		const existing = this.settings.todaysWordCount[activeFile.path];
+		const normalizedPath = normalizePathForStorage(activeFile.path);
+		const existing = this.settings.todaysWordCount[normalizedPath];
 		if (!existing) {
 			this.updateStoreImmediate(activeFile.path, count, true);
 			return;
 		}
 
-		if (!hasTodayInSnapshot) {
-			return;
-		}
+		// If today doesn't exist in snapshot (day changed), still need to reconcile existing record
+		// Don't skip if hasTodayInSnapshot is false - the file might need baseline refresh
 
 		// If today already exists but active baseline drifts too much, treat it as stale baseline.
 		if (Math.abs(count - existing.current) >= this.getShockThreshold()) {
-			this.settings.todaysWordCount[activeFile.path] = { initial: count, current: count };
+			this.settings.todaysWordCount[normalizedPath] = { initial: count, current: count };
 			this.dirty = true;
 			this.updateCounts();
 			void this.requestSave();
@@ -744,8 +777,9 @@ export default class WordCountStats extends Component {
 	}
 
 	getFileCountChange(filepath: string): number {
-		// 返回实际的增减值（允许负数），不作为 0 处理
-		return this.todaysAggregate.byFile[filepath]?.displayDelta ?? 0;
+		// Use normalized path to match the format used in todaysAggregate.byFile
+		const normalizedPath = normalizePathForStorage(filepath);
+		return this.todaysAggregate.byFile[normalizedPath]?.displayDelta ?? 0;
 	}
 
 	getWeeklyWordCount(date: Moment): number {

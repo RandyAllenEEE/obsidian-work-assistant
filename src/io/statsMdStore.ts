@@ -1,5 +1,6 @@
 import { TFile } from "obsidian";
 import type { App, TAbstractFile } from "obsidian";
+import { normalizePathForStorage, convertToOsPath } from "../utils/path";
 
 interface WordCount {
   initial: number;    // 文件当天首次记录时的字数（基准）
@@ -51,6 +52,8 @@ const DEFAULT_SETTINGS: DailyStatsSettings = {
 export const DEFAULT_DAILY_STATS_SETTINGS = DEFAULT_SETTINGS;
 
 const DATE_COLUMN_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const BROKEN_LINKS_KEY = "__BROKEN_LINKS__";
+const BROKEN_LINKS_DISPLAY = "失效链接";
 
 export class StatsMdStore {
   private readonly app: App;
@@ -61,13 +64,20 @@ export class StatsMdStore {
   public settings: DailyStatsSettings;
   // 添加renameHandlerRef属性
   private renameHandlerRef: ((file: TAbstractFile, oldPath: string) => void) | null = null;
+  private deleteHandlerRef: ((file: TAbstractFile) => void) | null = null;
+  // 失效链接累加器：在内存中累积当天删除文件的 netChange
+  private brokenLinksAccumulator: { countsByDate: Record<string, number> } = { countsByDate: {} };
+  // 回调：当文件删除或外部删除检测到时，通知 WordCountStats 设置 dirty 标志
+  private onAccumulatorChangedRef: (() => void) | null = null;
 
-  constructor(app: App, getStatsMdPath: () => string) {
+	constructor(app: App, getStatsMdPath: () => string) {
     this.app = app;
     this.getStatsMdPath = getStatsMdPath;
     this.settings = Object.assign({}, DEFAULT_DAILY_STATS_SETTINGS);
     this.renameHandlerRef = this.handleRename;
     this.app.vault.on("rename", this.renameHandlerRef);
+    this.deleteHandlerRef = this.handleFileDelete;
+    this.app.vault.on("delete", this.deleteHandlerRef);
   }
 
   // 添加getPath方法
@@ -75,11 +85,26 @@ export class StatsMdStore {
     return this.getStatsMdPath();
   }
 
+  // 注册回调：当累加器发生变化时通知 WordCountStats 设置 dirty 标志
+  public registerAccumulatorChangedCallback(cb: () => void): void {
+    this.onAccumulatorChangedRef = cb;
+  }
+
+  // 获取当天失效链接的累计计数（用于状态栏和热力图显示）
+  public getTodaysBrokenLinksCount(): number {
+    const today = window.moment().format("YYYY-MM-DD");
+    return this.brokenLinksAccumulator.countsByDate[today] ?? 0;
+  }
+
   // 添加清理方法
-  cleanup(): void {
+	cleanup(): void {
     if (this.renameHandlerRef) {
       this.app.vault.off("rename", this.renameHandlerRef);
       this.renameHandlerRef = null;
+    }
+    if (this.deleteHandlerRef) {
+      this.app.vault.off("delete", this.deleteHandlerRef);
+      this.deleteHandlerRef = null;
     }
     this.filePathToRowId.clear();
     this.fileLastModified.clear();
@@ -128,24 +153,67 @@ export class StatsMdStore {
     this.filePathToRowId.clear();
     this.fileLastModified.clear();
 
+    const today = window.moment().format("YYYY-MM-DD");
+
     const dayCounts: Record<string, number> = {};
     model.dates.forEach((date) => {
       let total = 0;
       model.noteRows.forEach((row) => {
+        if (row.rowId === BROKEN_LINKS_KEY) return; // broken links 行单独处理
         const raw = row.countsByDate[date] ?? 0;
         total += raw;
       });
       dayCounts[date] = total;
     });
 
+    // 对于历史日期，broken links 行的 countsByDate 应包含在 dayCounts 中
+    // 对于今天，需要处理三种情况：
+    // 1. broken links 行没有今天的 countsByDate（新建行时）：累加器的值已在行中，不重复加
+    // 2. broken links 行有今天的 countsByDate（已合并过）：行已有值，不再加累加器
+    // 3. 只有在行没有今天的 countsByDate 时，才从累加器取值
+    let rowHasToday = false;
+    model.noteRows.forEach((row) => {
+      if (row.rowId !== BROKEN_LINKS_KEY) return;
+      model.dates.forEach((date) => {
+        const raw = row.countsByDate[date] ?? 0;
+        if (date === today) {
+          rowHasToday = true;
+        } else {
+          dayCounts[date] = (dayCounts[date] ?? 0) + raw;
+        }
+      });
+    });
+    if (!rowHasToday) {
+      // 行没有今天的 countsByDate，才从累加器取值
+      dayCounts[today] = (dayCounts[today] ?? 0) + (this.brokenLinksAccumulator.countsByDate[today] ?? 0);
+    }
+
     const todaysWordCount: Record<string, WordCount> = {};
     model.noteRows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
-      if (!file) return;
+
+      if (!file) {
+        // For new rows created by buildTemplate, the noteLink may be resolvable
+        // via the raw path in the link. Try to use the noteLink itself as the path.
+        let path = row.noteLink;
+        if (path.startsWith("[[") && path.endsWith("]]") && path.length > 4) {
+          path = path.slice(2, -2);
+        }
+        const normalizedPath = normalizePathForStorage(path);
+        if (!normalizedPath || row.rowId === BROKEN_LINKS_KEY) return;
+
+        const initial = row.initialCount ?? 0;
+        const current = row.currentCount ?? 0;
+
+        todaysWordCount[normalizedPath] = { initial, current };
+        this.filePathToRowId.set(normalizedPath, row.rowId);
+        this.fileLastModified.set(normalizedPath, row.lastModified || Date.now());
+        return;
+      }
 
       const initial = row.initialCount ?? 0;
       const current = row.currentCount ?? 0;
-      const normalizedPath = this.normalizePathForStorage(file.path);
+      const normalizedPath = normalizePathForStorage(file.path);
 
       todaysWordCount[normalizedPath] = {
         initial: initial,
@@ -153,6 +221,20 @@ export class StatsMdStore {
       };
       this.filePathToRowId.set(normalizedPath, row.rowId);
       this.fileLastModified.set(normalizedPath, row.lastModified || Date.now());
+    });
+    // 处理外部删除的文件：将它们的 netChange 累加到 brokenLinksAccumulator
+    model.noteRows.forEach((row) => {
+      if (row.rowId === BROKEN_LINKS_KEY) return; // 跳过失效链接行本身
+      const file = this.resolveNoteLink(row.noteLink);
+      if (file) return; // 正常文件，跳过
+      // 文件不存在（外部删除），计算其 netChange
+      const initial = row.initialCount ?? 0;
+      const current = row.currentCount ?? 0;
+      const netChange = current - initial;
+      if (netChange !== 0) {
+        this.brokenLinksAccumulator.countsByDate[today] =
+          (this.brokenLinksAccumulator.countsByDate[today] ?? 0) + netChange;
+      }
     });
 
     return {
@@ -213,25 +295,57 @@ export class StatsMdStore {
     this.filePathToRowId.clear();
     this.fileLastModified.clear();
 
+    const today = window.moment().format("YYYY-MM-DD");
+
     const dayCounts: Record<string, number> = {};
     model.dates.forEach((date) => {
       let total = 0;
       model.noteRows.forEach((row) => {
+        if (row.rowId === BROKEN_LINKS_KEY) return; // broken links 行单独处理
         const raw = row.countsByDate[date] ?? 0;
         total += raw;
       });
       dayCounts[date] = total;
     });
 
+    // 对于历史日期，broken links 行的 countsByDate 应包含在 dayCounts 中
+    model.noteRows.forEach((row) => {
+      if (row.rowId !== BROKEN_LINKS_KEY) return;
+      model.dates.forEach((date) => {
+        const raw = row.countsByDate[date] ?? 0;
+        if (date !== today) {
+          dayCounts[date] = (dayCounts[date] ?? 0) + raw;
+        }
+      });
+    });
+
     const todaysWordCount: Record<string, WordCount> = {};
     model.noteRows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
-      if (!file) return;
+
+      if (!file) {
+        // For new rows created by buildTemplate, the noteLink may be resolvable
+        // via the raw path in the link. Try to use the noteLink itself as the path.
+        let path = row.noteLink;
+        if (path.startsWith("[[") && path.endsWith("]]") && path.length > 4) {
+          path = path.slice(2, -2);
+        }
+        const normalizedPath = normalizePathForStorage(path);
+        if (!normalizedPath || row.rowId === BROKEN_LINKS_KEY) return;
+
+        const initial = row.initialCount ?? 0;
+        const current = row.currentCount ?? 0;
+
+        todaysWordCount[normalizedPath] = { initial, current };
+        this.filePathToRowId.set(normalizedPath, row.rowId);
+        this.fileLastModified.set(normalizedPath, row.lastModified || Date.now());
+        return;
+      }
 
       // 从解析的表格数据中获取initial和current值
       const initial = row.initialCount ?? 0;
       const current = row.currentCount ?? 0;
-      const normalizedPath = this.normalizePathForStorage(file.path);
+      const normalizedPath = normalizePathForStorage(file.path);
 
       todaysWordCount[normalizedPath] = {
         initial: initial,
@@ -239,6 +353,22 @@ export class StatsMdStore {
       };
       this.filePathToRowId.set(normalizedPath, row.rowId);
       this.fileLastModified.set(normalizedPath, row.lastModified || Date.now());
+    });
+
+    // 处理外部删除的文件：将它们的 netChange 累加到 brokenLinksAccumulator
+    // 这些是 stats.md 中存在但文件已不存在的行
+    model.noteRows.forEach((row) => {
+      if (row.rowId === BROKEN_LINKS_KEY) return; // 跳过失效链接行本身
+      const file = this.resolveNoteLink(row.noteLink);
+      if (file) return; // 正常文件，跳过
+      // 文件不存在（外部删除），计算其 netChange
+      const initial = row.initialCount ?? 0;
+      const current = row.currentCount ?? 0;
+      const netChange = current - initial;
+      if (netChange !== 0) {
+        this.brokenLinksAccumulator.countsByDate[today] =
+          (this.brokenLinksAccumulator.countsByDate[today] ?? 0) + netChange;
+      }
     });
 
     return {
@@ -277,7 +407,7 @@ export class StatsMdStore {
       rowById.set(normalized.rowId, normalized);
       const file = this.resolveNoteLink(normalized.noteLink);
       if (file) {
-        const normalizedPath = this.normalizePathForStorage(file.path);
+        const normalizedPath = normalizePathForStorage(file.path);
         rowByPath.set(normalizedPath, normalized);
         this.filePathToRowId.set(normalizedPath, normalized.rowId);
       }
@@ -292,14 +422,54 @@ export class StatsMdStore {
       });
     }
 
-    // apply current-day values from runtime settings
+	// apply current-day values from runtime settings
+    // 先收集需要删除的键，避免在迭代中修改对象
+    const keysToDelete: string[] = [];
     Object.entries(settings.todaysWordCount ?? {}).forEach(([filePath, wordCount]) => {
-      const target = this.app.vault.getAbstractFileByPath(filePath);
+      // 使用 normalizePathForStorage 确保路径格式一致（正斜杠，无 .md 后缀）
+      // Obsidian 的 getAbstractFileByPath 可以处理正斜杠格式的路径
+      const filePathKey = normalizePathForStorage(filePath);
+      const target = this.app.vault.getAbstractFileByPath(filePathKey);
       if (!(target instanceof TFile)) {
+        // getAbstractFileByPath 找不到文件
+        // 检查是否在 existingModel.noteRows 中有记录（通过 resolveNoteLink 判断）
+        const existingRowId = this.filePathToRowId.get(filePathKey);
+        if (existingRowId) {
+          // 在 noteRows 中有记录：检查 resolveNoteLink 是否能解析
+          // 如果能解析，说明文件实际存在，只是 getAbstractFileByPath 因路径编码问题找不到
+          // 此时应该更新该行的数据，而不是路由到 broken links
+          const rowFromId = rowById.get(existingRowId);
+          const rowFromPath = rowByPath.get(filePathKey);
+          const existingRow = rowFromId ?? rowFromPath;
+
+          if (existingRow) {
+            // resolveNoteLink 已经在 first loop 中成功获取文件，更新该行
+            existingRow.initialCount = wordCount.initial;
+            existingRow.currentCount = wordCount.current;
+            existingRow.countsByDate[today] = wordCount.current - wordCount.initial;
+            existingRow.lastModified = Date.now();
+            // 确保 rowByPath 也有该记录
+            rowByPath.set(filePathKey, existingRow);
+            return;
+          }
+
+          // 真的找不到文件 → 累加到 broken links
+          const netChange = wordCount.current - wordCount.initial;
+          if (netChange !== 0) {
+            this.brokenLinksAccumulator.countsByDate[today] =
+              (this.brokenLinksAccumulator.countsByDate[today] ?? 0) + netChange;
+            if (this.onAccumulatorChangedRef) {
+              this.onAccumulatorChangedRef();
+            }
+          }
+          keysToDelete.push(filePath);
+          return;
+        }
+        // 不在 noteRows 中 → 新文件，让第二循环处理
         return;
       }
 
-      const normalizedPath = this.normalizePathForStorage(target.path);
+      const normalizedPath = normalizePathForStorage(target.path);
       const knownRowId = this.filePathToRowId.get(normalizedPath);
       let row = (knownRowId ? rowById.get(knownRowId) : undefined) ?? rowByPath.get(normalizedPath);
 
@@ -314,9 +484,9 @@ export class StatsMdStore {
           currentCount: wordCount.current,
         };
       } else {
-        // 既有行：保留旧的 Initial（历史数据），只更新 Current
-        // ✅ 关键修复：不覆盖 initialCount，只更新 currentCount
-        row.initialCount = row.initialCount ?? wordCount.initial;
+        // 既有行：直接使用 wordCount.initial（已包含 Shock 处理）
+        // ✅ 关键修复：移除 ?? 运算符，因为 isFirstWriteForToday 时 row.initialCount 被重置为 0，需要用 wordCount.initial 覆盖
+        row.initialCount = wordCount.initial;
         row.currentCount = wordCount.current;
         row.lastModified = this.getFileLastModified(target.path);
       }
@@ -329,6 +499,86 @@ export class StatsMdStore {
       rowByPath.set(normalizedPath, row);
       this.filePathToRowId.set(normalizedPath, row.rowId);
     });
+
+    // Handle new files that getAbstractFileByPath couldn't resolve (path encoding issues)
+    // Create rows for them using their path directly
+    // IMPORTANT: On subsequent saves, resolveNoteLink might succeed (finding the row in existingModel)
+    // but getAbstractFileByPath still fails. We must check rowById to avoid creating duplicate rows.
+    Object.entries(settings.todaysWordCount ?? {}).forEach(([filePath, wordCount]) => {
+      if (keysToDelete.includes(filePath)) return; // Already handled (was a known file that's now deleted)
+
+      const filePathKey = normalizePathForStorage(filePath);
+
+      // Check if row was already created in the loop above (first loop or previous iteration)
+      const existingRowByPath = rowByPath.get(filePathKey);
+      if (existingRowByPath) {
+        // Update existing row's counts
+        existingRowByPath.initialCount = wordCount.initial;
+        existingRowByPath.currentCount = wordCount.current;
+        existingRowByPath.countsByDate[today] = wordCount.current - wordCount.initial;
+        existingRowByPath.lastModified = Date.now();
+        return;
+      }
+
+      // Also check rowById for entries that might have been added from existingModel.noteRows
+      // (when resolveNoteLink succeeded but getAbstractFileByPath failed in first loop)
+      const existingRowById = rowById.get(this.filePathToRowId.get(filePathKey) ?? '');
+      if (existingRowById) {
+        // Update existing row's counts
+        existingRowById.initialCount = wordCount.initial;
+        existingRowById.currentCount = wordCount.current;
+        existingRowById.countsByDate[today] = wordCount.current - wordCount.initial;
+        existingRowById.lastModified = Date.now();
+        // Also add to rowByPath for future lookups
+        rowByPath.set(filePathKey, existingRowById);
+        return;
+      }
+
+      const netChange = wordCount.current - wordCount.initial;
+
+      // Create new row for this file using the path directly
+      const row = {
+        rowId: this.createRowId(filePathKey),
+        noteLink: `[[${filePathKey}]]`,
+        countsByDate: {},
+        lastModified: Date.now(),
+        initialCount: wordCount.initial,
+        currentCount: wordCount.current,
+      };
+      row.countsByDate[today] = netChange;
+      rowById.set(row.rowId, row);
+      rowByPath.set(filePathKey, row);
+      // Don't set filePathToRowId - these are new files not originally in stats.md
+    });
+
+    // 统一删除已不存在文件的条目，避免在迭代中修改对象
+    for (const filePath of keysToDelete) {
+      delete settings.todaysWordCount[filePath];
+    }
+
+    // Merge brokenLinksAccumulator into existing or new broken links row
+    const existingBrokenLinksRow = rowById.get(BROKEN_LINKS_KEY);
+    const todayIncrement = this.brokenLinksAccumulator.countsByDate[today] ?? 0;
+    if (existingBrokenLinksRow) {
+      if (todayIncrement !== 0) {
+        existingBrokenLinksRow.countsByDate[today] =
+          (existingBrokenLinksRow.countsByDate[today] ?? 0) + todayIncrement;
+      }
+      delete this.brokenLinksAccumulator.countsByDate[today];
+    } else {
+      // 只有在没有现有失效链接行时才创建新行
+      const brokenLinksRow: NoteTableRow = {
+        rowId: BROKEN_LINKS_KEY,
+        noteLink: BROKEN_LINKS_KEY,
+        countsByDate: { ...this.brokenLinksAccumulator.countsByDate },
+        lastModified: Date.now(),
+        initialCount: 0,
+        currentCount: 0,
+      };
+      rowById.set(BROKEN_LINKS_KEY, brokenLinksRow);
+    }
+    // 无论是否有现有行，都清空累加器以避免下次重复累加
+    this.brokenLinksAccumulator.countsByDate = {};
 
     const noteRows = this.dedupeRows([...rowById.values()]);
 
@@ -373,19 +623,32 @@ export class StatsMdStore {
 
     const rows: string[] = [];
 
-    // Add POMO row
+	// Add POMO row
     const pomoCells = ["🍅 POMO", "", "", ...dates.map((date) => String(pomoByDate[date] ?? 0))];
     rows.push(`| ${pomoCells.join(" | ")} |`);
 
-    // Add note rows
+    // Add broken links row (after POMO, before other notes)
+    const brokenLinksRow = noteRows.find(row => row.rowId === BROKEN_LINKS_KEY);
+    if (brokenLinksRow) {
+      const brokenLinksCells = [
+        BROKEN_LINKS_DISPLAY,
+        "",  // Initial - always empty for broken links
+        "",  // Current - always empty for broken links
+        ...dates.map((date) => String(brokenLinksRow.countsByDate[date] ?? 0)),
+      ];
+      rows.push(`| ${brokenLinksCells.join(" | ")} |`);
+    }
+
+    // Add note rows (skip broken links row)
     for (const row of noteRows) {
+      if (row.rowId === BROKEN_LINKS_KEY) continue;
       const file = this.resolveNoteLink(row.noteLink);
       let initial = row.initialCount ?? 0;
       let current = row.currentCount ?? 0;
 
       
       if (file) {
-        const normalizedPath = this.normalizePathForStorage(file.path);
+        const normalizedPath = normalizePathForStorage(file.path);
         const wordCount = this.settings.todaysWordCount?.[normalizedPath];
         if (wordCount) {
           initial = wordCount.initial;
@@ -400,7 +663,7 @@ export class StatsMdStore {
         ...dates.map((date) => {
           // 对于当前日期，显示净变化（允许负数）；对于历史日期，显示存储的值
           if (date === today) {
-            const normalizedPath = file ? this.normalizePathForStorage(file.path) : null;
+            const normalizedPath = file ? normalizePathForStorage(file.path) : null;
             if (!file || !this.settings.todaysWordCount?.[normalizedPath]) {
               return "0";
             }
@@ -417,16 +680,56 @@ export class StatsMdStore {
     return [headerRow, separatorRow, ...rows].join("\n");
   }
 
-  private handleRename = (file: TAbstractFile, oldPath: string): void => {
+	private handleRename = (file: TAbstractFile, oldPath: string): void => {
     if (!(file instanceof TFile)) return;
 
-    const normalizedOldPath = this.normalizePathForStorage(oldPath);
-    const normalizedNewPath = this.normalizePathForStorage(file.path);
+    const normalizedOldPath = normalizePathForStorage(oldPath);
+    const normalizedNewPath = normalizePathForStorage(file.path);
     const rowId = this.filePathToRowId.get(normalizedOldPath);
     if (!rowId) return;
 
     this.filePathToRowId.delete(normalizedOldPath);
     this.filePathToRowId.set(normalizedNewPath, rowId);
+
+    const oldLastModified = this.fileLastModified.get(normalizedOldPath);
+    if (oldLastModified !== undefined) {
+      this.fileLastModified.delete(normalizedOldPath);
+      this.fileLastModified.set(normalizedNewPath, oldLastModified);
+    }
+
+    // 更新 todaysWordCount 中对应文件的路径键，避免后续 save() 时查找失败
+    const wordCountData = this.settings.todaysWordCount[normalizedOldPath];
+    if (wordCountData) {
+      delete this.settings.todaysWordCount[normalizedOldPath];
+      this.settings.todaysWordCount[normalizedNewPath] = wordCountData;
+    }
+  };
+
+  private handleFileDelete = (file: TAbstractFile): void => {
+    if (!(file instanceof TFile) || file.extension !== "md") {
+      return;
+    }
+
+    const normalizedPath = normalizePathForStorage(file.path);
+    const fileData = this.settings.todaysWordCount[normalizedPath];
+    if (!fileData) {
+      return;
+    }
+
+    const today = window.moment().format("YYYY-MM-DD");
+    const netChange = fileData.current - fileData.initial;
+
+    this.brokenLinksAccumulator.countsByDate[today] =
+      (this.brokenLinksAccumulator.countsByDate[today] ?? 0) + netChange;
+
+    delete this.settings.todaysWordCount[normalizedPath];
+    this.filePathToRowId.delete(normalizedPath);
+    this.fileLastModified.delete(normalizedPath);
+
+    // 通知 WordCountStats 设置 dirty 标志，以确保删除被持久化
+    if (this.onAccumulatorChangedRef) {
+      this.onAccumulatorChangedRef();
+    }
   };
 
   private dedupeRows(rows: NoteTableRow[]): NoteTableRow[] {
@@ -435,7 +738,7 @@ export class StatsMdStore {
     rows.forEach((row) => {
       const file = this.resolveNoteLink(row.noteLink);
       // 使用规范化后的路径作为 key
-      const normalizedPath = file ? this.normalizePathForStorage(file.path) : null;
+      const normalizedPath = file ? normalizePathForStorage(file.path) : null;
       const key = normalizedPath ? `file:${normalizedPath}` : `link:${row.noteLink}`;
 
       // 获取文件的最后修改时间进行比较
@@ -506,6 +809,26 @@ export class StatsMdStore {
         continue;
       }
 
+      if (label === BROKEN_LINKS_DISPLAY || label === BROKEN_LINKS_KEY) {
+        const row: NoteTableRow = {
+          rowId: BROKEN_LINKS_KEY,
+          noteLink: label === BROKEN_LINKS_DISPLAY ? BROKEN_LINKS_KEY : label,
+          countsByDate: {},
+          lastModified: Date.now(),
+          initialCount: 0,
+          currentCount: 0,
+        };
+
+        dates.forEach((date, idx) => {
+          const raw = Number(cells[idx + 3]);
+          if (Number.isFinite(raw)) {
+            row.countsByDate[date] = raw;
+          }
+        });
+        noteRows.push(row);
+        continue;
+      }
+
       const row: NoteTableRow = {
         rowId: this.getRowIdFromLink(label, i),
         noteLink: label,
@@ -558,7 +881,7 @@ export class StatsMdStore {
   private getRowIdFromLink(link: string, index: number): string {
     const file = this.resolveNoteLink(link);
     if (file) {
-      return this.normalizePathForStorage(file.path);
+      return normalizePathForStorage(file.path);
     }
     return `row-${index}-${link}`;
   }
@@ -572,10 +895,14 @@ export class StatsMdStore {
     }
 
     // 尝试多种路径变体以兼容不同格式
+    const osPath = convertToOsPath(path);
     const pathVariants = [
       path,
+      osPath,
       path + ".md",
+      osPath + ".md",
       path.endsWith(".md") ? path.slice(0, -3) : path,
+      osPath.endsWith(".md") ? osPath.slice(0, -3) : osPath,
     ];
 
     for (const variant of pathVariants) {
@@ -587,18 +914,9 @@ export class StatsMdStore {
     return null;
   }
 
-  // 统一路径格式：移除 .md 后缀，用于 Map key 和存储
-  // 注意：只移除末尾的 .md，且确保它确实是扩展名而非文件名的一部分
-  private normalizePathForStorage(filePath: string): string {
-    if (filePath.endsWith(".md") && filePath.length > 3) {
-      return filePath.slice(0, -3);
-    }
-    return filePath;
-  }
-
   private toNoteLink(file: TFile): string {
     // 使用不带 .md 后缀的 Obsidian 内部链接格式，保持与 Obsidian 官方一致
-    return `[[${this.normalizePathForStorage(file.path)}]]`;
+    return `[[${normalizePathForStorage(file.path)}]]`;
   }
 
   private createRowId(filePath: string): string {

@@ -31,6 +31,8 @@ jest.mock("../io/statsMdStore", () => ({
       todaysAggregate: { total: 0, byFile: {} },
     }));
     cleanup = jest.fn();
+    registerAccumulatorChangedCallback = jest.fn();
+    getTodaysBrokenLinksCount = jest.fn(() => 0);
     getTodaysWordCountAggregate = jest.fn((data: Record<string, { initial: number; current: number }>) => {
       let total = 0;
       const byFile: Record<string, { displayDelta: number }> = {};
@@ -190,7 +192,7 @@ describe("WordCountStats core logic", () => {
 
     await stats.initializeActiveFileWordCount();
 
-    expect(stats.settings.todaysWordCount["Daily/today.md"]).toEqual({
+    expect(stats.settings.todaysWordCount["Daily/today"]).toEqual({
       initial: 2,
       current: 2,
     });
@@ -212,7 +214,7 @@ describe("WordCountStats core logic", () => {
     await stats.transitionToNewDay(today);
 
     expect(stats.settings.todaysWordCount).toEqual({
-      "Daily/active.md": { initial: 1, current: 1 },
+      "Daily/active": { initial: 1, current: 1 },
     });
     expect(stats.today).toBe(today);
   });
@@ -234,11 +236,11 @@ describe("WordCountStats core logic", () => {
       };
     });
 
-    stats.settings.todaysWordCount = { "Daily/a.md": { initial: 1, current: 2 } };
+    stats.settings.todaysWordCount = { "Daily/a": { initial: 1, current: 2 } };
     stats.dirty = true;
     const runningSave = stats.saveSettings();
     await Promise.resolve();
-    stats.settings.todaysWordCount["Daily/a.md"] = { initial: 1, current: 3 };
+    stats.settings.todaysWordCount["Daily/a"] = { initial: 1, current: 3 };
     stats.dirty = true;
     void stats.saveSettings();
 
@@ -246,7 +248,7 @@ describe("WordCountStats core logic", () => {
     resolveFirstSave?.(null);
     await runningSave;
     expect(stats.dirty).toBe(false);
-    expect(captured[0].todaysWordCount["Daily/a.md"].current).toBe(2);
+    expect(captured[0].todaysWordCount["Daily/a"].current).toBe(2);
   });
 
   test("initialize seeds active file baseline without requiring leaf change", async () => {
@@ -265,7 +267,7 @@ describe("WordCountStats core logic", () => {
     await stats.initialize();
     await Promise.resolve();
 
-    expect(stats.settings.todaysWordCount["Daily/startup.md"]).toEqual({
+    expect(stats.settings.todaysWordCount["Daily/startup"]).toEqual({
       initial: 2,
       current: 2,
     });
@@ -305,7 +307,7 @@ describe("WordCountStats core logic", () => {
     await stats.loadSettings();
     await Promise.resolve();
 
-    expect(stats.settings.todaysWordCount["Daily/active.md"]).toEqual({
+    expect(stats.settings.todaysWordCount["Daily/active"]).toEqual({
       initial: 1,
       current: 1,
     });
@@ -367,13 +369,13 @@ describe("WordCountStats core logic", () => {
     stats.debouncedSave = jest.fn();
     stats.isDayTransitioning = true;
 
-    stats.updateStore("Daily/buffered.md", 10);
-    expect(stats.settings.todaysWordCount["Daily/buffered.md"]).toBeUndefined();
-    expect(stats.bufferedUpdatesDuringTransition.get("Daily/buffered.md")).toBe(10);
+    stats.updateStore("Daily/buffered", 10);
+    expect(stats.settings.todaysWordCount["Daily/buffered"]).toBeUndefined();
+    expect(stats.bufferedUpdatesDuringTransition.get("Daily/buffered")).toBe(10);
 
     stats.isDayTransitioning = false;
     stats.replayBufferedUpdatesAfterTransition();
     expect(updateCountsSpy).toHaveBeenCalled();
-    expect(stats.settings.todaysWordCount["Daily/buffered.md"]).toEqual({ initial: 10, current: 10 });
+    expect(stats.settings.todaysWordCount["Daily/buffered"]).toEqual({ initial: 10, current: 10 });
   });
 });

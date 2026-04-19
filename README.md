@@ -35,6 +35,8 @@ Your time management command center.
 -   **Smart Threshold Filter**: Implements shock detection to prevent abnormal jumps in word counts from distorting statistics.
 -   **Persistent Storage**: Uses a single `stats.md` file with tabular format to store all word count history.
 -   **Rename Resilience**: Handles file renames robustly with proper deduplication based on modification times.
+-   **Broken Links Organization**: When files are deleted or become inaccessible, their word count changes are tracked in a dedicated "Broken Links" row, ensuring daily totals remain accurate and consistent.
+-   **Ignore File Filtering**: Supports excluding specific files or patterns from word count tracking, perfect for filtering out large reference documents or temporary files.
 
 ### 🍅 4. Pomodoro Timer
 -   **Immersive Experience**: Status bar resident display (`🍅 25:00`), not occupying screen space.
@@ -77,6 +79,7 @@ The settings panel has been restructured to reflect strict hierarchical relation
         *   *Color Thresholds*: Customize colors representing your effort levels.
     *   **Storage Path**: Configure the location of the `stats.md` file.
     *   **Shock Threshold**: Set sensitivity for detecting significant word count changes.
+    *   **Ignore Files**: Configure file paths or patterns to exclude from word count tracking.
 
 4.  **Pomodoro Timer**
     *   **Timer Durations**: Customize work, break, and long break intervals.

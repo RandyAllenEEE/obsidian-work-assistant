@@ -1,6 +1,6 @@
 {
   "name": "work-assistant",
-  "version": "4.1.3",
+  "version": "4.2.0",
   "description": "A comprehensive productivity companion combining Calendar, Periodic Notes, and Word Count Heatmap features.",
   "author": "Randy Allen",
   "main": "main.js",
