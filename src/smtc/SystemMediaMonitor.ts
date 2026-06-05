@@ -9,8 +9,8 @@ import { type MediaCache } from "../ui/stores";
 import type CalendarPlugin from '../main';
 
 // Known hashes for verification
-const KNOWN_CS_HASH = "7FAF96ACAD4EB2AEB678548F34D2D90312E8F3DF66017F80F80EC2891F30C6C3";
-const KNOWN_EXE_HASH = "6D8A9657B5E44CDC5F65CC1050A76570F10967CB43E42CADCDA34ED6B72BD82E";
+const KNOWN_CS_HASH = "701249D897255F9D177A57BF93D3D5EF7252645109AA0ABBEE19910F35CC2F24";
+const KNOWN_EXE_HASH = "8ABBD5D999F0C621A3F7AB6CCB39C813548649CA16F65EC36444FF385634E0A2";
 
 export class SystemMediaMonitor extends Component {
     private process: ChildProcessWithoutNullStreams | null = null;
@@ -168,7 +168,7 @@ export class SystemMediaMonitor extends Component {
 
             this.process = spawn(this.bridgePath, ['monitor'], {
                 windowsHide: true,
-                stdio: ['ignore', 'pipe', 'pipe']
+                stdio: ['pipe', 'pipe', 'pipe']
             });
 
             this.process.stdout.on('data', (data: Buffer) => {
@@ -188,6 +188,7 @@ export class SystemMediaMonitor extends Component {
 
             this.process.on('error', (err) => {
                 console.error("[SMTC] Failed to spawn monitor:", err);
+                this.process = null;
             });
 
         } catch (e) {
@@ -242,6 +243,13 @@ export class SystemMediaMonitor extends Component {
 
     stopMonitoring(): void {
         if (this.process) {
+            try {
+                if (this.process.stdin.writable && !this.process.stdin.destroyed) {
+                    this.process.stdin.write('quit\n');
+                }
+            } catch {
+                // Ignore shutdown races.
+            }
             this.process.kill();
             this.process = null;
         }
@@ -251,6 +259,12 @@ export class SystemMediaMonitor extends Component {
         if (!Platform.isWin) return;
 
         const cmd = action.toLowerCase();
+
+        if (this.sendMonitorCommand(`control ${cmd}`)) {
+            return;
+        }
+
+        console.warn("[SMTC] Monitor stdin unavailable. Falling back to one-shot control process.");
 
         try {
             console.log(`[SMTC] Sending control: ${cmd}`);
@@ -274,6 +288,21 @@ export class SystemMediaMonitor extends Component {
 
         } catch (e) {
             console.error("[SMTC] Failed to control media:", e);
+        }
+    }
+
+    private sendMonitorCommand(command: string): boolean {
+        const stdin = this.process?.stdin;
+        if (!stdin || stdin.destroyed || !stdin.writable) {
+            return false;
+        }
+
+        try {
+            stdin.write(`${command}\n`);
+            return true;
+        } catch (e) {
+            console.error("[SMTC] Failed to write monitor command:", e);
+            return false;
         }
     }
 

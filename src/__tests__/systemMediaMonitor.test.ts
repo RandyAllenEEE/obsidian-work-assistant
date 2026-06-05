@@ -49,6 +49,20 @@ jest.mock("crypto", () => ({
 }));
 
 describe("SystemMediaMonitor process buffer", () => {
+  class MockChildProcess extends EventEmitter {
+    stdout = new EventEmitter();
+    stderr = new EventEmitter();
+    stdin = {
+      writable: true,
+      destroyed: false,
+      write: jest.fn(),
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   function readStoreValue<T>(store: { subscribe: (fn: (value: T) => void) => () => void }): T | undefined {
     let value: T | undefined;
     const unsubscribe = store.subscribe((v) => {
@@ -109,6 +123,36 @@ describe("SystemMediaMonitor process buffer", () => {
     monitor.processBuffer();
     expect(monitor.buffer).toBe("");
     expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  test("controlMedia writes to monitor stdin when available", () => {
+    const monitor = createMonitor();
+    const child = new MockChildProcess();
+    monitor.process = child;
+
+    monitor.controlMedia("Next");
+
+    expect(child.stdin.write).toHaveBeenCalledWith("control next\n");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("controlMedia falls back to one-shot process when stdin is unavailable", () => {
+    const monitor = createMonitor();
+    const monitorChild = new MockChildProcess();
+    monitorChild.stdin.writable = false;
+    monitor.process = monitorChild;
+    const fallbackChild = new MockChildProcess();
+    (spawn as jest.Mock).mockReturnValueOnce(fallbackChild as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    monitor.controlMedia("PlayPause");
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.stringContaining("SMTCBridge.exe"),
+      ["control", "playpause"],
+      expect.objectContaining({ windowsHide: true })
+    );
     warnSpy.mockRestore();
   });
 });
