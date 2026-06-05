@@ -1,6 +1,5 @@
 import { Notice } from 'obsidian';
 import { notificationUrl } from './audio_urls';
-import { WhiteNoiseService } from '../services/audio/WhiteNoiseService';
 import type CalendarPlugin from "../main";
 import { showNotification } from '../utils/notifications';
 import { t } from '../i18n';
@@ -27,7 +26,6 @@ export class Timer {
     autoPaused: boolean;
     pomosSinceStart: number;
     cyclesSinceLastAutoStop: number;
-    whiteNoiseService: WhiteNoiseService;
 
     constructor(plugin: CalendarPlugin) {
         this.plugin = plugin;
@@ -35,28 +33,7 @@ export class Timer {
         this.paused = false;
         this.pomosSinceStart = 0;
         this.cyclesSinceLastAutoStop = 0;
-
-        // Initialize WhiteNoiseService
-        this.whiteNoiseService = new WhiteNoiseService(plugin);
-        plugin.addChild(this.whiteNoiseService); // Register lifecycle
-
-        if (this.plugin.options.media?.whiteNoise === true) {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const { whiteNoiseUrl } = require('./audio_urls');
-            const url = this.plugin.options.media.backgroundNoiseFile || whiteNoiseUrl;
-            this.whiteNoiseService.initialize(url);
-        }
         this.loadState();
-    }
-
-    // Initialize white noise player properly if needed
-    initWhiteNoise(): void {
-        if (this.plugin.options.media?.whiteNoise === true) {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const { whiteNoiseUrl } = require('./audio_urls');
-            const url = this.plugin.options.media.backgroundNoiseFile || whiteNoiseUrl;
-            this.whiteNoiseService.initialize(url);
-        }
     }
 
     /*Set status bar to remaining time or empty string if no timer is running*/
@@ -118,10 +95,6 @@ export class Timer {
         this.endTime = window.moment(0);
         this.paused = false;
         this.pomosSinceStart = 0;
-
-        if (this.plugin.options.media.whiteNoise === true) {
-            this.whiteNoiseService.stop();
-        }
         // Clear cache
         await this.plugin.cacheManager.updateTimer(undefined);
     }
@@ -129,10 +102,6 @@ export class Timer {
     pauseTimer(): void {
         this.paused = true;
         this.pausedTime = this.getCountdown();
-
-        if (this.plugin.options.media.whiteNoise === true) {
-            this.whiteNoiseService.stop(); // or pause() if we want it to resume
-        }
         this.saveState();
     }
 
@@ -193,11 +162,6 @@ export class Timer {
         this.setStartAndEndTime(this.pausedTime);
         this.modeRestartingNotification();
         this.paused = false;
-
-        if (this.plugin.options.media.whiteNoise === true) {
-            this.initWhiteNoise();
-            this.whiteNoiseService.play();
-        }
         this.saveState();
     }
 
@@ -206,11 +170,6 @@ export class Timer {
         this.paused = false;
 
         this.modeStartingNotification();
-
-        if (this.plugin.options.media.whiteNoise === true) {
-            this.initWhiteNoise(); // Ensure URL is latest
-            this.whiteNoiseService.play();
-        }
         this.saveState();
     }
 

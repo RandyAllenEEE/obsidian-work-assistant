@@ -15,8 +15,7 @@ import {
   calendarYearIcon,
 } from "./periodic/icons";
 import { showFileMenu } from "./periodic/modal";
-import { SystemMediaMonitor } from "./smtc/SystemMediaMonitor";
-import { BrowserSMTC } from "./smtc/BrowserSMTC";
+import type { SystemMediaMonitor } from "./smtc/SystemMediaMonitor";
 
 import { ConfirmationModal } from "./ui/modal";
 import type { Granularity, PeriodicNotesConfig } from "./periodic/types";
@@ -104,7 +103,9 @@ export default class CalendarPlugin extends Plugin {
   public systemMediaMonitor: SystemMediaMonitor | null = null;
   private statusBarPlayer: StatusBarPlayer | null = null;
   private statusBarPlayerEl: HTMLElement | null = null;
-  private browserSMTC: BrowserSMTC | null = null;
+  private systemMediaStartTimer: number | null = null;
+  private systemMediaStartScheduled = false;
+  private systemMediaStartGeneration = 0;
   private settingsTab: CalendarSettingsTab;
 
   private getObsidianLanguage(): Language {
@@ -151,6 +152,8 @@ export default class CalendarPlugin extends Plugin {
     if (this.weatherService) {
       this.weatherService.unload();
     }
+
+    this.unloadSystemMedia();
   }
 
   async onload(): Promise<void> {
@@ -264,12 +267,6 @@ export default class CalendarPlugin extends Plugin {
       // Migration: If old pomodoro has systemMedia, migrate it?
       if (loadedData.pomodoro && typeof loadedData.pomodoro.systemMedia === 'boolean' && !loadedData.media) {
         finalSettings.media.enabled = loadedData.pomodoro.systemMedia;
-      }
-      if (loadedData.pomodoro && typeof loadedData.pomodoro.whiteNoise === 'boolean' && !loadedData.media) {
-        finalSettings.media.whiteNoise = loadedData.pomodoro.whiteNoise;
-      }
-      if (loadedData.pomodoro && typeof loadedData.pomodoro.backgroundNoiseFile === 'string' && !loadedData.media) {
-        finalSettings.media.backgroundNoiseFile = loadedData.pomodoro.backgroundNoiseFile;
       }
 
       // Migration: Locale Override (Moved from assistant.calendar -> assistant -> root)
@@ -613,43 +610,55 @@ export default class CalendarPlugin extends Plugin {
   }
 
   private initSystemMedia(): void {
-    if (!this.browserSMTC) {
-      import('./smtc/BrowserSMTC').then(({ BrowserSMTC }) => {
-        if (!this.options.media.enabled) return;
+    if (!Platform.isWin || this.systemMediaMonitor || this.systemMediaStartScheduled) return;
 
-        this.browserSMTC = new BrowserSMTC(this.timer.whiteNoiseService);
-        this.addChild(this.browserSMTC);
-        this.timer.whiteNoiseService.setSMTC(this.browserSMTC);
-      });
-    }
+    this.systemMediaStartScheduled = true;
+    const startGeneration = ++this.systemMediaStartGeneration;
+    this.app.workspace.onLayoutReady(() => {
+      if (startGeneration !== this.systemMediaStartGeneration || !this.options.media.enabled || this.systemMediaMonitor) {
+        this.systemMediaStartScheduled = false;
+        return;
+      }
 
-    if (Platform.isWin && !this.systemMediaMonitor) {
-      import('./smtc/SystemMediaMonitor').then(({ SystemMediaMonitor }) => {
-        if (!this.options.media.enabled) return;
+      this.systemMediaStartTimer = window.setTimeout(() => {
+        this.systemMediaStartTimer = null;
 
-        this.systemMediaMonitor = new SystemMediaMonitor(this, this.cacheManager);
-        this.addChild(this.systemMediaMonitor);
-
-        if (!this.statusBarPlayerEl) {
-          const el = this.addStatusBarItem();
-          this.statusBarPlayerEl = el;
-          this.statusBarPlayer = new StatusBarPlayer(el, this.systemMediaMonitor);
+        if (startGeneration !== this.systemMediaStartGeneration || !this.options.media.enabled || this.systemMediaMonitor) {
+          this.systemMediaStartScheduled = false;
+          return;
         }
 
-      }).catch((e: Error) => {
-        console.error("[Work Assistant] Error importing/initializing SystemMediaMonitor:", e);
-      });
+        import('./smtc/SystemMediaMonitor').then(({ SystemMediaMonitor }) => {
+          if (startGeneration !== this.systemMediaStartGeneration || !this.options.media.enabled || this.systemMediaMonitor) return;
+
+          this.systemMediaMonitor = new SystemMediaMonitor(this, this.cacheManager);
+          this.addChild(this.systemMediaMonitor);
+
+          if (!this.statusBarPlayerEl) {
+            const el = this.addStatusBarItem();
+            this.statusBarPlayerEl = el;
+            this.statusBarPlayer = new StatusBarPlayer(el, this.systemMediaMonitor);
+          }
+        }).catch((e: Error) => {
+          console.error("[Work Assistant] Error importing/initializing SystemMediaMonitor:", e);
+        }).then(() => {
+          this.systemMediaStartScheduled = false;
+        });
+      }, 1500);
+    });
+  }
+
+  private cancelSystemMediaStart(): void {
+    if (this.systemMediaStartTimer !== null) {
+      window.clearTimeout(this.systemMediaStartTimer);
+      this.systemMediaStartTimer = null;
     }
+    this.systemMediaStartScheduled = false;
+    this.systemMediaStartGeneration++;
   }
 
   private unloadSystemMedia(): void {
-    if (this.browserSMTC) {
-      this.removeChild(this.browserSMTC);
-      this.browserSMTC = null;
-    }
-    if (this.timer?.whiteNoiseService) {
-      this.timer.whiteNoiseService.setSMTC(null);
-    }
+    this.cancelSystemMediaStart();
 
     if (this.systemMediaMonitor) {
       this.removeChild(this.systemMediaMonitor);

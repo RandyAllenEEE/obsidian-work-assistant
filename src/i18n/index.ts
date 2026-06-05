@@ -180,10 +180,6 @@ export interface Translation {
   "settings-pomo-auto-cycles-desc": string;
   "settings-pomo-time-settings": string;
   "settings-notification-settings": string;
-  "settings-white-noise": string;
-  "settings-white-noise-desc": string;
-  "settings-pomo-background-noise": string;
-  "settings-pomo-background-noise-desc": string;
   "settings-notification-sound": string;
   "settings-notification-sound-desc": string;
   "settings-use-system-notification": string;

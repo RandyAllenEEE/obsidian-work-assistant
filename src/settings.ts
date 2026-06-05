@@ -80,8 +80,6 @@ export interface ISettings {
 
   media: {
     enabled: boolean;
-    whiteNoise: boolean;
-    backgroundNoiseFile: string;
     trustedExeHash?: string; // Hash of the locally compiled/verified exe
   };
 }
@@ -162,8 +160,6 @@ export const defaultSettings: ISettings = {
 
   media: {
     enabled: false,
-    whiteNoise: false,
-    backgroundNoiseFile: "",
     trustedExeHash: "",
   },
 };
@@ -937,7 +933,7 @@ Inbox/              # Folder prefix match (includes subfolders)
   addMediaSettings(lang: Language): void {
     const isWin = Platform.isWin;
     const title = t("media-control-title", lang);
-    const { enabled, whiteNoise, backgroundNoiseFile } = this.plugin.options.media;
+    const { enabled } = this.plugin.options.media;
 
     this.addCollapsibleSection(
       this.containerEl,
@@ -953,34 +949,6 @@ Inbox/              # Folder prefix match (includes subfolders)
         if (!isWin) {
           contentEl.createDiv({ text: "Media Control is currently only supported on Windows.", cls: "setting-item-description" });
         }
-
-        // White Noise (as a sub-collapsible section)
-        this.addCollapsibleSection(
-          contentEl,
-          t("settings-white-noise", lang),
-          whiteNoise,
-          (value) => {
-            this.plugin.writeOptions((old) => ({
-              ...old,
-              media: { ...old.media, whiteNoise: value }
-            }));
-          },
-          (subContentEl) => {
-            new Setting(subContentEl)
-              .setName(t("settings-pomo-background-noise", lang))
-              .setDesc(t("settings-pomo-background-noise-desc", lang))
-              .addText((text) => {
-                text.setValue(backgroundNoiseFile);
-                text.onChange(async (value) => {
-                  this.plugin.writeOptions((old) => ({
-                    ...old,
-                    media: { ...old.media, backgroundNoiseFile: value }
-                  }));
-                });
-              });
-          },
-          false // Default closed
-        );
       }
     );
   }

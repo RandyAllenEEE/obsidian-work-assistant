@@ -7,7 +7,8 @@
   "license": "MIT",
   "scripts": {
     "lint": "svelte-check && eslint . --ext .ts",
-    "build": "npm run lint && rollup -c",
+    "verify:smtc": "node scripts/verify-smtc-hashes.mjs",
+    "build": "npm run verify:smtc && npm run lint && rollup -c",
     "test": "jest --passWithNoTests",
     "test:watch": "yarn test -- --watch"
   },

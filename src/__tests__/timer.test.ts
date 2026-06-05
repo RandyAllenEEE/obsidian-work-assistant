@@ -10,15 +10,6 @@ jest.mock("obsidian", () => ({
   },
 }));
 
-jest.mock("../services/audio/WhiteNoiseService", () => ({
-  WhiteNoiseService: class {
-    initialize = jest.fn();
-    play = jest.fn();
-    stop = jest.fn();
-    setSMTC = jest.fn();
-  },
-}));
-
 jest.mock("../utils/notifications", () => ({
   showNotification: jest.fn(),
 }));
@@ -47,10 +38,7 @@ describe("Timer", () => {
           autoCycles: 0,
           notification: { sound: false, system: false },
         },
-        media: {
-          whiteNoise: false,
-          backgroundNoiseFile: "",
-        },
+        media: {},
       },
       addChild: jest.fn(),
       cacheManager: {
