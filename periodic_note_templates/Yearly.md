@@ -5,7 +5,7 @@ tags:
   - Yearly
 ---
 
-<< [[40_归档 Archives/0_记录/5_年记/{{year-1y:YYYY}}|⬅️ 去年]] | [[40_归档 Archives/0_记录/5_年记/{{year+1y:YYYY}}|明年 ➡️]] >>
+<< [[{{periodic:year:-1y}}|⬅️ 去年]] | [[{{periodic:year:+1y}}|明年 ➡️]] >>
 
 # 🌟 {{year:YYYY}} 年度概览
 

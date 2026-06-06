@@ -6,7 +6,7 @@ tags:
   - Monthly
 ---
 
-<< [[40_归档 Archives/0_记录/3_月记/{{month-1M:YYYY/YYYY-MM}}|⬅️ 上一月]] | [[40_归档 Archives/0_记录/3_月记/{{month+1M:YYYY/YYYY-MM}}|下一月 ➡️]] >>
+<< [[{{periodic:month:-1M}}|⬅️ 上一月]] | [[{{periodic:month:+1M}}|下一月 ➡️]] >>
 
 # 📅 {{month:YYYY-MM}} 月度概览
 

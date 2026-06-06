@@ -9,7 +9,7 @@ tags:
   - Daily
 ---
 
-<< [[40_归档 Archives/0_记录/1_日记/{{date-1d:YYYY/MM/YYYY-MM-DD-dddd}}|前一日]] | [[40_归档 Archives/0_记录/1_日记/{{date+1d:YYYY/MM/YYYY-MM-DD-dddd}}|后一日]] >>
+<< [[{{periodic:day:-1d}}|前一日]] | [[{{periodic:day:+1d}}|后一日]] >>
 
 # 📅计划概况
 

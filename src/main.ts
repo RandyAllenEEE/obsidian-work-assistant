@@ -23,7 +23,8 @@ import {
   isMetaPressed,
   getTemplateContents,
   applyTemplateTransformations,
-  getNoteCreationPath
+  getFormat,
+  getPeriodicNoteCreationPath
 } from "./periodic/utils";
 import type { PeriodicNoteCachedMetadata } from "./periodic/cache";
 
@@ -543,9 +544,9 @@ export default class CalendarPlugin extends Plugin {
   public async openPeriodicNote(
     granularity: Granularity,
     date: Moment,
-    opts?: { inNewSplit?: boolean }
+    opts?: { inNewSplit?: boolean; leaf?: WorkspaceLeaf }
   ): Promise<void> {
-    const { inNewSplit = false } = opts ?? {};
+    const { inNewSplit = false, leaf: preferredLeaf } = opts ?? {};
     const { workspace } = this.app;
     let file = this.cache.getPeriodicNote(
       granularity,
@@ -558,7 +559,7 @@ export default class CalendarPlugin extends Plugin {
 
     if (!file) return;
 
-    const leaf = inNewSplit ? workspace.splitActiveLeaf() : workspace.getUnpinnedLeaf();
+    const leaf = preferredLeaf ?? (inNewSplit ? workspace.splitActiveLeaf() : workspace.getUnpinnedLeaf());
     await leaf.openFile(file, { active: true });
   }
 
@@ -567,7 +568,7 @@ export default class CalendarPlugin extends Plugin {
     date: Moment
   ): Promise<TFile | null> {
     const config = (this.options.periodicNotes as PeriodicNotesConfig)[granularity];
-    const format = config.format;
+    const format = getFormat(this.options, granularity);
     const filename = date.format(format);
 
     if (this.options.assistant.calendar.shouldConfirmBeforeCreate) {
@@ -603,9 +604,10 @@ export default class CalendarPlugin extends Plugin {
       granularity,
       date,
       format,
-      templateContents
+      templateContents,
+      { settings: this.options }
     );
-    const destPath = await getNoteCreationPath(this.app, filename, config);
+    const destPath = await getPeriodicNoteCreationPath(this.app, this.options, granularity, date);
     return this.app.vault.create(destPath, renderedContents);
   }
 

@@ -7,11 +7,11 @@ tags:
   - Weekly
 ---
 
-<< [[40_归档 Archives/0_记录/2_周记/{{date-7d:gggg/gggg-[W]ww}}|⬅️ 上一周]] | [[40_归档 Archives/0_记录/2_周记/{{date+7d:gggg/gggg-[W]ww}}|下一周 ➡️]] >>
+<< [[{{periodic:week:-1w}}|⬅️ 上一周]] | [[{{periodic:week:+1w}}|下一周 ➡️]] >>
 
 # 📅 {{date:gggg-[W]ww}} 概览
 
-[[40_归档 Archives/0_记录/1_日记/{{monday:YYYY/MM/YYYY-MM-DD-dddd}}|周一 {{monday:MM-DD}}]] · [[40_归档 Archives/0_记录/1_日记/{{tuesday:YYYY/MM/YYYY-MM-DD-dddd}}|周二 {{tuesday:MM-DD}}]] · [[40_归档 Archives/0_记录/1_日记/{{wednesday:YYYY/MM/YYYY-MM-DD-dddd}}|周三 {{wednesday:MM-DD}}]] · [[40_归档 Archives/0_记录/1_日记/{{thursday:YYYY/MM/YYYY-MM-DD-dddd}}|周四 {{thursday:MM-DD}}]] · [[40_归档 Archives/0_记录/1_日记/{{friday:YYYY/MM/YYYY-MM-DD-dddd}}|周五 {{friday:MM-DD}}]] · [[40_归档 Archives/0_记录/1_日记/{{saturday:YYYY/MM/YYYY-MM-DD-dddd}}|周六 {{saturday:MM-DD}}]] · [[40_归档 Archives/0_记录/1_日记/{{sunday:YYYY/MM/YYYY-MM-DD-dddd}}|周日 {{sunday:MM-DD}}]]
+[[{{periodic:day:monday}}|周一 {{monday:MM-DD}}]] · [[{{periodic:day:tuesday}}|周二 {{tuesday:MM-DD}}]] · [[{{periodic:day:wednesday}}|周三 {{wednesday:MM-DD}}]] · [[{{periodic:day:thursday}}|周四 {{thursday:MM-DD}}]] · [[{{periodic:day:friday}}|周五 {{friday:MM-DD}}]] · [[{{periodic:day:saturday}}|周六 {{saturday:MM-DD}}]] · [[{{periodic:day:sunday}}|周日 {{sunday:MM-DD}}]]
 
 ## 🎯 本周核心
 

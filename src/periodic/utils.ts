@@ -1,4 +1,4 @@
-import type { Moment } from "moment";
+import type { Moment, unitOfTime } from "moment";
 import { FileSystemAdapter, normalizePath, Notice, Platform } from "obsidian";
 import type { App, TFile } from "obsidian";
 
@@ -18,6 +18,14 @@ export interface TemplateReadOptions {
   granularity?: Granularity;
   pluginDir?: string;
   pluginId?: string;
+}
+
+export interface PeriodicPathOptions {
+  extension?: boolean;
+}
+
+export interface TemplateTransformOptions {
+  settings?: ISettings;
 }
 
 export function isMetaPressed(e: MouseEvent | KeyboardEvent): boolean {
@@ -50,12 +58,91 @@ export function getDayOfWeekNumericalValue(dayOfWeekName: string): number {
   return getDaysOfWeek().indexOf(dayOfWeekName.toLowerCase());
 }
 
+function normalizeTemplateUnit(unit: string): string | null {
+  switch (unit) {
+    case "y":
+      return "year";
+    case "q":
+      return "quarter";
+    case "M":
+      return "month";
+    case "w":
+      return "week";
+    case "d":
+      return "day";
+    case "h":
+      return "hour";
+    case "m":
+      return "minute";
+    case "s":
+      return "second";
+    default:
+      return null;
+  }
+}
+
+function applyTemplateOffset(date: Moment, timeDelta?: string, unit?: string): Moment | null {
+  const currentDate = date.clone();
+  if (!timeDelta || !unit) {
+    return currentDate;
+  }
+
+  const normalizedUnit = normalizeTemplateUnit(unit);
+  if (!normalizedUnit) {
+    return null;
+  }
+
+  currentDate.add(parseInt(timeDelta, 10), normalizedUnit as unitOfTime.DurationConstructor);
+  return currentDate;
+}
+
+function resolveTemplateDate(baseDate: Moment, selector?: string): Moment | null {
+  const trimmed = selector?.trim();
+  if (!trimmed) {
+    return baseDate.clone();
+  }
+
+  const weekday = trimmed.toLowerCase();
+  if (["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes(weekday)) {
+    return baseDate.clone().weekday(getDayOfWeekNumericalValue(weekday));
+  }
+
+  const offsetMatch = /^([+-]\d+)([yqMwdhms])$/.exec(trimmed);
+  if (!offsetMatch) {
+    return null;
+  }
+
+  return applyTemplateOffset(baseDate, offsetMatch[1], offsetMatch[2]);
+}
+
+function renderDate(date: Moment, fallback: string, momentFormat?: string): string {
+  return momentFormat ? date.format(momentFormat.substring(1).trim()) : fallback;
+}
+
+export function resolvePeriodicNotePath(
+  settings: ISettings,
+  granularity: Granularity,
+  date: Moment,
+  options: PeriodicPathOptions = {}
+): string {
+  const config = getConfig(settings, granularity);
+  const format = getFormat(settings, granularity);
+  const directory = config.folder === "/" ? "" : config.folder ?? "";
+  const filename = date.format(format);
+  const filenameWithExt = options.extension && !filename.endsWith(".md")
+    ? `${filename}.md`
+    : filename;
+
+  return normalizePath(join(directory, filenameWithExt));
+}
+
 export function applyTemplateTransformations(
   filename: string,
   granularity: Granularity,
   date: Moment,
   format: string,
-  rawTemplateContents: string
+  rawTemplateContents: string,
+  options: TemplateTransformOptions = {}
 ): string {
   let templateContents = rawTemplateContents;
 
@@ -65,7 +152,7 @@ export function applyTemplateTransformations(
       return window.moment().format(momentFormat ? momentFormat.substring(1).trim() : "HH:mm");
     })
     .replace(
-      /{{\s*date\s*(([+-]\d+)([yqmwdhs]))?\s*(:.+?)?}}/gi,
+      /{{\s*date\s*(([+-]\d+)([yqMwdhms]))?\s*(:.+?)?}}/g,
       (_, calc, timeDelta, unit, momentFormat) => {
         const currentDate = date.clone().set({
           hour: window.moment().get("hour"),
@@ -73,13 +160,14 @@ export function applyTemplateTransformations(
           second: window.moment().get("second"),
         });
         if (calc) {
-          currentDate.add(parseInt(timeDelta, 10), unit);
+          const adjustedDate = applyTemplateOffset(currentDate, timeDelta, unit);
+          if (!adjustedDate) {
+            return _;
+          }
+          return renderDate(adjustedDate, filename, momentFormat);
         }
 
-        if (momentFormat) {
-          return currentDate.format(momentFormat.substring(1).trim());
-        }
-        return filename;
+        return renderDate(currentDate, filename, momentFormat);
       }
     );
 
@@ -101,7 +189,7 @@ export function applyTemplateTransformations(
 
   if (granularity === "month") {
     templateContents = templateContents.replace(
-      /{{\s*(month)\s*(([+-]\d+)([yqmwdhs]))?\s*(:.+?)?}}/gi,
+      /{{\s*(month)\s*(([+-]\d+)([yqMwdhms]))?\s*(:.+?)?}}/g,
       (_, _timeOrDate, calc, timeDelta, unit, momentFormat) => {
         const now = window.moment();
         const monthStart = date
@@ -113,20 +201,21 @@ export function applyTemplateTransformations(
             second: now.get("second"),
           });
         if (calc) {
-          monthStart.add(parseInt(timeDelta, 10), unit);
+          const adjustedDate = applyTemplateOffset(monthStart, timeDelta, unit);
+          if (!adjustedDate) {
+            return _;
+          }
+          return renderDate(adjustedDate, adjustedDate.format(format), momentFormat);
         }
 
-        if (momentFormat) {
-          return monthStart.format(momentFormat.substring(1).trim());
-        }
-        return monthStart.format(format);
+        return renderDate(monthStart, monthStart.format(format), momentFormat);
       }
     );
   }
 
   if (granularity === "quarter") {
     templateContents = templateContents.replace(
-      /{{\s*(quarter)\s*(([+-]\d+)([yqmwdhs]))?\s*(:.+?)?}}/gi,
+      /{{\s*(quarter)\s*(([+-]\d+)([yqMwdhms]))?\s*(:.+?)?}}/g,
       (_, _timeOrDate, calc, timeDelta, unit, momentFormat) => {
         const now = window.moment();
         const monthStart = date
@@ -138,20 +227,21 @@ export function applyTemplateTransformations(
             second: now.get("second"),
           });
         if (calc) {
-          monthStart.add(parseInt(timeDelta, 10), unit);
+          const adjustedDate = applyTemplateOffset(monthStart, timeDelta, unit);
+          if (!adjustedDate) {
+            return _;
+          }
+          return renderDate(adjustedDate, adjustedDate.format(format), momentFormat);
         }
 
-        if (momentFormat) {
-          return monthStart.format(momentFormat.substring(1).trim());
-        }
-        return monthStart.format(format);
+        return renderDate(monthStart, monthStart.format(format), momentFormat);
       }
     );
   }
 
   if (granularity === "year") {
     templateContents = templateContents.replace(
-      /{{\s*(year)\s*(([+-]\d+)([yqmwdhs]))?\s*(:.+?)?}}/gi,
+      /{{\s*(year)\s*(([+-]\d+)([yqMwdhms]))?\s*(:.+?)?}}/g,
       (_, _timeOrDate, calc, timeDelta, unit, momentFormat) => {
         const now = window.moment();
         const monthStart = date
@@ -163,16 +253,39 @@ export function applyTemplateTransformations(
             second: now.get("second"),
           });
         if (calc) {
-          monthStart.add(parseInt(timeDelta, 10), unit);
+          const adjustedDate = applyTemplateOffset(monthStart, timeDelta, unit);
+          if (!adjustedDate) {
+            return _;
+          }
+          return renderDate(adjustedDate, adjustedDate.format(format), momentFormat);
         }
 
-        if (momentFormat) {
-          return monthStart.format(momentFormat.substring(1).trim());
-        }
-        return monthStart.format(format);
+        return renderDate(monthStart, monthStart.format(format), momentFormat);
       }
     );
   }
+
+  templateContents = templateContents.replace(
+    /{{\s*periodic\s*:\s*([^:\s}]+)(?:\s*:\s*([^}]+?))?\s*}}/gi,
+    (match, targetGranularity, selector) => {
+      const settings = options.settings;
+      if (!settings) {
+        return match;
+      }
+
+      const normalizedGranularity = String(targetGranularity).toLowerCase() as Granularity;
+      if (!["day", "week", "month", "quarter", "year"].includes(normalizedGranularity)) {
+        return match;
+      }
+
+      const targetDate = resolveTemplateDate(date, selector);
+      if (!targetDate) {
+        return match;
+      }
+
+      return resolvePeriodicNotePath(settings, normalizedGranularity, targetDate, { extension: false });
+    }
+  );
 
   return templateContents;
 }
@@ -239,7 +352,8 @@ export async function applyPeriodicTemplateToFile(
     metadata.granularity,
     metadata.date,
     format,
-    templateContents
+    templateContents,
+    { settings }
   );
   return app.vault.modify(file, renderedContents);
 }
@@ -354,15 +468,13 @@ function getBundledTemplateCandidates(options: TemplateReadOptions): string[] {
   return Array.from(candidates);
 }
 
-export async function getNoteCreationPath(
+export async function getPeriodicNoteCreationPath(
   app: App,
-  filename: string,
-  periodicConfig: PeriodicConfig
+  settings: ISettings,
+  granularity: Granularity,
+  date: Moment
 ): Promise<string> {
-  const directory = periodicConfig.folder ?? "";
-  const filenameWithExt = !filename.endsWith(".md") ? `${filename}.md` : filename;
-
-  const path = normalizePath(join(directory, filenameWithExt));
+  const path = resolvePeriodicNotePath(settings, granularity, date, { extension: true });
   await ensureFolderExists(app, path);
   return path;
 }

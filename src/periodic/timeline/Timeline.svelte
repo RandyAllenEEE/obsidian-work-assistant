@@ -53,13 +53,7 @@
     granularity: Granularity,
     date: Moment,
   ) {
-    let file = cache.getPeriodicNote(granularity, date);
-    if (!file) {
-      file = await plugin.createPeriodicNote(granularity, date);
-    }
-    if (file) {
-      await view.leaf.openFile(file, { active: true });
-    }
+    await plugin.openPeriodicNote(granularity, date, { leaf: view.leaf });
   }
 
   function updateComplicationVisibility() {

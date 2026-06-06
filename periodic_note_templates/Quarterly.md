@@ -6,7 +6,7 @@ tags:
   - Quarterly
 ---
 
-<< [[40_归档 Archives/0_记录/4_季度/{{quarter-3M:YYYY/YYYY-[Q]Q}}|⬅️ 上一季度]] | [[40_归档 Archives/0_记录/4_季度/{{quarter+3M:YYYY/YYYY-[Q]Q}}|下一季度 ➡️]] >>
+<< [[{{periodic:quarter:-3M}}|⬅️ 上一季度]] | [[{{periodic:quarter:+3M}}|下一季度 ➡️]] >>
 
 # 🚀 {{quarter:YYYY-[Q]Q}} 季度规划
 
