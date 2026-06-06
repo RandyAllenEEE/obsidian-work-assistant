@@ -9,6 +9,37 @@ import * as path from "path";
 
 const DIST_DIR = "dist";
 
+function copyDirectory(src, dest) {
+  if (!fs.existsSync(src)) return;
+
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+
+  fs.readdirSync(src, { withFileTypes: true }).forEach((entry) => {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectory(srcPath, destPath);
+      return;
+    }
+
+    if (entry.isFile()) {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  });
+}
+
+function isSvelteCircularDependency(warning) {
+  if (warning.code !== "CIRCULAR_DEPENDENCY") return false;
+  const ids = Array.isArray(warning.ids) ? warning.ids : [];
+  if (ids.length > 0) {
+    return ids.every((id) => id.includes("node_modules/svelte/"));
+  }
+  return typeof warning.message === "string" && warning.message.includes("node_modules/svelte/");
+}
+
 function copyAssets() {
   return {
     name: "copy-assets",
@@ -27,20 +58,8 @@ function copyAssets() {
         fs.copyFileSync("styles.css", path.join(DIST_DIR, "styles.css"));
       }
 
-      // Copy bin directory (recursive logic not needed if flat, but safer to check)
-      const binSrc = "bin";
-      const binDest = path.join(DIST_DIR, "bin");
-      if (fs.existsSync(binSrc)) {
-        if (!fs.existsSync(binDest)) fs.mkdirSync(binDest, { recursive: true });
-        fs.readdirSync(binSrc).forEach(file => {
-          const srcFile = path.join(binSrc, file);
-          const destFile = path.join(binDest, file);
-          // Simple file copy, ignoring nested folders for now as bin/ structure is usually flat
-          if (fs.statSync(srcFile).isFile()) {
-            fs.copyFileSync(srcFile, destFile);
-          }
-        });
-      }
+      copyDirectory("bin", path.join(DIST_DIR, "bin"));
+      copyDirectory("periodic_note_templates", path.join(DIST_DIR, "periodic_note_templates"));
 
       console.log(`[Build] Output generated in ${DIST_DIR}/`);
     }
@@ -56,6 +75,10 @@ export default {
     inlineDynamicImports: true,
   },
   external: ["obsidian", "fs", "os", "path", "child_process"],
+  onwarn(warning, warn) {
+    if (isSvelteCircularDependency(warning)) return;
+    warn(warning);
+  },
   plugins: [
     svelte({
       emitCss: false,

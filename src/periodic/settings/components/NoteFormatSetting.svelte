@@ -5,7 +5,6 @@
   import type { Granularity, PeriodicConfig } from "src/periodic/types";
   import { validateFormat, validateFormatComplexity } from "../validation";
   import type { Readable } from "svelte/store";
-  import { displayConfigs } from "src/periodic/commands";
   import { t } from "src/i18n";
 
   export let granularity: Granularity;

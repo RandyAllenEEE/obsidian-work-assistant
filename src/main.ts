@@ -1,12 +1,12 @@
 import type { Moment, WeekSpec } from "moment";
 import { Plugin, addIcon, debounce, TFile, Platform } from "obsidian";
-import type { App, WorkspaceLeaf } from "obsidian";
+import type { App, ViewState, WorkspaceLeaf } from "obsidian";
 import type { Writable } from "svelte/store";
 
 import { getDateUID } from "obsidian-daily-notes-interface";
 import { PeriodicNotesCache } from "./periodic/cache";
 
-import { getCommands, displayConfigs } from "./periodic/commands";
+import { getCommands, getOpenPresentLabel } from "./periodic/commands";
 import {
   calendarDayIcon,
   calendarMonthIcon,
@@ -27,7 +27,12 @@ import {
 } from "./periodic/utils";
 import type { PeriodicNoteCachedMetadata } from "./periodic/cache";
 
-import { VIEW_TYPE_CALENDAR } from "./constants";
+import {
+  ASSISTANT_VIEW_DISPLAY_TEXT,
+  ASSISTANT_VIEW_DISPLAY_TEXT_ALIASES,
+  LEGACY_VIEW_TYPE_CALENDAR,
+  VIEW_TYPE_ASSISTANT,
+} from "./constants";
 import { settings, dailyNotes, weeklyNotes } from "./ui/stores";
 import {
   CalendarSettingsTab,
@@ -41,6 +46,7 @@ import type { Language } from "./i18n";
 import { Timer, Mode } from "./pomo/timer";
 import { StatusBarPlayer } from "./ui/StatusBarPlayer";
 import { QWeatherService } from "./weather/QWeatherService";
+import { TaskSyncManager } from "./services/caldav/TaskSyncManager";
 
 declare global {
   interface Window {
@@ -89,9 +95,10 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
 export default class CalendarPlugin extends Plugin {
   public options: ISettings;
   public settings: Writable<ISettings>;
-  private view: CalendarView;
+  private view: CalendarView | null = null;
   public wordCountStats: WordCountStats | null = null;
   public weatherService: QWeatherService;
+  public taskSyncManager: TaskSyncManager | null = null;
   public cacheManager: CacheManager;
   private statusBarEl: HTMLElement;
   private pomoStatusBarEl: HTMLElement | null = null;
@@ -125,6 +132,7 @@ export default class CalendarPlugin extends Plugin {
       this.configurePomodoro();
       this.configureSystemMedia();
       this.configureWordCount();
+      await this.configureTaskSync();
       this.configurePeriodicNotes();
       this.configureAssistant();
 
@@ -137,9 +145,7 @@ export default class CalendarPlugin extends Plugin {
   );
 
   onunload(): void {
-    this.app.workspace
-      .getLeavesOfType(VIEW_TYPE_CALENDAR)
-      .forEach((leaf) => leaf.detach());
+    this.getAssistantLeaves().forEach((leaf) => leaf.detach());
 
     if (this.timer) {
       if (this.timer.mode !== Mode.NoTimer) {
@@ -151,6 +157,11 @@ export default class CalendarPlugin extends Plugin {
 
     if (this.weatherService) {
       this.weatherService.unload();
+    }
+
+    if (this.taskSyncManager) {
+      this.removeChild(this.taskSyncManager);
+      this.taskSyncManager = null;
     }
 
     this.unloadSystemMedia();
@@ -191,6 +202,9 @@ export default class CalendarPlugin extends Plugin {
     this.timer = new Timer(this);
     this.configurePomodoro();
     this.configureSystemMedia();
+    this.taskSyncManager = new TaskSyncManager(this);
+    this.addChild(this.taskSyncManager);
+    await this.configureTaskSync();
 
     addIcon("calendar-day", calendarDayIcon);
     addIcon("calendar-week", calendarWeekIcon);
@@ -203,8 +217,11 @@ export default class CalendarPlugin extends Plugin {
     this.configurePeriodicNotes();
 
     this.registerView(
-      VIEW_TYPE_CALENDAR,
-      (leaf: WorkspaceLeaf) => new CalendarView(leaf, this)
+      VIEW_TYPE_ASSISTANT,
+      (leaf: WorkspaceLeaf) => {
+        this.view = new CalendarView(leaf, this);
+        return this.view;
+      }
     );
 
     this.configureAssistant();
@@ -225,21 +242,156 @@ export default class CalendarPlugin extends Plugin {
   }
 
   initLeaf(): void {
-    // Already have a leaf? Don't create another.
-    if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length) {
+    void this.ensureAssistantLeaf();
+  }
+
+  private async ensureAssistantLeaf(): Promise<void> {
+    const existingLeaves = this.getAssistantLeaves();
+    if (existingLeaves.length > 0) {
+      await this.activateAssistantLeaf(existingLeaves);
       return;
     }
 
-    // Always use onLayoutReady: Obsidian calls it immediately if layout is already ready,
-    // or waits until ready if not. This avoids the race between orphan leaf revival
-    // and the setTimeout delay in the previous implementation.
     this.app.workspace.onLayoutReady(() => {
-      if (this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0) {
-        this.app.workspace.getRightLeaf(false).setViewState({
-          type: VIEW_TYPE_CALENDAR,
-        });
+      void this.createAssistantLeafIfMissing();
+    });
+  }
+
+  private async createAssistantLeafIfMissing(): Promise<void> {
+    const existingLeaves = this.getAssistantLeaves();
+    if (existingLeaves.length > 0) {
+      await this.activateAssistantLeaf(existingLeaves);
+      return;
+    }
+
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (!leaf) return;
+
+    await leaf.setViewState(this.getAssistantViewState());
+    await this.revealAssistantLeaf(leaf);
+  }
+
+  private async activateAssistantLeaf(leaves: WorkspaceLeaf[]): Promise<void> {
+    const [primaryLeaf, ...duplicateLeaves] = leaves;
+    if (!primaryLeaf) return;
+
+    await primaryLeaf.setViewState(this.getAssistantViewState());
+    await this.revealAssistantLeaf(primaryLeaf);
+
+    if (primaryLeaf.view instanceof CalendarView) {
+      this.view = primaryLeaf.view;
+    }
+    this.view?.refresh();
+
+    duplicateLeaves.forEach((leaf) => {
+      if (leaf !== primaryLeaf) {
+        leaf.detach();
       }
     });
+  }
+
+  private async revealAssistantLeaf(leaf: WorkspaceLeaf): Promise<void> {
+    try {
+      await this.app.workspace.revealLeaf(leaf);
+    } catch (err) {
+      console.warn(`[Work Assistant] Failed to reveal ${ASSISTANT_VIEW_DISPLAY_TEXT} view`, err);
+    }
+  }
+
+  private getAssistantViewState(): ViewState {
+    return {
+      type: VIEW_TYPE_ASSISTANT,
+      active: true,
+      state: {
+        plugin: this.manifest.id,
+        view: ASSISTANT_VIEW_DISPLAY_TEXT,
+      },
+    };
+  }
+
+  private getAssistantLeaves(): WorkspaceLeaf[] {
+    const leaves: WorkspaceLeaf[] = [];
+    const seen = new Set<WorkspaceLeaf>();
+    const addLeaf = (leaf: WorkspaceLeaf | null | undefined) => {
+      if (leaf && !seen.has(leaf)) {
+        seen.add(leaf);
+        leaves.push(leaf);
+      }
+    };
+
+    this.app.workspace.getLeavesOfType(VIEW_TYPE_ASSISTANT).forEach(addLeaf);
+    this.app.workspace.getLeavesOfType(LEGACY_VIEW_TYPE_CALENDAR).forEach((leaf) => {
+      if (this.isAssistantLeaf(leaf)) {
+        addLeaf(leaf);
+      }
+    });
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (this.isAssistantLeaf(leaf)) {
+        addLeaf(leaf);
+      }
+    });
+
+    return leaves;
+  }
+
+  private isAssistantLeaf(leaf: WorkspaceLeaf): boolean {
+    const aliases = ASSISTANT_VIEW_DISPLAY_TEXT_ALIASES.map((alias) => alias.toLowerCase());
+    const titles = this.getLeafDisplayTexts(leaf).map((title) => title.toLowerCase());
+    const hasAssistantTitle = titles.some((title) => aliases.includes(title));
+
+    try {
+      const viewState = leaf.getViewState();
+      if (viewState.type === VIEW_TYPE_ASSISTANT) {
+        return true;
+      }
+      if (this.isAssistantViewState(viewState)) {
+        return true;
+      }
+      if (viewState.type === LEGACY_VIEW_TYPE_CALENDAR && hasAssistantTitle) {
+        return true;
+      }
+    } catch (err) {
+      console.debug("[Work Assistant] Failed to inspect a workspace leaf state", err);
+    }
+
+    if (leaf.view?.getViewType?.() === VIEW_TYPE_ASSISTANT) {
+      return true;
+    }
+    if (leaf.view?.getViewType?.() === LEGACY_VIEW_TYPE_CALENDAR && hasAssistantTitle) {
+      return true;
+    }
+
+    return hasAssistantTitle;
+  }
+
+  private isAssistantViewState(viewState: ViewState): boolean {
+    return viewState.state?.plugin === this.manifest.id
+      && viewState.state?.view === ASSISTANT_VIEW_DISPLAY_TEXT;
+  }
+
+  private getLeafDisplayTexts(leaf: WorkspaceLeaf): string[] {
+    const titles = new Set<string>();
+    const addTitle = (title: string | null | undefined) => {
+      const trimmedTitle = title?.trim();
+      if (trimmedTitle) {
+        titles.add(trimmedTitle);
+      }
+    };
+
+    const viewDisplayText = leaf.view?.getDisplayText?.();
+    if (typeof viewDisplayText === "string") {
+      addTitle(viewDisplayText);
+    }
+
+    const leafAny = leaf as WorkspaceLeaf & {
+      tabHeaderEl?: HTMLElement;
+      tabHeaderInnerTitleEl?: HTMLElement;
+    };
+    const titleEl = leafAny.tabHeaderInnerTitleEl
+      ?? leafAny.tabHeaderEl?.querySelector(".workspace-tab-header-inner-title");
+    addTitle(titleEl?.textContent);
+    addTitle(leafAny.tabHeaderEl?.textContent);
+    return Array.from(titles);
   }
 
   async loadOptions(): Promise<void> {
@@ -291,6 +443,7 @@ export default class CalendarPlugin extends Plugin {
           finalSettings.assistant.calendar.shouldConfirmBeforeCreate = oldConfirm2;
         }
       }
+
     }
 
     settings.set(finalSettings);
@@ -349,10 +502,9 @@ export default class CalendarPlugin extends Plugin {
 
     if (enabledGranularities.length) {
       const granularity = enabledGranularities[0];
-      const config = displayConfigs[granularity];
       this.ribbonEl = this.addRibbonIcon(
         `calendar-${granularity}`,
-        config.labelOpenPresent,
+        getOpenPresentLabel(granularity, this.getObsidianLanguage()),
         (e: MouseEvent) => {
           if (e.type !== "auxclick") {
             this.openPeriodicNote(granularity, window.moment(), {
@@ -441,7 +593,11 @@ export default class CalendarPlugin extends Plugin {
       if (!confirmed) return null;
     }
 
-    const templateContents = await getTemplateContents(this.app, config.templatePath);
+    const templateContents = await getTemplateContents(this.app, config.templatePath, {
+      granularity,
+      pluginDir: this.manifest.dir,
+      pluginId: this.manifest.id,
+    });
     const renderedContents = applyTemplateTransformations(
       filename,
       granularity,
@@ -703,6 +859,46 @@ export default class CalendarPlugin extends Plugin {
     }
   }
 
+  private async configureTaskSync(): Promise<void> {
+    if (!this.taskSyncManager) return;
+    await this.taskSyncManager.configure();
+    this.configureTaskSyncCommands();
+  }
+
+  private configureTaskSyncCommands(): void {
+    const commandIds = [
+      "sync-tasks-now",
+      "sync-tasks-dry-run",
+      "view-task-sync-status",
+      "refresh-tasks",
+    ];
+    commandIds.forEach((id) => this.app.commands.removeCommand(`${this.manifest.id}:${id}`));
+
+    if (!this.options.assistant.tasks.enabled || !this.taskSyncManager) return;
+
+    const lang = this.getObsidianLanguage();
+    this.addCommand({
+      id: "sync-tasks-now",
+      name: t("command-tasks-sync-now", lang),
+      callback: () => void this.taskSyncManager?.syncNow(),
+    });
+    this.addCommand({
+      id: "sync-tasks-dry-run",
+      name: t("command-tasks-sync-preview", lang),
+      callback: () => void this.taskSyncManager?.previewSync(),
+    });
+    this.addCommand({
+      id: "view-task-sync-status",
+      name: t("command-tasks-sync-status", lang),
+      callback: () => void this.taskSyncManager?.showStatus(),
+    });
+    this.addCommand({
+      id: "refresh-tasks",
+      name: t("command-tasks-refresh", lang),
+      callback: () => void this.taskSyncManager?.refreshLocalTasks(),
+    });
+  }
+
   private configurePeriodicNotes(): void {
     this.configureCache();
 
@@ -745,7 +941,7 @@ export default class CalendarPlugin extends Plugin {
     this.configureCache();
 
     const { assistant } = this.options;
-    const hasActiveWidgets = assistant.calendar.enabled || assistant.flipClock.enabled || assistant.weather.enabled;
+    const hasActiveWidgets = assistant.calendar.enabled || assistant.flipClock.enabled || assistant.weather.enabled || assistant.tasks.enabled;
 
     if (assistant.enabled && hasActiveWidgets) {
       this.initAssistant();
@@ -767,9 +963,7 @@ export default class CalendarPlugin extends Plugin {
       name: t('command-open-view', lang),
       checkCallback: (checking: boolean) => {
         if (checking) {
-          return (
-            this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR).length === 0
-          );
+          return true;
         }
         this.initLeaf();
       },
@@ -779,7 +973,7 @@ export default class CalendarPlugin extends Plugin {
     this.addCommand({
       id: "reveal-active-note",
       name: t('command-reveal-active-note', lang),
-      callback: () => this.view.revealActiveNote(),
+      callback: () => this.view?.revealActiveNote(),
     });
 
     this.initLeaf();

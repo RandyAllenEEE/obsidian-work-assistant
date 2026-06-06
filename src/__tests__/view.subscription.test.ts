@@ -22,7 +22,12 @@ jest.mock("obsidian", () => {
 
 jest.mock("src/constants", () => ({
   TRIGGER_ON_OPEN: "trigger-on-open",
-  VIEW_TYPE_CALENDAR: "calendar-view",
+  VIEW_TYPE_ASSISTANT: "work-assistant-assistant",
+  VIEW_TYPE_CALENDAR: "work-assistant-assistant",
+  LEGACY_VIEW_TYPE_CALENDAR: "calendar",
+  ASSISTANT_VIEW_TYPE_ALIASES: ["work-assistant-assistant", "calendar"],
+  ASSISTANT_VIEW_DISPLAY_TEXT: "assistant",
+  ASSISTANT_VIEW_DISPLAY_TEXT_ALIASES: ["assistant", "Assistant", "助手"],
   DEFAULT_REFRESH_INTERVAL: 2000,
 }));
 
@@ -51,6 +56,7 @@ jest.mock("../ui/sources", () => ({
   customTagsSource: {},
   streakSource: {},
   wordCountSource: {},
+  dailyNoteChecklistSource: {},
   tasksSource: {},
   createWordCountBackgroundSource: jest.fn(() => ({})),
   createDailyStatsSource: jest.fn(() => ({})),
@@ -91,6 +97,7 @@ describe("CalendarView subscriptions", () => {
         find: jest.fn(() => null),
       },
       openPeriodicNote: jest.fn(),
+      taskSyncManager: null,
     } as any;
 
     const view = new CalendarView(leaf, plugin);

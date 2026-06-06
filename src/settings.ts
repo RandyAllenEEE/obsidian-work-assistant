@@ -6,9 +6,43 @@ import { DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
 import { t, getLanguage } from "./i18n";
 import type { Language } from "./i18n";
 import type { PeriodicConfig } from "src/periodic/types";
+import { FileSuggest } from "src/periodic/ui/file-suggest";
 
 import type CalendarPlugin from "./main";
-import { DEFAULT_PERIODIC_CONFIG } from "./periodic/constants";
+import { DEFAULT_PERIODIC_CONFIG, DEFAULT_PERIODIC_TEMPLATE_PATH } from "./periodic/constants";
+
+export interface TaskCalendarSettings {
+  obsidianTag: string;
+  caldavCategory: string;
+  calendarName: string;
+  serverUrl: string;
+  username: string;
+  passwordSecretId: string;
+}
+
+export interface TaskSyncSettings {
+  enabled: boolean;
+  calendar: TaskCalendarSettings;
+  syncInterval: number;
+  newTasksDestination: string;
+  newTasksSection: string;
+  excludedPaths: string[];
+  autoResolveObsidianWins: boolean;
+  includeObsidianLink: boolean;
+  showAutoSyncNotifications: boolean;
+  appliedMigrations?: string[];
+}
+
+export function createDefaultTaskCalendarSettings(): TaskCalendarSettings {
+  return {
+    obsidianTag: "sync",
+    caldavCategory: "sync",
+    calendarName: "",
+    serverUrl: "",
+    username: "",
+    passwordSecretId: "",
+  };
+}
 
 export interface ISettings {
   installedVersion: string;
@@ -34,6 +68,7 @@ export interface ISettings {
       refreshInterval: number;
       dailyRefreshInterval: number;
     };
+    tasks: TaskSyncSettings;
   };
 
   periodicNotes: {
@@ -90,7 +125,7 @@ export const defaultSettings: ISettings = {
 
   assistant: {
     enabled: true,
-    widgetOrder: ['flipClock', 'calendar', 'weather'],
+    widgetOrder: ['flipClock', 'calendar', 'tasks', 'weather'],
     flipClock: {
       enabled: false,
     },
@@ -107,6 +142,18 @@ export const defaultSettings: ISettings = {
       city: "",
       refreshInterval: 60,
       dailyRefreshInterval: 4,
+    },
+    tasks: {
+      enabled: false,
+      calendar: createDefaultTaskCalendarSettings(),
+      syncInterval: 5,
+      newTasksDestination: "Inbox.md",
+      newTasksSection: "",
+      excludedPaths: [],
+      autoResolveObsidianWins: false,
+      includeObsidianLink: false,
+      showAutoSyncNotifications: false,
+      appliedMigrations: [],
     },
   },
 
@@ -422,6 +469,29 @@ export class CalendarSettingsTab extends PluginSettingTab {
                     this.addConfirmCreateSetting(contentEl, lang);
                 },
                 false // 默认收起
+            );
+
+            // Tasks
+            this.addCollapsibleSection(
+                container,
+                t('settings-tasks-title', lang),
+                assistant.tasks.enabled,
+                (value) => {
+                    this.plugin.writeOptions((old) => ({
+                        ...old,
+                        assistant: {
+                            ...old.assistant,
+                            tasks: {
+                                ...old.assistant.tasks,
+                                enabled: value
+                            }
+                        }
+                    }));
+                },
+                (contentEl) => {
+                    this.addTaskSyncSettings(contentEl, lang);
+                },
+                false
             );
 
             // Weather
@@ -930,6 +1000,223 @@ Inbox/              # Folder prefix match (includes subfolders)
       });
   }
 
+  private addTaskSyncSettings(container: HTMLElement, lang: Language): void {
+    const tasks = this.plugin.options.assistant.tasks;
+
+    new Setting(container)
+      .setName(t("settings-tasks-sync-interval", lang))
+      .setDesc(t("settings-tasks-sync-interval-desc", lang))
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setPlaceholder("5");
+        text.setValue(String(tasks.syncInterval));
+        text.onChange(async (value) => {
+          const syncInterval = Math.max(0, Number.parseInt(value, 10) || 0);
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            assistant: {
+              ...old.assistant,
+              tasks: { ...old.assistant.tasks, syncInterval },
+            },
+          }));
+        });
+      });
+
+    new Setting(container)
+      .setName(t("settings-tasks-new-destination", lang))
+      .setDesc(t("settings-tasks-new-destination-desc", lang))
+      .addText((text) => {
+        text.setPlaceholder("Inbox.md");
+        text.setValue(tasks.newTasksDestination);
+        text.onChange(async (value) => {
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            assistant: {
+              ...old.assistant,
+              tasks: { ...old.assistant.tasks, newTasksDestination: value.trim() || "Inbox.md" },
+            },
+          }));
+        });
+      });
+
+    new Setting(container)
+      .setName(t("settings-tasks-new-section", lang))
+      .setDesc(t("settings-tasks-new-section-desc", lang))
+      .addText((text) => {
+        text.setPlaceholder("Tasks");
+        text.setValue(tasks.newTasksSection);
+        text.onChange(async (value) => {
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            assistant: {
+              ...old.assistant,
+              tasks: { ...old.assistant.tasks, newTasksSection: value.trim() },
+            },
+          }));
+        });
+      });
+
+    this.addTaskExcludedPathsSetting(container, lang);
+
+    new Setting(container)
+      .setName(t("settings-tasks-obsidian-wins", lang))
+      .setDesc(t("settings-tasks-obsidian-wins-desc", lang))
+      .addToggle((toggle) => {
+        toggle.setValue(tasks.autoResolveObsidianWins);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            assistant: {
+              ...old.assistant,
+              tasks: { ...old.assistant.tasks, autoResolveObsidianWins: value },
+            },
+          }));
+        });
+      });
+
+    new Setting(container)
+      .setName(t("settings-tasks-include-link", lang))
+      .setDesc(t("settings-tasks-include-link-desc", lang))
+      .addToggle((toggle) => {
+        toggle.setValue(tasks.includeObsidianLink);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            assistant: {
+              ...old.assistant,
+              tasks: { ...old.assistant.tasks, includeObsidianLink: value },
+            },
+          }));
+        });
+      });
+
+    new Setting(container)
+      .setName(t("settings-tasks-auto-notices", lang))
+      .setDesc(t("settings-tasks-auto-notices-desc", lang))
+      .addToggle((toggle) => {
+        toggle.setValue(tasks.showAutoSyncNotifications);
+        toggle.onChange(async (value) => {
+          this.plugin.writeOptions((old) => ({
+            ...old,
+            assistant: {
+              ...old.assistant,
+              tasks: { ...old.assistant.tasks, showAutoSyncNotifications: value },
+            },
+          }));
+        });
+      });
+
+    this.addTaskCalendarSettings(container, lang, tasks.calendar);
+  }
+
+  private addTaskCalendarSettings(
+    container: HTMLElement,
+    lang: Language,
+    calendar: TaskCalendarSettings
+  ): void {
+    new Setting(container)
+      .setName(t("settings-tasks-calendar", lang))
+      .setHeading();
+
+    this.addTaskCalendarTextSetting(container, "calendarName", t("settings-tasks-calendar-name", lang), t("settings-tasks-calendar-name-desc", lang), "Work");
+    this.addTaskCalendarTextSetting(container, "serverUrl", t("settings-tasks-server-url", lang), t("settings-tasks-server-url-desc", lang), "https://caldav.example.com");
+    this.addTaskCalendarTextSetting(container, "username", t("settings-tasks-username", lang), "", "username");
+    this.addTaskPasswordSetting(container, lang, calendar);
+    this.addTaskCalendarTextSetting(container, "obsidianTag", t("settings-tasks-obsidian-tag", lang), t("settings-tasks-obsidian-tag-desc", lang), "sync");
+    this.addTaskCalendarTextSetting(container, "caldavCategory", t("settings-tasks-caldav-category", lang), t("settings-tasks-caldav-category-desc", lang), "sync");
+  }
+
+  private addTaskCalendarTextSetting(
+    container: HTMLElement,
+    key: keyof Pick<TaskCalendarSettings, "calendarName" | "serverUrl" | "username" | "obsidianTag" | "caldavCategory">,
+    name: string,
+    desc: string,
+    placeholder: string
+  ): void {
+    const calendar = this.plugin.options.assistant.tasks.calendar;
+    new Setting(container)
+      .setName(name)
+      .setDesc(desc)
+      .addText((text) => {
+        text.setPlaceholder(placeholder);
+        text.setValue(calendar?.[key] ?? "");
+        text.onChange(async (value) => {
+          this.updateTaskCalendar({ [key]: value } as Partial<TaskCalendarSettings>);
+        });
+      });
+  }
+
+  private addTaskPasswordSetting(
+    container: HTMLElement,
+    lang: Language,
+    calendar: TaskCalendarSettings
+  ): void {
+    const passwordSetting = new Setting(container)
+      .setName(t("settings-tasks-password", lang))
+      .setDesc(t("settings-tasks-password-desc", lang));
+    const SecretComponent = (obsidian as any).SecretComponent;
+    if (SecretComponent && this.app.secretStorage) {
+      const sc = new SecretComponent(this.app, passwordSetting.controlEl);
+      sc.setValue(calendar.passwordSecretId || "");
+      sc.onChange(async (value: string) => {
+        this.updateTaskCalendar({ passwordSecretId: value });
+      });
+    } else {
+      passwordSetting.controlEl.createDiv({
+        cls: "setting-item-description",
+        text: t("settings-tasks-secret-unavailable", lang),
+      });
+    }
+  }
+
+  private addTaskExcludedPathsSetting(container: HTMLElement, lang: Language): void {
+    const placeholder = `Inbox/example.md    # Exact file match
+Inbox/              # Folder prefix match (includes subfolders)
+/^tmp-.*$/         # Regex (wrapped in / /)`;
+    const debouncedUpdate = (() => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      return (fn: () => void, delay = 1000) => {
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(fn, delay);
+      };
+    })();
+
+    new Setting(container)
+      .setName(t("settings-tasks-excluded-paths", lang))
+      .setDesc(t("settings-tasks-excluded-paths-desc", lang))
+      .addTextArea((textArea) => {
+        textArea.setPlaceholder(placeholder);
+        textArea.setValue(this.plugin.options.assistant.tasks.excludedPaths?.join("\n") ?? "");
+        textArea.inputEl.rows = 5;
+        textArea.inputEl.style.width = "100%";
+        textArea.onChange((value) => {
+          const excludedPaths = value.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+          debouncedUpdate(() => {
+            this.plugin.writeOptions((old) => ({
+              ...old,
+              assistant: {
+                ...old.assistant,
+                tasks: { ...old.assistant.tasks, excludedPaths },
+              },
+            }));
+          }, 1000);
+        });
+      });
+  }
+
+  private updateTaskCalendar(patch: Partial<TaskCalendarSettings>): void {
+    this.plugin.writeOptions((old) => ({
+      ...old,
+      assistant: {
+        ...old.assistant,
+        tasks: {
+          ...old.assistant.tasks,
+          calendar: { ...old.assistant.tasks.calendar, ...patch },
+        },
+      },
+    }));
+  }
+
   addMediaSettings(lang: Language): void {
     const isWin = Platform.isWin;
     const title = t("media-control-title", lang);
@@ -947,7 +1234,7 @@ Inbox/              # Folder prefix match (includes subfolders)
       },
       (contentEl) => {
         if (!isWin) {
-          contentEl.createDiv({ text: "Media Control is currently only supported on Windows.", cls: "setting-item-description" });
+          contentEl.createDiv({ text: t("settings-media-windows-only", lang), cls: "setting-item-description" });
         }
       }
     );
@@ -1169,6 +1456,29 @@ Inbox/              # Folder prefix match (includes subfolders)
             });
           });
 
+        // Template
+        const templateTitleKey = `template-title-${granularity}` as Parameters<typeof t>[0];
+        new Setting(contentEl)
+          .setName(t(templateTitleKey, lang))
+          .setDesc(t("settings-common-template-desc", lang))
+          .addText((textfield) => {
+            textfield.setPlaceholder(DEFAULT_PERIODIC_TEMPLATE_PATH[granularity]);
+            textfield.setValue(config.templatePath ?? "");
+            new FileSuggest(this.app, textfield.inputEl);
+            textfield.onChange(async (value) => {
+              this.plugin.writeOptions((old) => ({
+                ...old,
+                periodicNotes: {
+                  ...old.periodicNotes,
+                  [granularity]: {
+                    ...old.periodicNotes[granularity],
+                    templatePath: value.trim()
+                  }
+                }
+              }));
+            });
+          });
+
         // Open at Startup
         new Setting(contentEl)
           .setName(t("settings-periodic-open-at-startup", lang))
@@ -1245,13 +1555,9 @@ Inbox/              # Folder prefix match (includes subfolders)
 
     // If no toggle, always show content
     if (showToggle) {
-        if (!defaultOpen) {
-            contentContainer.style.display = currentState ? "block" : "none";
-        } else {
-            contentContainer.style.display = "block";
-        }
+        contentContainer.style.display = defaultOpen ? "block" : "none";
 
-        if (currentState || defaultOpen) {
+        if (defaultOpen) {
             contentBuilder(contentContainer);
             hasBuiltContent = true;
         }

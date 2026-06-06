@@ -1,9 +1,7 @@
 <script lang="ts">
   import type { App } from "obsidian";
   import { slide } from "svelte/transition";
-  import capitalize from "lodash/capitalize";
 
-  import { displayConfigs } from "src/periodic/commands";
   import { t } from "src/i18n";
   import NoteFormatSetting from "../../components/NoteFormatSetting.svelte";
   import NoteTemplateSetting from "../../components/NoteTemplateSetting.svelte";
@@ -20,7 +18,6 @@
   export let granularity: Granularity;
   export let settings: Writable<ISettings>;
 
-  let displayConfig = displayConfigs[granularity];
   let isExpanded = false;
 
   let config: Writable<PeriodicConfig> = writableDerived(

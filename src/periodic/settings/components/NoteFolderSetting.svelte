@@ -7,7 +7,6 @@
 
   import { validateFolder } from "../validation";
   import type { Readable } from "svelte/store";
-  import { displayConfigs } from "src/periodic/commands";
   import { t } from "src/i18n";
 
   export let config: Readable<PeriodicConfig>;

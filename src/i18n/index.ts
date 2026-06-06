@@ -13,12 +13,19 @@ export interface Translation {
   "command-pomo-start": string;
   "command-pomo-pause": string;
   "command-pomo-quit": string;
+  "command-tasks-sync-now": string;
+  "command-tasks-sync-preview": string;
+  "command-tasks-sync-status": string;
+  "command-tasks-refresh": string;
 
   "command-open-note": string;
   "command-next-note": string;
   "command-prev-note": string;
   "command-open-next-note": string;
   "command-open-prev-note": string;
+  "notice-no-adjacent-periodic-note": string;
+  "notice-direction-after": string;
+  "notice-direction-before": string;
 
   "label-periodicity-daily": string;
   "label-periodicity-weekly": string;
@@ -53,6 +60,36 @@ export interface Translation {
   "settings-weather-daily-interval-desc": string;
   "settings-weather-warnings-enable": string;
   "settings-weather-warnings-desc": string;
+
+  // Settings - Tasks
+  "settings-tasks-title": string;
+  "settings-tasks-sync-interval": string;
+  "settings-tasks-sync-interval-desc": string;
+  "settings-tasks-new-destination": string;
+  "settings-tasks-new-destination-desc": string;
+  "settings-tasks-new-section": string;
+  "settings-tasks-new-section-desc": string;
+  "settings-tasks-excluded-paths": string;
+  "settings-tasks-excluded-paths-desc": string;
+  "settings-tasks-obsidian-wins": string;
+  "settings-tasks-obsidian-wins-desc": string;
+  "settings-tasks-include-link": string;
+  "settings-tasks-include-link-desc": string;
+  "settings-tasks-auto-notices": string;
+  "settings-tasks-auto-notices-desc": string;
+  "settings-tasks-calendar": string;
+  "settings-tasks-calendar-name": string;
+  "settings-tasks-calendar-name-desc": string;
+  "settings-tasks-server-url": string;
+  "settings-tasks-server-url-desc": string;
+  "settings-tasks-username": string;
+  "settings-tasks-password": string;
+  "settings-tasks-password-desc": string;
+  "settings-tasks-secret-unavailable": string;
+  "settings-tasks-obsidian-tag": string;
+  "settings-tasks-obsidian-tag-desc": string;
+  "settings-tasks-caldav-category": string;
+  "settings-tasks-caldav-category-desc": string;
 
   // Settings - Weekly Note
   "settings-weekly-note-title": string;
@@ -97,6 +134,12 @@ export interface Translation {
   // Modals
   "modal-create-note-title": string;
   "modal-create-note-text": string;
+  "modal-open-periodic-note-title": string;
+  "modal-create-periodic-note-title": string;
+  "modal-periodic-template-desc": string;
+  "modal-periodic-template-missing": string;
+  "modal-view-periodic-note-cta": string;
+  "modal-create-periodic-note-cta": string;
   "settings-timeline-title": string;
   "settings-timeline-desc": string;
   "settings-periodic-notes-title": string;
@@ -142,6 +185,109 @@ export interface Translation {
   "calendar-tooltip-words": string;
   "calendar-tooltip-pomo": string;
 
+  // Task list
+  "tasks-title": string;
+  "tasks-syncing": string;
+  "tasks-loading": string;
+  "tasks-error": string;
+  "tasks-requires-tasks-plugin": string;
+  "tasks-empty": string;
+  "tasks-open": string;
+  "tasks-today": string;
+  "tasks-future": string;
+  "tasks-group-empty": string;
+
+  // Task sync UI
+  "tasks-error-plugin-unavailable": string;
+  "tasks-calendar-default-name": string;
+  "tasks-calendar-missing-fields": string;
+  "tasks-notice-calendar-skipped": string;
+  "tasks-notice-status-not-ready": string;
+  "tasks-notice-completion-requires-plugin": string;
+  "tasks-notice-task-not-found": string;
+  "tasks-notice-toggle-unavailable": string;
+  "tasks-notice-update-failed": string;
+  "tasks-notice-sync-configured-plugin-missing": string;
+  "tasks-notice-migration-failed": string;
+  "tasks-notice-no-calendar-ready": string;
+  "tasks-notice-check-settings": string;
+  "tasks-notice-plugin-not-ready": string;
+  "tasks-notice-missing-password-secret": string;
+  "tasks-notice-sync-requires-plugin": string;
+  "tasks-notice-sync-starting": string;
+  "tasks-sync-dry-run-prefix": string;
+  "tasks-sync-status-last-sync": string;
+  "tasks-sync-status-never": string;
+  "tasks-sync-status-mapped": string;
+  "tasks-sync-status-baseline": string;
+  "tasks-sync-status-conflicts": string;
+  "tasks-sync-message-dry-run": string;
+  "tasks-sync-message-complete": string;
+  "tasks-sync-message-reconciled-line": string;
+  "tasks-sync-message-reconciled-suffix": string;
+  "tasks-sync-error-unknown": string;
+  "tasks-sync-message-failed": string;
+  "tasks-sync-modal-preview-title": string;
+  "tasks-sync-modal-results-title": string;
+  "tasks-sync-modal-inputs": string;
+  "tasks-sync-modal-obsidian-tasks": string;
+  "tasks-sync-modal-calendar-tasks": string;
+  "tasks-sync-modal-baseline-tasks": string;
+  "tasks-sync-modal-changes": string;
+  "tasks-sync-modal-to-obsidian": string;
+  "tasks-sync-modal-to-calendar": string;
+  "tasks-sync-modal-conflicts": string;
+  "tasks-sync-modal-no-changes": string;
+  "tasks-sync-modal-summary-created": string;
+  "tasks-sync-modal-summary-updated": string;
+  "tasks-sync-modal-summary-deleted": string;
+  "tasks-sync-modal-summary-to-obsidian": string;
+  "tasks-sync-modal-summary-to-calendar": string;
+  "tasks-sync-modal-summary-conflicts": string;
+  "tasks-sync-modal-summary-none": string;
+  "tasks-sync-modal-summary-error": string;
+  "tasks-sync-modal-no-tasks": string;
+  "tasks-sync-modal-header-uid": string;
+  "tasks-sync-modal-header-title": string;
+  "tasks-sync-modal-header-status": string;
+  "tasks-sync-modal-header-due": string;
+  "tasks-sync-modal-header-priority": string;
+  "tasks-sync-modal-task": string;
+  "tasks-sync-modal-column-obsidian": string;
+  "tasks-sync-modal-column-calendar": string;
+  "tasks-sync-modal-column-baseline": string;
+  "tasks-sync-modal-field-title": string;
+  "tasks-sync-modal-field-status": string;
+  "tasks-sync-modal-field-due": string;
+  "tasks-sync-modal-field-priority": string;
+  "tasks-sync-modal-field-tags": string;
+  "tasks-sync-modal-change-create": string;
+  "tasks-sync-modal-change-update": string;
+  "tasks-sync-modal-change-delete": string;
+  "tasks-sync-modal-change-complete": string;
+  "tasks-sync-modal-change-reconcile": string;
+  "tasks-sync-modal-diff-title": string;
+  "tasks-sync-modal-diff-status": string;
+  "tasks-sync-modal-diff-due": string;
+  "tasks-sync-modal-diff-priority": string;
+  "tasks-sync-modal-apply": string;
+  "tasks-sync-modal-applying": string;
+  "tasks-sync-modal-close": string;
+
+  // Periodic notices and relative labels
+  "notice-periodic-template-read-failed": string;
+  "notice-periodic-bundled-template-missing": string;
+  "relative-this-week": string;
+  "relative-last-week": string;
+  "relative-next-week": string;
+  "relative-yesterday": string;
+  "relative-today": string;
+  "relative-tomorrow": string;
+  "relative-last-weekday": string;
+  "file-menu-delete": string;
+  "modal-create-weekly-note-title": string;
+  "notice-smtc-security-violation": string;
+
   // Word Count Ranges
   "word-count-range-0": string;
   "word-count-range-150": string;
@@ -180,6 +326,7 @@ export interface Translation {
   "settings-pomo-auto-cycles-desc": string;
   "settings-pomo-time-settings": string;
   "settings-notification-settings": string;
+  "settings-media-windows-only": string;
   "settings-notification-sound": string;
   "settings-notification-sound-desc": string;
   "settings-use-system-notification": string;

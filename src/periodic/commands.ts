@@ -2,42 +2,47 @@ import { Notice, TFile } from "obsidian";
 import type { App, Command } from "obsidian";
 import type PeriodicNotesPlugin from "src/main";
 import { t } from "src/i18n";
+import type { Language } from "src/i18n";
 
 import type { Granularity } from "./types";
 
 interface IDisplayConfig {
   periodicity: string;
-  relativeUnit: string;
-  labelOpenPresent: string;
 }
 
 export const displayConfigs: Record<Granularity, IDisplayConfig> = {
   day: {
     periodicity: "daily",
-    relativeUnit: "today",
-    labelOpenPresent: "Open today's daily note",
   },
   week: {
     periodicity: "weekly",
-    relativeUnit: "this week",
-    labelOpenPresent: "Open this week's note",
   },
   month: {
     periodicity: "monthly",
-    relativeUnit: "this month",
-    labelOpenPresent: "Open this month's note",
   },
   quarter: {
     periodicity: "quarterly",
-    relativeUnit: "this quarter",
-    labelOpenPresent: "Open this quarter's note",
   },
   year: {
     periodicity: "yearly",
-    relativeUnit: "this year",
-    labelOpenPresent: "Open this year's note",
   },
 };
+
+const periodicityLabelKeys: Record<Granularity, Parameters<typeof t>[0]> = {
+  day: "label-periodicity-daily",
+  week: "label-periodicity-weekly",
+  month: "label-periodicity-monthly",
+  quarter: "label-periodicity-quarterly",
+  year: "label-periodicity-yearly",
+};
+
+export function getLocalizedPeriodicity(granularity: Granularity, lang?: Language): string {
+  return t(periodicityLabelKeys[granularity], lang);
+}
+
+export function getOpenPresentLabel(granularity: Granularity, lang?: Language): string {
+  return t("command-open-note", lang).replace("{periodicity}", getLocalizedPeriodicity(granularity, lang));
+}
 
 async function jumpToAdjacentNote(
   app: App,
@@ -61,10 +66,14 @@ async function jumpToAdjacentNote(
       await leaf.openFile(file, { active: true });
     }
   } else {
-    const qualifier = direction === "forwards" ? "after" : "before";
+    const directionLabel = direction === "forwards"
+      ? t("notice-direction-after")
+      : t("notice-direction-before");
+    const periodicity = getLocalizedPeriodicity(activeFileMeta.granularity);
     new Notice(
-      `There's no ${displayConfigs[activeFileMeta.granularity].periodicity
-      } note ${qualifier} this`
+      t("notice-no-adjacent-periodic-note")
+        .replace("{periodicity}", periodicity)
+        .replace("{direction}", directionLabel)
     );
   }
 }
@@ -94,7 +103,7 @@ export function getCommands(
 ): Command[] {
   const config = displayConfigs[granularity];
 
-  const localizedPeriodicity = t(`label-periodicity-${config.periodicity}` as Parameters<typeof t>[0]);
+  const localizedPeriodicity = getLocalizedPeriodicity(granularity);
 
   return [
     {

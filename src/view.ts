@@ -3,9 +3,13 @@ import { ItemView, FileView } from "obsidian";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 
 
-import { TRIGGER_ON_OPEN, VIEW_TYPE_CALENDAR, DEFAULT_REFRESH_INTERVAL } from "src/constants";
+import {
+  ASSISTANT_VIEW_DISPLAY_TEXT,
+  TRIGGER_ON_OPEN,
+  VIEW_TYPE_ASSISTANT,
+  DEFAULT_REFRESH_INTERVAL,
+} from "src/constants";
 import type { ISettings } from "src/settings";
-import { t } from "./i18n";
 
 import Calendar from "./ui/Calendar.svelte";
 import { mount, unmount } from "svelte";
@@ -15,6 +19,7 @@ import {
   customTagsSource,
   streakSource,
   wordCountSource,
+  dailyNoteChecklistSource,
   tasksSource,
   createWordCountBackgroundSource,
   createDailyStatsSource,
@@ -109,12 +114,12 @@ export default class CalendarView extends ItemView {
   }
 
   getViewType(): string {
-    return VIEW_TYPE_CALENDAR;
+    return VIEW_TYPE_ASSISTANT;
   }
 
 
   getDisplayText(): string {
-    return t("view-name-assistant");
+    return ASSISTANT_VIEW_DISPLAY_TEXT;
   }
 
   getIcon(): string {
@@ -153,6 +158,7 @@ export default class CalendarView extends ItemView {
         localeData: window.moment().localeData(),
         displayedMonth: window.moment(),
         weatherService: this.plugin.weatherService,
+        taskSyncManager: this.plugin.taskSyncManager,
       }
     }) as unknown as Calendar;
   }
@@ -169,6 +175,7 @@ export default class CalendarView extends ItemView {
       customTagsSource,
       streakSource,
       wordCountSource,
+      dailyNoteChecklistSource,
       tasksSource,
     ];
 

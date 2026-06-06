@@ -6,6 +6,7 @@ import {
 } from "obsidian-daily-notes-interface";
 
 import type { ISettings } from "src/settings";
+import { t } from "src/i18n";
 import { createConfirmationDialog } from "src/ui/modal";
 
 /**
@@ -33,10 +34,10 @@ export async function tryToCreateDailyNote(
 
   if (settings.assistant.calendar.shouldConfirmBeforeCreate) {
     createConfirmationDialog({
-      cta: "Create",
+      cta: t("modal-create-note-cta"),
       onAccept: createFile,
-      text: `File ${filename} does not exist. Would you like to create it?`,
-      title: "New Daily Note",
+      text: t("modal-create-note-text").replace("{filename}", filename),
+      title: t("modal-create-note-title"),
     });
   } else {
     await createFile();

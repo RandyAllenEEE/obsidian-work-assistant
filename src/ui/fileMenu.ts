@@ -1,11 +1,12 @@
 import { Menu } from "obsidian";
 import type { App, TFile, Point } from "obsidian";
+import { t } from "../i18n";
 
 export function showFileMenu(app: App, file: TFile, position: Point): void {
   const fileMenu = new Menu();
   fileMenu.addItem((item) =>
     item
-      .setTitle("Delete")
+      .setTitle(t("file-menu-delete"))
       .setIcon("trash")
       .onClick(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

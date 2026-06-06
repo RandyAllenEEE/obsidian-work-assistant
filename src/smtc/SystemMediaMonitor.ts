@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import type { CacheManager } from "../services/CacheManager";
 import { type MediaCache } from "../ui/stores";
 import type CalendarPlugin from '../main';
+import { t } from "../i18n";
 
 // Known hashes for verification
 const KNOWN_CS_HASH = "701249D897255F9D177A57BF93D3D5EF7252645109AA0ABBEE19910F35CC2F24";
@@ -84,7 +85,7 @@ export class SystemMediaMonitor extends Component {
         const sourceHash = this.computeHash(this.sourcePath);
         if (sourceHash !== KNOWN_CS_HASH) {
             console.error(`[SMTC] Security Violation: Source code hash mismatch! Expected ${KNOWN_CS_HASH}, got ${sourceHash}`);
-            new Notice("Work Assistant: SMTC Security Violation. Source code modified.");
+            new Notice(t("notice-smtc-security-violation"));
             return false;
         }
 

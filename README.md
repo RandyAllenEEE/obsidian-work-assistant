@@ -5,6 +5,19 @@ This is a comprehensive productivity center for [Obsidian](https://obsidian.md/)
 ![screenshot-hero](https://raw.githubusercontent.com/liamcain/obsidian-calendar-plugin/master/images/screenshot-full.png)
 *(Note: Due to rich functionality, the actual interface includes enhanced periodic notes integration and heatmap display)*
 
+## 🚀 Version 4.3.0 Update: CalDAV Task Sync
+
+This release adds a real bidirectional task workflow on top of the existing calendar and productivity panel:
+
+*   **✅ CalDAV VTODO Sync**: Synchronize Obsidian Tasks markdown tasks with a single configured CalDAV calendar, including Radicale-compatible VTODO read/write flows.
+*   **🔁 Two-Way Task Updates**: Pull new CalDAV tasks into Markdown and push tagged Obsidian Tasks entries back to the server, with baseline and ID mapping to avoid blind overwrites.
+*   **📋 Sidebar Task List**: The assistant panel can now show open, selected-date, and future tasks beneath the calendar.
+*   **🧩 Runtime Tasks Integration**: Uses the Obsidian Tasks plugin at runtime for cache access, date parsing, and completion toggles instead of bundling Tasks itself.
+*   **🚫 Task Exclusions**: Configure files, folders, or regex patterns whose tasks should stay out of the sidebar and CalDAV sync.
+*   **🔐 Secret Storage**: CalDAV passwords are stored through Obsidian secret storage; plugin data only stores the secret ID.
+
+---
+
 ## 🚀 Version 3.2.0 Update: Performance and Stability Leap
 
 This update focuses on refining core experiences, bringing you a smoother and more reliable workflow:
@@ -54,7 +67,14 @@ Your time management command center.
 -   **QWeather Integration**: Utilizes QWeather API for accurate forecasts.
 -   **Customizable Display**: Configurable refresh intervals and location settings.
 
-### 📁 7. File Management Utilities
+### ✅ 7. Tasks & CalDAV Sync
+-   **Obsidian Tasks Runtime Dependency**: Reads tasks from the Obsidian Tasks plugin cache and uses its toggle API for completions.
+-   **Single CalDAV Calendar**: Configure one CalDAV server/calendar pair for focused bidirectional VTODO sync.
+-   **Markdown Destination**: New tasks pulled from CalDAV can be written to a configured Markdown file and optional section.
+-   **Date-Aware Sidebar**: Tasks are grouped into open, selected-date, and future sections, and calendar dots mark dates with synced tasks.
+-   **Exclude Paths**: Skip tasks from specific files, folders, or regex patterns without affecting the rest of the assistant.
+
+### 📁 8. File Management Utilities
 -   **Custom Templates**: Support for custom templates in periodic notes creation.
 -   **Flexible Paths**: Customizable paths for different note types (daily, weekly, monthly, etc.).
 -   **Smart Linking**: Automatic linking between related notes and calendar entries.
@@ -90,6 +110,12 @@ The settings panel has been restructured to reflect strict hierarchical relation
     *   **System Integration**: Enable native Windows media controls.
     *   **White Noise**: Background noise options for focus.
 
+6.  **Tasks**
+    *   **CalDAV Calendar**: Configure server URL, calendar name, username, password secret ID, Obsidian tag, and CalDAV category.
+    *   **Sync Behavior**: Set sync interval, conflict preference, Obsidian links, and background sync notifications.
+    *   **New Task Destination**: Choose where CalDAV-created tasks are written in Markdown.
+    *   **Exclude Paths**: Keep selected task files/folders out of both the sidebar task list and CalDAV synchronization.
+
 ---
 
 ## 🏗️ Technical Architecture
@@ -116,6 +142,9 @@ This project is built upon the excellent work of the open-source community. We e
     
 2.  **[Richardsl](https://github.com/Richardsl/heatmap-calendar-obsidiane)** - Creator of **heatmap-calendar-obsidian**
     *   Provided core inspiration for our high-performance background word count and heatmap rendering.
+
+3.  **[josecoelho](https://github.com/josecoelho/obsidian-tasks-caldav)** - Creator of **obsidian-tasks-caldav**
+    *   The CalDAV task synchronization architecture in Work Assistant is implemented with sincere appreciation for this project's ideas around VTODO mapping, diffing, sync storage, and Obsidian Tasks integration.
 
 It is their open-source spirit that makes this tool possible.
 

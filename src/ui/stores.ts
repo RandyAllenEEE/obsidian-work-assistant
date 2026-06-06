@@ -7,6 +7,7 @@ import { writable } from "svelte/store";
 
 import { defaultSettings } from "src/settings";
 import type { ISettings } from "src/settings";
+import type { CommonTask } from "src/services/caldav/sync/types";
 
 import { getDateUIDFromFile } from "./utils";
 
@@ -175,3 +176,21 @@ export interface WeatherState {
 export const defaultWeatherState: WeatherState = {};
 
 export const weatherStore = writable<WeatherState>(defaultWeatherState);
+
+export interface TaskSyncState {
+  tasks: CommonTask[];
+  ready: boolean;
+  loading: boolean;
+  syncing: boolean;
+  lastSyncTime?: string;
+  error?: string;
+}
+
+export const defaultTaskSyncState: TaskSyncState = {
+  tasks: [],
+  ready: false,
+  loading: false,
+  syncing: false,
+};
+
+export const tasksStore = writable<TaskSyncState>(defaultTaskSyncState);

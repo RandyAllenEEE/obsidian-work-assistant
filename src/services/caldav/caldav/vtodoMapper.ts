@@ -1,0 +1,405 @@
+/**
+ * Represents a CalDAV calendar object (VTODO)
+ */
+export interface CalendarObject {
+  data: string;
+  etag?: string;
+  url: string;
+}
+
+import type { CommonTask } from '../sync/types';
+
+/** Fields returned by vtodoToTask — everything except uid, which is extracted separately */
+type VTODOTaskFields = Omit<CommonTask, 'uid'>;
+
+/**
+ * Maps between CommonTask fields and CalDAV VTODO iCalendar format.
+ */
+export class VTODOMapper {
+  /**
+   * Convert a CommonTask to VTODO iCalendar string.
+   * @param task The common task
+   * @param uid The CalDAV UID (use for updates, generate new for creates)
+   * @returns VTODO iCalendar string
+   */
+  taskToVTODO(task: Omit<CommonTask, 'uid'>, uid: string): string {
+    const lines: string[] = [];
+
+    lines.push('BEGIN:VCALENDAR');
+    lines.push('VERSION:2.0');
+    lines.push('PRODID:-//Obsidian//Tasks CalDAV Sync//EN');
+    lines.push('BEGIN:VTODO');
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${this.formatDateTimeUTC(new Date())}`);
+    lines.push(`LAST-MODIFIED:${this.formatDateTimeUTC(new Date())}`);
+    lines.push(`SUMMARY:${this.escapeText(task.title)}`);
+
+    // Description (body text), with optional obsidian link prepended
+    const description = this.buildDescription(task.body, task.obsidianUrl);
+    if (description) {
+      lines.push(`DESCRIPTION:${this.escapeText(description)}`);
+    }
+
+    // Obsidian vault link. When set, this plugin owns the URL property —
+    // any value previously set by another CalDAV client will be overwritten.
+    if (task.obsidianUrl) {
+      lines.push(`URL:${task.obsidianUrl}`);
+    }
+
+    // Status mapping
+    lines.push(`STATUS:${this.mapStatusToVTODO(task.status)}`);
+
+    // Due date
+    if (task.dueDate) {
+      lines.push(`DUE;VALUE=DATE:${this.formatDate(task.dueDate)}`);
+    }
+
+    // Start date: prefer startDate (🛫) over scheduledDate (⏳) for DTSTART
+    const dtstart = task.startDate || task.scheduledDate;
+    if (dtstart) {
+      lines.push(`DTSTART;VALUE=DATE:${this.formatDate(dtstart)}`);
+    }
+
+    // Completed date
+    if (task.completedDate) {
+      lines.push(`COMPLETED:${this.formatDateTimeUTC(this.toCompletedInstant(task.completedDate))}`);
+      lines.push('PERCENT-COMPLETE:100');
+    }
+
+    // Priority mapping (Obsidian: lowest/low/none/medium/high/highest -> VTODO: 0-9)
+    lines.push(`PRIORITY:${this.mapPriorityToVTODO(task.priority)}`);
+
+    // Recurrence rule
+    if (task.recurrenceRule) {
+      lines.push(`RRULE:${task.recurrenceRule}`);
+    }
+
+    // Tags as categories
+    if (task.tags.length > 0) {
+      lines.push(`CATEGORIES:${task.tags.map(t => this.escapeText(t)).join(',')}`);
+    }
+
+    lines.push('END:VTODO');
+    lines.push('END:VCALENDAR');
+
+    return lines.join('\r\n');
+  }
+
+  /**
+   * Convert VTODO iCalendar object to CommonTask fields (minus uid).
+   * @param vtodo The CalDAV calendar object containing VTODO
+   */
+  vtodoToTask(vtodo: CalendarObject): VTODOTaskFields {
+    const unfolded = this.unfold(vtodo.data);
+    // Extract only the VTODO section to avoid matching properties from VTIMEZONE or other components
+    const vtodoMatch = unfolded.match(/BEGIN:VTODO[\s\S]*?END:VTODO/);
+    const data = vtodoMatch ? vtodoMatch[0] : unfolded;
+
+    return {
+      title: this.extractRawProperty(data, 'SUMMARY') || 'Untitled Task',
+      status: this.mapStatusFromVTODO(this.extractProperty(data, 'STATUS') || 'NEEDS-ACTION') as CommonTask['status'],
+      dueDate: this.extractDateProperty(data, 'DUE'),
+      scheduledDate: null,
+      startDate: this.extractDateProperty(data, 'DTSTART'),
+      createdDate: this.extractDateTimeProperty(data, 'CREATED')?.split('T')[0] ?? null,
+      completedDate: this.extractDateTimeProperty(data, 'COMPLETED'),
+      priority: this.mapPriorityFromVTODO(this.extractProperty(data, 'PRIORITY') || '0') as CommonTask['priority'],
+      recurrenceRule: this.extractProperty(data, 'RRULE') || '',
+      tags: this.extractCategories(data),
+      body: this.stripObsidianLinks(this.extractRawProperty(data, 'DESCRIPTION') || ''),
+    };
+  }
+
+  /**
+   * Extract UID from VTODO data
+   */
+  extractUID(data: string): string {
+    const unfolded = this.unfold(data);
+    const match = unfolded.match(/^UID:(.+)$/m);
+    return match ? match[1].trim() : '';
+  }
+
+  /**
+   * Extract LAST-MODIFIED timestamp from VTODO data
+   * Returns ISO 8601 string or null if not present
+   */
+  extractLastModified(data: string): string | null {
+    const match = this.unfold(data).match(/^LAST-MODIFIED:(.+)$/m);
+    if (!match) return null;
+
+    const timestamp = match[1].trim();
+    // Parse iCalendar datetime format (YYYYMMDDTHHMMSSZ)
+    const year = timestamp.substring(0, 4);
+    const month = timestamp.substring(4, 6);
+    const day = timestamp.substring(6, 8);
+    const hour = timestamp.substring(9, 11);
+    const minute = timestamp.substring(11, 13);
+    const second = timestamp.substring(13, 15);
+
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
+  }
+
+  /**
+   * Map Obsidian task status to VTODO status
+   */
+  private mapStatusToVTODO(status: string): string {
+    switch (status) {
+      case 'TODO':
+        return 'NEEDS-ACTION';
+      case 'IN_PROGRESS':
+        return 'IN-PROCESS';
+      case 'DONE':
+        return 'COMPLETED';
+      case 'CANCELLED':
+        return 'CANCELLED';
+      default:
+        return 'NEEDS-ACTION';
+    }
+  }
+
+  /**
+   * Map VTODO status to Obsidian task status
+   */
+  private mapStatusFromVTODO(status: string): string {
+    switch (status) {
+      case 'NEEDS-ACTION':
+        return 'TODO';
+      case 'IN-PROCESS':
+        return 'IN_PROGRESS';
+      case 'COMPLETED':
+        return 'DONE';
+      case 'CANCELLED':
+        return 'CANCELLED';
+      default:
+        return 'TODO';
+    }
+  }
+
+  /**
+   * Map Obsidian priority to VTODO priority (0-9, where 1 is highest)
+   */
+  private mapPriorityToVTODO(priority: string): number {
+    switch (priority) {
+      case 'highest':
+        return 1;
+      case 'high':
+        return 3;
+      case 'medium':
+        return 5;
+      case 'low':
+        return 7;
+      case 'lowest':
+        return 9;
+      default:
+        return 0; // undefined
+    }
+  }
+
+  /**
+   * Map VTODO priority to Obsidian priority
+   */
+  private mapPriorityFromVTODO(priorityStr: string): string {
+    const priority = parseInt(priorityStr);
+
+    if (priority === 0) return 'none';
+    if (priority <= 2) return 'highest';
+    if (priority <= 4) return 'high';
+    if (priority <= 6) return 'medium';
+    if (priority <= 8) return 'low';
+    return 'lowest';
+  }
+
+  /**
+   * RFC 5545 Section 3.1: Unfold long content lines.
+   * Lines folded with CRLF+space/tab continuation are joined.
+   */
+  private unfold(data: string): string {
+    return data.replace(/\r?\n[ \t]/g, '');
+  }
+
+  /**
+   * Extract a simple property value from iCalendar data
+   */
+  private extractProperty(data: string, property: string): string | null {
+    const regex = new RegExp(`^${property}[;:](.+)$`, 'm');
+    const match = data.match(regex);
+
+    if (match) {
+      // Extract value after last colon (handles parameters like DUE;VALUE=DATE:20250105)
+      const fullValue = match[1];
+      const colonIndex = fullValue.lastIndexOf(':');
+      const value = colonIndex >= 0 ? fullValue.substring(colonIndex + 1).trim() : fullValue.trim();
+
+      // Unescape iCalendar special characters
+      return this.unescapeText(value);
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract a property value without splitting on colons within the value.
+   * Used for DESCRIPTION and other text properties where colons are valid content.
+   */
+  private extractRawProperty(data: string, property: string): string | null {
+    const regex = new RegExp(`^${property}:(.+)$`, 'm');
+    const match = data.match(regex);
+    if (!match) return null;
+    return this.unescapeText(match[1].trim());
+  }
+
+  /**
+   * Extract date property (VALUE=DATE format)
+   */
+  private extractDateProperty(data: string, property: string): string | null {
+    const value = this.extractProperty(data, property);
+    if (!value) return null;
+
+    // Parse YYYYMMDD format (VALUE=DATE)
+    if (value.length === 8 && /^\d{8}$/.test(value)) {
+      const year = value.substring(0, 4);
+      const month = value.substring(4, 6);
+      const day = value.substring(6, 8);
+      return `${year}-${month}-${day}`;
+    }
+
+    // Parse YYYYMMDDTHHMMSS format (TZID parameter or datetime without Z)
+    if (value.length >= 15 && value.includes('T')) {
+      const year = value.substring(0, 4);
+      const month = value.substring(4, 6);
+      const day = value.substring(6, 8);
+      return `${year}-${month}-${day}`;
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract datetime property
+   */
+  private extractDateTimeProperty(data: string, property: string): string | null {
+    const value = this.extractProperty(data, property);
+    if (!value) return null;
+
+    // Parse YYYYMMDDTHHMMSSZ format
+    if (value.length >= 15 && value.includes('T')) {
+      const year = value.substring(0, 4);
+      const month = value.substring(4, 6);
+      const day = value.substring(6, 8);
+      const hour = value.substring(9, 11);
+      const minute = value.substring(11, 13);
+      const second = value.substring(13, 15);
+      return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract categories (tags)
+   * Handles both comma-separated (CATEGORIES:a,b,c) and multiple lines
+   * (CATEGORIES:a\nCATEGORIES:b) as servers use both formats.
+   */
+  private extractCategories(data: string): string[] {
+    const regex = /^CATEGORIES[;:](.+)$/gm;
+    const categories: string[] = [];
+    let match;
+
+    while ((match = regex.exec(data)) !== null) {
+      // Extract value after last colon (handles parameters)
+      const fullValue = match[1];
+      const colonIndex = fullValue.lastIndexOf(':');
+      const value = colonIndex >= 0 ? fullValue.substring(colonIndex + 1).trim() : fullValue.trim();
+
+      // Split by unescaped commas: split on commas that aren't preceded by backslash
+      const parts = value.split(/(?<!\\),/);
+      for (const part of parts) {
+        categories.push(this.unescapeText(part.trim()));
+      }
+    }
+
+    return categories;
+  }
+
+  /**
+   * Format date as YYYYMMDD
+   * For date-only strings (YYYY-MM-DD), parses without timezone conversion
+   */
+  private formatDate(dateInput: Date | string): string {
+    // If it's already a YYYY-MM-DD string, parse it directly without timezone issues
+    if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+      const [year, month, day] = dateInput.split('-');
+      return `${year}${month}${day}`;
+    }
+
+    // Otherwise treat as Date object (use local time)
+    const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}${month}${day}`;
+  }
+
+  /**
+   * Resolve a CommonTask completedDate to the instant written as COMPLETED.
+   * Obsidian completion is date-only (✅ YYYY-MM-DD) with no time; anchor it
+   * at local noon so the UTC timestamp maps back to the same local calendar
+   * day in any timezone (round-trip safe). A full datetime is already an
+   * instant and is preserved as-is. See issue #43.
+   */
+  private toCompletedInstant(completedDate: string): Date {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(completedDate)) {
+      const [year, month, day] = completedDate.split('-').map(Number);
+      return new Date(year, month - 1, day, 12, 0, 0);
+    }
+    return new Date(completedDate);
+  }
+
+  /**
+   * Format datetime as YYYYMMDDTHHMMSSZ (UTC)
+   */
+  private formatDateTimeUTC(date: Date): string {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hour = String(date.getUTCHours()).padStart(2, '0');
+    const minute = String(date.getUTCMinutes()).padStart(2, '0');
+    const second = String(date.getUTCSeconds()).padStart(2, '0');
+    return `${year}${month}${day}T${hour}${minute}${second}Z`;
+  }
+
+  /**
+   * Escape special characters in iCalendar text
+   */
+  private escapeText(text: string): string {
+    return text
+      .replace(/\\/g, '\\\\')
+      .replace(/;/g, '\\;')
+      .replace(/,/g, '\\,')
+      .replace(/\n/g, '\\n');
+  }
+
+  private buildDescription(body: string, obsidianUrl?: string): string {
+    if (!obsidianUrl && !body) return '';
+    if (!obsidianUrl) return body;
+    if (!body) return obsidianUrl;
+    return `${obsidianUrl}\n\n${body}`;
+  }
+
+  private stripObsidianLinks(body: string): string {
+    const lines = body.split('\n');
+    const filtered = lines.filter(line => !line.match(/^obsidian:\/\/open\?vault=/));
+    return filtered.join('\n').replace(/^\n+/, '');
+  }
+
+  /**
+   * Unescape special characters from iCalendar text
+   */
+  private unescapeText(text: string): string {
+    return text
+      .replace(/\\n/g, '\n')
+      .replace(/\\,/g, ',')
+      .replace(/\\;/g, ';')
+      .replace(/\\\\/g, '\\');
+  }
+}

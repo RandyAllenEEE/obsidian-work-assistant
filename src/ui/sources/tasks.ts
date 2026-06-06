@@ -1,55 +1,50 @@
 import type { Moment } from "moment";
-import type { TFile } from "obsidian";
 import type { ICalendarSource, IDayMetadata, IDot } from "obsidian-calendar-ui";
-import { getDailyNote, getWeeklyNote } from "obsidian-daily-notes-interface";
 import { get } from "svelte/store";
 
-import { dailyNotes, weeklyNotes } from "../stores";
+import type { CommonTask } from "src/services/caldav/sync/types";
+import { tasksStore } from "../stores";
 
-export async function getNumberOfRemainingTasks(note: TFile): Promise<number> {
-  if (!note) {
-    return 0;
-  }
-
-  const { vault } = window.app;
-  const fileContents = await vault.cachedRead(note);
-  return (fileContents.match(/(-|\*) \[ \]/g) || []).length;
-}
-
-export async function getDotsForDailyNote(
-  dailyNote: TFile | null
-): Promise<IDot[]> {
-  if (!dailyNote) {
-    return [];
-  }
-  const numTasks = await getNumberOfRemainingTasks(dailyNote);
-
-  const dots = [];
-  if (numTasks) {
-    dots.push({
-      className: "task",
-      color: "default",
-      isFilled: false,
-    });
-  }
-  return dots;
-}
+const TASK_DOT: IDot = {
+  className: "caldav-task",
+  color: "default",
+  isFilled: false,
+};
 
 export const tasksSource: ICalendarSource = {
   getDailyMetadata: async (date: Moment): Promise<IDayMetadata> => {
-    const file = getDailyNote(date, get(dailyNotes));
-    const dots = await getDotsForDailyNote(file);
-    return {
-      dots,
-    };
+    const dateString = date.format("YYYY-MM-DD");
+    const hasTasks = get(tasksStore).tasks.some((task) => taskIsOpen(task) && taskMatchesDate(task, dateString));
+    return hasTasks ? { dots: [TASK_DOT] } : {};
   },
 
   getWeeklyMetadata: async (date: Moment): Promise<IDayMetadata> => {
-    const file = getWeeklyNote(date, get(weeklyNotes));
-    const dots = await getDotsForDailyNote(file);
-
-    return {
-      dots,
-    };
+    const start = date.clone().startOf("week");
+    const end = date.clone().endOf("week");
+    const hasTasks = get(tasksStore).tasks.some((task) => {
+      if (!taskIsOpen(task)) return false;
+      return getTaskDates(task).some((taskDate) => {
+        const momentDate = window.moment(taskDate, "YYYY-MM-DD");
+        return momentDate.isValid() && momentDate.isBetween(start, end, "day", "[]");
+      });
+    });
+    return hasTasks ? { dots: [TASK_DOT] } : {};
   },
 };
+
+function taskIsOpen(task: CommonTask): boolean {
+  return task.status !== "DONE" && task.status !== "CANCELLED";
+}
+
+function taskMatchesDate(task: CommonTask, date: string): boolean {
+  return getTaskDates(task).includes(date);
+}
+
+function getTaskDates(task: CommonTask): string[] {
+  return [
+    task.dueDate,
+    task.scheduledDate,
+    task.startDate,
+    task.createdDate ?? null,
+  ].filter((value): value is string => !!value);
+}

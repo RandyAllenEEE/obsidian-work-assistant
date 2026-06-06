@@ -2,7 +2,6 @@
   import type { Writable } from "svelte/store";
 
   import type { Granularity, PeriodicConfig } from "src/periodic/types";
-  import { displayConfigs } from "src/periodic/commands";
   import { t } from "src/i18n";
 
   import SettingItem from "./SettingItem.svelte";

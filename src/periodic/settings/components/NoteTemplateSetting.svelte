@@ -2,13 +2,11 @@
   import type { App } from "obsidian";
   import { onMount } from "svelte";
   import type { Readable } from "svelte/store";
-  import capitalize from "lodash/capitalize";
 
   import type { Granularity, PeriodicConfig } from "src/periodic/types";
   import { FileSuggest } from "src/periodic/ui/file-suggest";
 
   import { validateTemplate } from "../validation";
-  import { displayConfigs } from "src/periodic/commands";
   import { t } from "src/i18n";
 
   export let app: App;

@@ -303,7 +303,10 @@ export class PeriodicNotesCache extends Component {
       console.debug(`[Calendar] Resolved ${granularity} note: ${file.path} (date: ${metadata.canonicalDateStr})`);
 
       if (reason === "create" && file.stat.size === 0) {
-        applyPeriodicTemplateToFile(this.app, file, this.plugin.options, metadata);
+        applyPeriodicTemplateToFile(this.app, file, this.plugin.options, metadata, {
+          pluginDir: this.plugin.manifest.dir,
+          pluginId: this.plugin.manifest.id,
+        });
       }
 
       this.app.workspace.trigger("periodic-notes:resolve", granularity, file);

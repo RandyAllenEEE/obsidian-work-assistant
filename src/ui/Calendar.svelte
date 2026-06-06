@@ -13,7 +13,9 @@
   import WeatherBanner from "../weather/WeatherBanner.svelte";
   import WeatherWarningBanner from "../weather/WeatherWarningBanner.svelte";
   import FlipClock from "./FlipClock.svelte";
+  import TaskList from "./TaskList.svelte";
   import type { QWeatherService } from "../weather/QWeatherService";
+  import type { TaskSyncManager } from "../services/caldav/TaskSyncManager";
 
   export let today: Moment = window.moment();
   export let localeData: Locale = today.localeData();
@@ -24,6 +26,7 @@
 
   export let displayedMonth: Moment = undefined;
   export let weatherService: QWeatherService = undefined;
+  export let taskSyncManager: TaskSyncManager | null = null;
   export let sources: ICalendarSource[] = [];
   export let onHoverDay: (
     date: Moment,
@@ -67,6 +70,17 @@
     today = window.moment();
   }
 
+  $: widgetOrder = normalizeWidgetOrder($settings.assistant.widgetOrder);
+  $: hasDedicatedTasksWidget = widgetOrder.includes("tasks");
+
+  function normalizeWidgetOrder(configuredOrder: string[] | undefined): string[] {
+    const order = configuredOrder || ["flipClock", "calendar", "tasks", "weather"];
+    if ($settings.assistant.tasks?.enabled && !order.includes("tasks")) {
+      return [...order, "tasks"];
+    }
+    return order;
+  }
+
   function getToday(settings: ISettings) {
     const localeOverride =
       settings.localeOverride === "system-default"
@@ -98,7 +112,7 @@
   });
 </script>
 
-{#each $settings.assistant.widgetOrder || ["flipClock", "calendar", "weather"] as widget (widget)}
+{#each widgetOrder as widget (widget)}
   <div class="widget-container">
     {#if widget === "calendar"}
       {#if $settings.assistant.calendar.enabled}
@@ -117,10 +131,17 @@
           {onClickMonth}
           {onClickYear}
         />
+        {#if $settings.assistant.tasks?.enabled && !hasDedicatedTasksWidget}
+          <TaskList {taskSyncManager} />
+        {/if}
       {/if}
     {:else if widget === "flipClock"}
       {#if $settings.assistant.flipClock.enabled}
         <FlipClock />
+      {/if}
+    {:else if widget === "tasks"}
+      {#if $settings.assistant.tasks?.enabled}
+        <TaskList {taskSyncManager} />
       {/if}
     {:else if widget === "weather"}
       {#if $settings.assistant.weather.enabled}

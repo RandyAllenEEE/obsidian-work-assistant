@@ -125,3 +125,120 @@ div.day:hover {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* CalDAV task sync result modal */
+.sync-modal .sync-calendar-section {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: 10px 0;
+}
+
+.sync-modal .sync-calendar-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.sync-modal .sync-calendar-heading {
+  font-size: 1rem;
+  margin: 0 0 8px;
+}
+
+.sync-modal .sync-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sync-modal .sync-summary-item,
+.sync-modal .sync-badge {
+  background: var(--background-secondary);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 2px 6px;
+}
+
+.sync-modal .sync-summary-error {
+  color: var(--text-error);
+}
+
+.sync-modal .sync-section {
+  margin-top: 8px;
+}
+
+.sync-modal .sync-section-title {
+  color: var(--text-normal);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sync-modal .sync-section-content {
+  margin-top: 6px;
+  overflow-x: auto;
+}
+
+.sync-modal .sync-task-table {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  width: 100%;
+}
+
+.sync-modal .sync-task-table th,
+.sync-modal .sync-task-table td {
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.sync-modal .sync-change-item,
+.sync-modal .sync-conflict {
+  border-left: 2px solid var(--background-modifier-border);
+  margin-top: 6px;
+  padding-left: 8px;
+}
+
+.sync-modal .sync-change-desc {
+  margin-left: 6px;
+}
+
+.sync-modal .sync-change-uid,
+.sync-modal .sync-uid {
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  font-size: 0.72rem;
+}
+
+.sync-modal .sync-change-diff,
+.sync-modal .sync-empty,
+.sync-modal .sync-no-changes {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-top: 4px;
+}
+
+.sync-modal .sync-conflict-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.sync-modal .sync-task-detail {
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.sync-modal .sync-task-detail dt {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.sync-modal .sync-task-detail dd {
+  margin: 0 0 4px;
+}
+
+.sync-modal .sync-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
