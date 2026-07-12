@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import { spawn } from "child_process";
 import { SystemMediaMonitor, getActiveWindow } from "../smtc/SystemMediaMonitor";
+import type { MediaCache } from "../ui/stores";
 
 jest.mock("svelte/store", () => ({
   writable: (initial: unknown) => {
@@ -104,7 +105,7 @@ describe("SystemMediaMonitor process buffer", () => {
     const monitor = createMonitor();
     monitor.buffer = 'noiseJSON_START{"Title":"Song","Artist":"A"}JSON_ENDtail';
     monitor.processBuffer();
-    const state = readStoreValue<any>(monitor.mediaStore);
+    const state = readStoreValue<MediaCache>(monitor.mediaStore);
     expect(state?.Title).toBe("Song");
     expect(state?.Artist).toBe("A");
   });
@@ -116,10 +117,31 @@ describe("SystemMediaMonitor process buffer", () => {
     expect(readStoreValue(monitor.mediaStore)).toBeNull();
   });
 
+  test("processBuffer preserves large thumbnail payload until complete", () => {
+    const monitor = createMonitor();
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const thumbnail = `data:image/jpeg;base64,${"a".repeat(30000)}`;
+
+    monitor.buffer = `JSON_START{"Title":"Song","Artist":"A","Thumbnail":"${thumbnail}`;
+    monitor.processBuffer();
+
+    expect(monitor.buffer).toContain("JSON_START");
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    monitor.buffer += '"}JSON_END';
+    monitor.processBuffer();
+
+    const state = readStoreValue<any>(monitor.mediaStore);
+    expect(state?.Title).toBe("Song");
+    expect(state?.Thumbnail).toBe(thumbnail);
+    expect(monitor.buffer).toBe("");
+    warnSpy.mockRestore();
+  });
+
   test("processBuffer clears oversized buffer", () => {
     const monitor = createMonitor();
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-    monitor.buffer = "x".repeat(10001);
+    monitor.buffer = "x".repeat(1024 * 1024 + 1);
     monitor.processBuffer();
     expect(monitor.buffer).toBe("");
     expect(warnSpy).toHaveBeenCalled();

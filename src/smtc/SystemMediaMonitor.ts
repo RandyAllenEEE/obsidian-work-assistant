@@ -12,6 +12,9 @@ import { t } from "../i18n";
 // Known hashes for verification
 const KNOWN_CS_HASH = "701249D897255F9D177A57BF93D3D5EF7252645109AA0ABBEE19910F35CC2F24";
 const KNOWN_EXE_HASH = "8ABBD5D999F0C621A3F7AB6CCB39C813548649CA16F65EC36444FF385634E0A2";
+const JSON_START_MARKER = 'JSON_START';
+const JSON_END_MARKER = 'JSON_END';
+const MAX_BUFFER_LENGTH = 1024 * 1024;
 
 export class SystemMediaMonitor extends Component {
     private process: ChildProcessWithoutNullStreams | null = null;
@@ -198,11 +201,25 @@ export class SystemMediaMonitor extends Component {
     }
 
     private processBuffer() {
-        let startIndex = this.buffer.indexOf('JSON_START');
-        let endIndex = this.buffer.indexOf('JSON_END');
+        let startIndex = this.buffer.indexOf(JSON_START_MARKER);
+
+        if (startIndex === -1) {
+            if (this.buffer.length > MAX_BUFFER_LENGTH) {
+                console.warn(`[SMTC] Buffer overflow (${this.buffer.length} chars), clearing`);
+                this.buffer = '';
+            }
+            return;
+        }
+
+        if (startIndex > 0) {
+            this.buffer = this.buffer.substring(startIndex);
+            startIndex = 0;
+        }
+
+        let endIndex = this.buffer.indexOf(JSON_END_MARKER, startIndex + JSON_START_MARKER.length);
 
         while (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-            const jsonStr = this.buffer.substring(startIndex + 10, endIndex);
+            const jsonStr = this.buffer.substring(startIndex + JSON_START_MARKER.length, endIndex);
 
             try {
                 if (jsonStr === 'null') {
@@ -216,12 +233,18 @@ export class SystemMediaMonitor extends Component {
                 console.error("[SMTC] Failed to parse JSON:", e);
             }
 
-            this.buffer = this.buffer.substring(endIndex + 8);
-            startIndex = this.buffer.indexOf('JSON_START');
-            endIndex = this.buffer.indexOf('JSON_END');
+            this.buffer = this.buffer.substring(endIndex + JSON_END_MARKER.length);
+            startIndex = this.buffer.indexOf(JSON_START_MARKER);
+            if (startIndex > 0) {
+                this.buffer = this.buffer.substring(startIndex);
+                startIndex = 0;
+            }
+            endIndex = startIndex === -1
+                ? -1
+                : this.buffer.indexOf(JSON_END_MARKER, startIndex + JSON_START_MARKER.length);
         }
 
-        if (this.buffer.length > 10000) {
+        if (this.buffer.length > MAX_BUFFER_LENGTH) {
             console.warn(`[SMTC] Buffer overflow (${this.buffer.length} chars), clearing`);
             this.buffer = '';
         }
