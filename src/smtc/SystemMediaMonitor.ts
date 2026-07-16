@@ -22,6 +22,18 @@ interface DesktopRuntime {
     crypto: typeof import("crypto");
 }
 
+type RuntimeRequire = (moduleId: string) => unknown;
+
+declare const require: RuntimeRequire | undefined;
+
+function requireDesktopModule<T>(moduleId: string): T {
+    if (typeof require !== "function") {
+        throw new Error(`[SMTC] Node runtime is unavailable; cannot load ${moduleId}`);
+    }
+    const runtimeRequire = require;
+    return runtimeRequire(moduleId) as T;
+}
+
 function joinSystemPath(...parts: string[]): string {
     return parts
         .filter(Boolean)
@@ -83,11 +95,10 @@ export class SystemMediaMonitor extends Component {
     private async loadDesktopRuntime(): Promise<DesktopRuntime> {
         if (this.runtime) return this.runtime;
         if (!this.runtimePromise) {
-            this.runtimePromise = Promise.all([
-                import("child_process"),
-                import("fs"),
-                import("crypto"),
-            ]).then(([childProcess, fs, crypto]) => {
+            this.runtimePromise = Promise.resolve().then(() => {
+                const childProcess = requireDesktopModule<typeof import("child_process")>("child_process");
+                const fs = requireDesktopModule<typeof import("fs")>("fs");
+                const crypto = requireDesktopModule<typeof import("crypto")>("crypto");
                 this.runtime = { spawn: childProcess.spawn, fs, crypto };
                 return this.runtime;
             }).finally(() => {
@@ -190,7 +201,13 @@ export class SystemMediaMonitor extends Component {
         this.stopCurrentProcess();
         const generation = ++this.runGeneration;
 
-        const ready = await this.ensureBridge();
+        let ready: boolean;
+        try {
+            ready = await this.ensureBridge();
+        } catch (error) {
+            console.error("[SMTC] Desktop runtime initialization failed:", error);
+            return;
+        }
         if (!ready || this.stopped || generation !== this.runGeneration) {
             if (!ready) console.error("[SMTC] Bridge validation failed. Monitoring aborted.");
             return;
@@ -339,7 +356,9 @@ export class SystemMediaMonitor extends Component {
     controlMedia(action: "PlayPause" | "Next" | "Previous"): void {
         if (!Platform.isWin) return;
         if (!this.runtime) {
-            void this.loadDesktopRuntime().then(() => this.controlMedia(action));
+            void this.loadDesktopRuntime()
+                .then(() => this.controlMedia(action))
+                .catch((error) => console.error("[SMTC] Media control runtime unavailable:", error));
             return;
         }
 
@@ -415,7 +434,13 @@ export class SystemMediaMonitor extends Component {
 }
 
 export async function getActiveWindow(): Promise<Window> {
-    const { spawn } = await import("child_process");
+    let spawn: typeof import("child_process").spawn;
+    try {
+        ({ spawn } = requireDesktopModule<typeof import("child_process")>("child_process"));
+    } catch (error) {
+        console.error("[SMTC] Active-window runtime unavailable:", error);
+        return { title: "" } as unknown as Window;
+    }
     return new Promise((resolve) => {
         let settled = false;
         let titleBuffer = "";

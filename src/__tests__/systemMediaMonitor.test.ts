@@ -209,6 +209,20 @@ describe("SystemMediaMonitor process buffer", () => {
       jest.useRealTimers();
     }
   });
+
+  test("runtime initialization failure is handled without rejecting onload work", async () => {
+    const monitor = createMonitor();
+    jest.spyOn(monitor, "ensureBridge").mockRejectedValue(new Error("require unavailable"));
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(monitor.startMonitoring()).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[SMTC] Desktop runtime initialization failed:",
+      expect.objectContaining({ message: "require unavailable" })
+    );
+    errorSpy.mockRestore();
+  });
 });
 
 describe("getActiveWindow", () => {

@@ -18,6 +18,7 @@ import { showFileMenu } from "./periodic/modal";
 import type { SystemMediaMonitor } from "./smtc/SystemMediaMonitor";
 
 import { ConfirmationModal } from "./ui/modal";
+import { AssistantLeafCoordinator } from "./ui/assistantLeafCoordinator";
 import type { Granularity, PeriodicNotesConfig } from "./periodic/types";
 import {
   isMetaPressed,
@@ -179,6 +180,7 @@ export default class CalendarPlugin extends Plugin {
   private persistedSettingsRevision = 0;
   private settingsDrainPromise: Promise<void> | null = null;
   private applyingSettings = false;
+  private assistantLeafCoordinator: AssistantLeafCoordinator<WorkspaceLeaf> | null = null;
 
   private getObsidianLanguage(): Language {
     const momentLang = window.moment.locale();
@@ -189,7 +191,7 @@ export default class CalendarPlugin extends Plugin {
   }
 
   onunload(): void {
-    this.getAssistantLeaves().forEach((leaf) => leaf.detach());
+    this.getAssistantLeafCoordinator().removeAfterLayoutReady();
 
     if (this.timer) {
       if (this.timer.mode !== Mode.NoTimer) {
@@ -272,7 +274,8 @@ export default class CalendarPlugin extends Plugin {
     this.registerAssistantCommands();
     this.configureAssistant();
     if (this.isAssistantEnabled()) {
-      this.initLeaf();
+      // Restore/create the sidebar after layout recovery without stealing editor focus.
+      this.initLeaf(false);
     }
 
     this.settingsTab = new CalendarSettingsTab(this.app, this);
@@ -289,53 +292,40 @@ export default class CalendarPlugin extends Plugin {
 
   }
 
-  initLeaf(): void {
-    void this.ensureAssistantLeaf();
+  initLeaf(reveal = true): void {
+    this.getAssistantLeafCoordinator().request(reveal);
   }
 
-  private async ensureAssistantLeaf(): Promise<void> {
-    const existingLeaves = this.getAssistantLeaves();
-    if (existingLeaves.length > 0) {
-      await this.activateAssistantLeaf(existingLeaves);
-      return;
+  private getAssistantLeafCoordinator(): AssistantLeafCoordinator<WorkspaceLeaf> {
+    if (!this.assistantLeafCoordinator) {
+      this.assistantLeafCoordinator = new AssistantLeafCoordinator({
+        isEnabled: () => this.isAssistantEnabled(),
+        onLayoutReady: (callback) => this.app.workspace.onLayoutReady(callback),
+        findLeaves: () => this.getAssistantLeaves(),
+        createLeaf: () => this.app.workspace.getRightLeaf(false),
+        isCurrentView: (leaf) => this.isCurrentAssistantView(leaf),
+        setAssistantView: (leaf) => leaf.setViewState(this.getAssistantViewState(false)),
+        onLeafReady: (leaf) => {
+          if (leaf.view instanceof CalendarView) this.view = leaf.view;
+          this.view?.refresh();
+        },
+        revealLeaf: (leaf) => this.revealAssistantLeaf(leaf),
+        detachLeaf: (leaf) => leaf.detach(),
+        onError: (error) => {
+          console.warn("[Work Assistant] Failed to restore Assistant view", error);
+        },
+      });
     }
-
-    this.app.workspace.onLayoutReady(() => {
-      void this.createAssistantLeafIfMissing();
-    });
+    return this.assistantLeafCoordinator;
   }
 
-  private async createAssistantLeafIfMissing(): Promise<void> {
-    const existingLeaves = this.getAssistantLeaves();
-    if (existingLeaves.length > 0) {
-      await this.activateAssistantLeaf(existingLeaves);
-      return;
+  private isCurrentAssistantView(leaf: WorkspaceLeaf): boolean {
+    try {
+      if (leaf.getViewState().type === VIEW_TYPE_ASSISTANT) return true;
+    } catch {
+      // Fall through to the loaded view type check.
     }
-
-    const leaf = this.app.workspace.getRightLeaf(false);
-    if (!leaf) return;
-
-    await leaf.setViewState(this.getAssistantViewState());
-    await this.revealAssistantLeaf(leaf);
-  }
-
-  private async activateAssistantLeaf(leaves: WorkspaceLeaf[]): Promise<void> {
-    const [primaryLeaf, ...duplicateLeaves] = leaves;
-    if (!primaryLeaf) return;
-
-    await primaryLeaf.setViewState(this.getAssistantViewState());
-    await this.revealAssistantLeaf(primaryLeaf);
-
-    if (primaryLeaf.view instanceof CalendarView) {
-      this.view = primaryLeaf.view;
-    }
-    this.view?.refresh();
-
-    duplicateLeaves.forEach((leaf) => {
-      if (leaf !== primaryLeaf) {
-        leaf.detach();
-      }
-    });
+    return leaf.view?.getViewType?.() === VIEW_TYPE_ASSISTANT;
   }
 
   private async revealAssistantLeaf(leaf: WorkspaceLeaf): Promise<void> {
@@ -346,10 +336,10 @@ export default class CalendarPlugin extends Plugin {
     }
   }
 
-  private getAssistantViewState(): ViewState {
+  private getAssistantViewState(active = false): ViewState {
     return {
       type: VIEW_TYPE_ASSISTANT,
-      active: true,
+      active,
       state: {
         plugin: this.manifest.id,
         view: ASSISTANT_VIEW_DISPLAY_TEXT,
@@ -1138,7 +1128,7 @@ export default class CalendarPlugin extends Plugin {
     if (this.weatherService) {
       this.weatherService.stopWarningPolling();
     }
-    this.getAssistantLeaves().forEach((leaf) => leaf.detach());
+    this.getAssistantLeafCoordinator().removeAfterLayoutReady();
     this.view = null;
   }
 }
