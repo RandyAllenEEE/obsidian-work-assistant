@@ -39,6 +39,10 @@ describe("periodic parser and validation", () => {
     expect(getLooselyMatchedDate("no-date-here")).toBeNull();
   });
 
+  test("getLooselyMatchedDate rejects an impossible full date", () => {
+    expect(getLooselyMatchedDate("daily-2024-02-31-note")).toBeNull();
+  });
+
   test("removeEscapedCharacters removes bracket and escaped tokens", () => {
     expect(removeEscapedCharacters("YYYY/[MM]/DD\\-note")).toBe("YYYY//DDnote");
   });

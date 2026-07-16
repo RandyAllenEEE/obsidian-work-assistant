@@ -18,12 +18,11 @@ export function getLooselyMatchedDate(inputStr: string): ParseData | null {
   // to show what _isn't_ a date/timestamp
   const fullDateExp = FULL_DATE_PREFIX.exec(inputStr);
   if (fullDateExp) {
+    const canonicalDate = `${fullDateExp[1]}-${fullDateExp[2]}-${fullDateExp[3]}`;
+    const date = window.moment(canonicalDate, "YYYY-MM-DD", true);
+    if (!date.isValid()) return null;
     return {
-      date: window.moment({
-        day: Number(fullDateExp[3]),
-        month: Number(fullDateExp[2]) - 1,
-        year: Number(fullDateExp[1]),
-      }),
+      date,
       granularity: "day",
     };
   }

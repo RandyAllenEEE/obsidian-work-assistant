@@ -5,6 +5,7 @@ import {
   Component,
   parseFrontMatterEntry,
   TFile,
+  TFolder,
 } from "obsidian";
 import type {
   App,
@@ -61,6 +62,9 @@ export class PeriodicNotesCache extends Component {
   private dateIndex: Map<string, PeriodicNoteCachedMetadata>;
   private deferredTimer: number | null = null;
   private unloaded = false;
+  private scanGeneration = 0;
+  private bulkScanDepth = 0;
+  private bulkScanChanged = false;
 
   constructor(readonly app: App, readonly plugin: PeriodicNotesPlugin) {
     super();
@@ -73,6 +77,7 @@ export class PeriodicNotesCache extends Component {
       this.initialize();
       this.registerEvent(this.app.vault.on("create", this.resolve, this));
       this.registerEvent(this.app.vault.on("rename", this.resolveRename, this));
+      this.registerEvent(this.app.vault.on("delete", this.resolveDelete, this));
       this.registerEvent(
         this.app.metadataCache.on("changed", this.resolveChangedMetadata, this)
       );
@@ -85,6 +90,7 @@ export class PeriodicNotesCache extends Component {
   public onunload(): void {
     super.onunload();
     this.unloaded = true;
+    this.scanGeneration++;
     if (this.deferredTimer) {
       window.clearTimeout(this.deferredTimer);
       this.deferredTimer = null;
@@ -97,6 +103,7 @@ export class PeriodicNotesCache extends Component {
     console.info("[Work Assistant] reseting cache");
     this.cachedFiles.clear();
     this.dateIndex.clear();
+    this.triggerResolve();
     this.initialize();
   }
 
@@ -105,22 +112,23 @@ export class PeriodicNotesCache extends Component {
   }
 
   public initialize(lazy = true): void {
+    const generation = ++this.scanGeneration;
     if (lazy) {
-      this.fastScan();
+      this.fastScan(generation);
       // Defer full scan
       if (this.deferredTimer) window.clearTimeout(this.deferredTimer);
       this.deferredTimer = window.setTimeout(() => {
-        if (this.unloaded) return;
+        if (this.unloaded || generation !== this.scanGeneration) return;
         console.info("[Work Assistant] Starting deferred full cache scan");
-        this.fullScan();
+        void this.fullScan(generation);
         this.deferredTimer = null;
       }, 2000);
     } else {
-      this.fullScan();
+      void this.fullScan(generation);
     }
   }
 
-  private fastScan(): void {
+  private fastScan(generation: number): void {
     const today = window.moment();
     const currentMonth = today.format("YYYY-MM");
 
@@ -132,32 +140,41 @@ export class PeriodicNotesCache extends Component {
     });
 
     console.debug(`[Work Assistant] Fast Scanning ${priorityFiles.length} priority files`);
-    this.scanFiles(priorityFiles);
+    this.scanFiles(priorityFiles, generation);
   }
 
-  private fullScan(): void {
+  private async fullScan(generation: number): Promise<void> {
     // Scan all markdown files, but filter by configured folders inside scanFiles logic
     const allFiles = this.app.vault.getMarkdownFiles();
     console.debug(`[Work Assistant] Full Scanning ${allFiles.length} files`);
     // Use async scan for full scan to prevent UI freeze
-    this.scanFilesAsync(allFiles);
+    await this.scanFilesAsync(allFiles, generation);
   }
 
-  private scanFiles(files: TFile[]): void {
+  private scanFiles(files: TFile[], generation: number): void {
     // Legacy synchronous scan for small batches (like fastScan)
-    this.processFileBatch(files);
+    if (generation !== this.scanGeneration || this.unloaded) return;
+    this.beginBulkScan();
+    try {
+      this.processFileBatch(files);
+    } finally {
+      this.endBulkScan();
+    }
   }
 
-  private async scanFilesAsync(files: TFile[]): Promise<void> {
+  private async scanFilesAsync(files: TFile[], generation: number): Promise<void> {
     const CHUNK_SIZE = 200;
 
-    // Process in chunks
-    for (let i = 0; i < files.length; i += CHUNK_SIZE) {
-      const chunk = files.slice(i, i + CHUNK_SIZE);
-      this.processFileBatch(chunk);
-
-      // Yield to event loop
-      await new Promise(resolve => setTimeout(resolve, 10));
+    this.beginBulkScan();
+    try {
+      for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+        if (generation !== this.scanGeneration || this.unloaded) return;
+        const chunk = files.slice(i, i + CHUNK_SIZE);
+        this.processFileBatch(chunk);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    } finally {
+      this.endBulkScan();
     }
   }
 
@@ -172,18 +189,18 @@ export class PeriodicNotesCache extends Component {
       let folder = config.folder || "";
       if (folder === "/") folder = "";
       if (folder.startsWith("/")) folder = folder.slice(1);
-      configFolders[granularity] = folder;
+      configFolders[granularity] = folder.replace(/\/+$/, "");
     }
 
     for (const file of files) {
-      // Skip if already cached with high confidence (frontmatter)
+      // The fast scan already resolved this file; metadata events keep it current.
       const existing = this.cachedFiles.get(file.path);
-      if (existing && existing.matchData.matchType === "frontmatter") continue;
+      if (existing) continue;
 
       let isInWatchedFolder = false;
       for (const granularity of activeGranularities) {
         const folder = configFolders[granularity];
-        if (!folder || file.path.startsWith(folder)) {
+        if (this.isInFolder(file.path, folder)) {
           isInWatchedFolder = true;
           break;
         }
@@ -209,8 +226,8 @@ export class PeriodicNotesCache extends Component {
 
     for (const granularity of activeGranularities) {
       const config = (this.plugin.options.periodicNotes as PeriodicNotesConfig)[granularity];
-      const folder = config.folder || "";
-      if (!file.path.startsWith(folder)) continue;
+      const folder = (config.folder || "").replace(/\/+$/, "");
+      if (!this.isInFolder(file.path, folder)) continue;
 
       const frontmatterEntry = parseFrontMatterEntry(cache.frontmatter, granularity);
       if (!frontmatterEntry) continue;
@@ -221,6 +238,7 @@ export class PeriodicNotesCache extends Component {
         // e.g. `day: 2022-02-02`
         date = window.moment(frontmatterEntry, format, true);
         if (date.isValid()) {
+          this.removeCachedFile(file.path);
           const meta: PeriodicNoteCachedMetadata = {
             filePath: file.path,
             date,
@@ -233,40 +251,94 @@ export class PeriodicNotesCache extends Component {
           };
           this.cachedFiles.set(file.path, meta);
           this.dateIndex.set(this.getIndexKey(granularity, date), meta);
+          this.triggerResolve(granularity, file);
+          return;
         }
-        return;
+      }
+    }
+
+    const existing = this.cachedFiles.get(file.path);
+    if (existing?.matchData.matchType === "frontmatter") {
+      this.removeCachedFile(file.path);
+      if (!this.resolve(file, "initialize")) {
+        this.triggerResolve(existing.granularity, file);
       }
     }
   }
 
   private resolveRename(file: TAbstractFile, oldPath: string): void {
     if (file instanceof TFile) {
-      const existing = this.cachedFiles.get(oldPath);
-      if (existing) {
-        this.dateIndex.delete(this.getIndexKey(existing.granularity, existing.date));
+      const existing = this.removeCachedFile(oldPath);
+      if (!this.resolve(file, "rename") && existing) {
+        this.app.workspace.trigger("periodic-notes:resolve", existing.granularity, file);
       }
-      this.cachedFiles.delete(oldPath);
-      this.resolve(file, "rename");
+      return;
+    }
+
+    if (file instanceof TFolder) {
+      const removed = this.removeCachedPrefix(oldPath);
+      this.resolveFolderFiles(file);
+      if (removed) this.triggerResolve();
+    }
+  }
+
+  private resolveDelete(file: TAbstractFile): void {
+    const changed = file instanceof TFolder
+      ? this.removeCachedPrefix(file.path)
+      : file instanceof TFile && this.removeCachedFile(file.path) !== null;
+    if (changed) this.triggerResolve();
+  }
+
+  private removeCachedFile(path: string): PeriodicNoteCachedMetadata | null {
+    const existing = this.cachedFiles.get(path) ?? null;
+    if (!existing) return null;
+
+    const indexKey = this.getIndexKey(existing.granularity, existing.date);
+    if (this.dateIndex.get(indexKey)?.filePath === path) {
+      this.dateIndex.delete(indexKey);
+    }
+    this.cachedFiles.delete(path);
+    return existing;
+  }
+
+  private removeCachedPrefix(path: string): boolean {
+    let changed = false;
+    for (const cachedPath of [...this.cachedFiles.keys()]) {
+      if (cachedPath === path || cachedPath.startsWith(`${path}/`)) {
+        changed = this.removeCachedFile(cachedPath) !== null || changed;
+      }
+    }
+    return changed;
+  }
+
+  private resolveFolderFiles(folder: TFolder): void {
+    for (const child of folder.children) {
+      if (child instanceof TFile && child.extension === "md") {
+        this.resolve(child, "rename");
+      } else if (child instanceof TFolder) {
+        this.resolveFolderFiles(child);
+      }
     }
   }
 
   private resolve(
     file: TFile,
     reason: "create" | "rename" | "initialize" = "create"
-  ): void {
+  ): boolean {
     const activeGranularities = granularities.filter((g) => (this.plugin.options.periodicNotes as PeriodicNotesConfig)[g]?.enabled);
-    if (activeGranularities.length === 0) return;
+    if (activeGranularities.length === 0) return false;
 
     // 'frontmatter' entries should supercede 'filename'
     const existingEntry = this.cachedFiles.get(file.path);
     if (existingEntry && existingEntry.matchData.matchType === "frontmatter") {
-      return;
+      return true;
     }
+    this.removeCachedFile(file.path);
 
     for (const granularity of activeGranularities) {
       const config = (this.plugin.options.periodicNotes as PeriodicNotesConfig)[granularity];
-      const folder = config.folder || "";
-      if (!file.path.startsWith(folder)) continue;
+      const folder = (config.folder || "").replace(/\/+$/, "");
+      if (!this.isInFolder(file.path, folder)) continue;
 
       // Try each format until one matches (Issue 5 fix: match getDateInput to the format used)
       const formats = getPossibleFormats(this.plugin.options, granularity);
@@ -303,14 +375,18 @@ export class PeriodicNotesCache extends Component {
       console.debug(`[Calendar] Resolved ${granularity} note: ${file.path} (date: ${metadata.canonicalDateStr})`);
 
       if (reason === "create" && file.stat.size === 0) {
-        applyPeriodicTemplateToFile(this.app, file, this.plugin.options, metadata, {
+        void applyPeriodicTemplateToFile(this.app, file, this.plugin.options, metadata, {
           pluginDir: this.plugin.manifest.dir,
           pluginId: this.plugin.manifest.id,
+        }).catch((error) => {
+          if (this.app.vault.getAbstractFileByPath(file.path) === file) {
+            console.error(`[Work Assistant] Failed to apply periodic template to ${file.path}`, error);
+          }
         });
       }
 
-      this.app.workspace.trigger("periodic-notes:resolve", granularity, file);
-      return;
+      this.triggerResolve(granularity, file);
+      return true;
     }
 
 
@@ -335,11 +411,38 @@ export class PeriodicNotesCache extends Component {
         meta
       );
 
-      this.app.workspace.trigger(
-        "periodic-notes:resolve",
-        nonStrictDate.granularity,
-        file
-      );
+      this.triggerResolve(nonStrictDate.granularity, file);
+      return true;
+    }
+    return false;
+  }
+
+  private isInFolder(filePath: string, folder: string): boolean {
+    const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
+    return !normalizedFolder || filePath.startsWith(`${normalizedFolder}/`);
+  }
+
+  private beginBulkScan(): void {
+    this.bulkScanDepth++;
+  }
+
+  private endBulkScan(): void {
+    this.bulkScanDepth = Math.max(0, this.bulkScanDepth - 1);
+    if (this.bulkScanDepth === 0 && this.bulkScanChanged) {
+      this.bulkScanChanged = false;
+      this.app.workspace.trigger("periodic-notes:resolve");
+    }
+  }
+
+  private triggerResolve(granularity?: Granularity, file?: TFile): void {
+    if (this.bulkScanDepth > 0) {
+      this.bulkScanChanged = true;
+      return;
+    }
+    if (granularity && file) {
+      this.app.workspace.trigger("periodic-notes:resolve", granularity, file);
+    } else {
+      this.app.workspace.trigger("periodic-notes:resolve");
     }
   }
 

@@ -54,7 +54,13 @@ export class VTODOMapper {
       lines.push(`DUE;VALUE=DATE:${this.formatDate(task.dueDate)}`);
     }
 
-    // Start date: prefer startDate (🛫) over scheduledDate (⏳) for DTSTART
+    if (task.startDate) {
+      lines.push(`X-OBSIDIAN-START-DATE;VALUE=DATE:${this.formatDate(task.startDate)}`);
+    }
+    if (task.scheduledDate) {
+      lines.push(`X-OBSIDIAN-SCHEDULED-DATE;VALUE=DATE:${this.formatDate(task.scheduledDate)}`);
+    }
+    // Keep DTSTART for interoperability while custom properties preserve both semantics.
     const dtstart = task.startDate || task.scheduledDate;
     if (dtstart) {
       lines.push(`DTSTART;VALUE=DATE:${this.formatDate(dtstart)}`);
@@ -95,12 +101,15 @@ export class VTODOMapper {
     const vtodoMatch = unfolded.match(/BEGIN:VTODO[\s\S]*?END:VTODO/);
     const data = vtodoMatch ? vtodoMatch[0] : unfolded;
 
+    const customStartDate = this.extractDateProperty(data, 'X-OBSIDIAN-START-DATE');
+    const customScheduledDate = this.extractDateProperty(data, 'X-OBSIDIAN-SCHEDULED-DATE');
+    const legacyStartDate = this.extractDateProperty(data, 'DTSTART');
     return {
       title: this.extractRawProperty(data, 'SUMMARY') || 'Untitled Task',
       status: this.mapStatusFromVTODO(this.extractProperty(data, 'STATUS') || 'NEEDS-ACTION') as CommonTask['status'],
       dueDate: this.extractDateProperty(data, 'DUE'),
-      scheduledDate: null,
-      startDate: this.extractDateProperty(data, 'DTSTART'),
+      scheduledDate: customScheduledDate,
+      startDate: customStartDate ?? (customScheduledDate ? null : legacyStartDate),
       createdDate: this.extractDateTimeProperty(data, 'CREATED')?.split('T')[0] ?? null,
       completedDate: this.extractDateTimeProperty(data, 'COMPLETED'),
       priority: this.mapPriorityFromVTODO(this.extractProperty(data, 'PRIORITY') || '0') as CommonTask['priority'],

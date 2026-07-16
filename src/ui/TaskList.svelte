@@ -2,16 +2,18 @@
   import type { CommonTask } from "src/services/caldav/sync/types";
   import type { TaskSyncManager } from "../services/caldav/TaskSyncManager";
   import { t } from "../i18n";
+  import { groupTasks } from "./taskGrouping";
   import { tasksStore } from "./stores";
 
   export let taskSyncManager: TaskSyncManager | null = null;
+  export let todayDate = window.moment().format("YYYY-MM-DD");
 
   let toggling: Record<string, boolean> = {};
 
-  $: today = window.moment().format("YYYY-MM-DD");
-  $: openTasks = sortTasks(groupOpenTasks($tasksStore.tasks, today));
-  $: todayTasks = sortTasks(groupTodayTasks($tasksStore.tasks, today));
-  $: futureTasks = sortTasks(groupFutureTasks($tasksStore.tasks, today));
+  $: groupedTasks = groupTasks($tasksStore.tasks, todayDate);
+  $: openTasks = groupedTasks.open;
+  $: todayTasks = groupedTasks.today;
+  $: futureTasks = groupedTasks.future;
   $: groups = [
     { title: t("tasks-open"), tasks: openTasks },
     { title: t("tasks-today"), tasks: todayTasks },
@@ -29,75 +31,6 @@
       delete next[task.uid];
       toggling = next;
     }
-  }
-
-  function groupOpenTasks(tasks: CommonTask[], date: string): CommonTask[] {
-    return tasks.filter((task) => {
-      if (!isOpen(task) || matchesDate(task, date)) return false;
-      const primaryDate = getPrimaryDate(task);
-      return !primaryDate || primaryDate < date;
-    });
-  }
-
-  function groupTodayTasks(tasks: CommonTask[], date: string): CommonTask[] {
-    return tasks.filter((task) => isOpen(task) && matchesDate(task, date));
-  }
-
-  function groupFutureTasks(tasks: CommonTask[], date: string): CommonTask[] {
-    return tasks.filter((task) => {
-      if (!isOpen(task) || matchesDate(task, date)) return false;
-      const primaryDate = getPrimaryDate(task);
-      return !!primaryDate && primaryDate > date;
-    });
-  }
-
-  function isOpen(task: CommonTask): boolean {
-    return task.status !== "DONE" && task.status !== "CANCELLED";
-  }
-
-  function matchesDate(task: CommonTask, date: string): boolean {
-    return getTaskDates(task).includes(date);
-  }
-
-  function getPrimaryDate(task: CommonTask): string | null {
-    return task.dueDate ?? task.scheduledDate ?? task.startDate ?? task.createdDate ?? null;
-  }
-
-  function getTaskDates(task: CommonTask): string[] {
-    return [
-      task.dueDate,
-      task.scheduledDate,
-      task.startDate,
-      task.createdDate ?? null,
-    ].filter((value): value is string => !!value);
-  }
-
-  function sortTasks(tasks: CommonTask[]): CommonTask[] {
-    return [...tasks].sort((a, b) => {
-      const dateComparison = getSortDate(a).localeCompare(getSortDate(b));
-      if (dateComparison !== 0) return dateComparison;
-      return getPriorityWeight(b) - getPriorityWeight(a);
-    });
-  }
-
-  function getSortDate(task: CommonTask): string {
-    return task.dueDate
-      ?? task.scheduledDate
-      ?? task.startDate
-      ?? task.createdDate
-      ?? "9999-12-31";
-  }
-
-  function getPriorityWeight(task: CommonTask): number {
-    const weights: Record<CommonTask["priority"], number> = {
-      none: 0,
-      lowest: 1,
-      low: 2,
-      medium: 3,
-      high: 4,
-      highest: 5,
-    };
-    return weights[task.priority] ?? 0;
   }
 
   function getDateRangeLabel(task: CommonTask): string {
@@ -168,7 +101,7 @@
                     on:change={() => completeTask(task)}
                   />
                   <span class="task-content">
-                    <span class="task-title {getTitleClass(task, today)}">{task.title}</span>
+                    <span class="task-title {getTitleClass(task, todayDate)}">{task.title}</span>
                     <span class="task-meta">
                       {#if getDateRangeLabel(task)}
                         <span>{getDateRangeLabel(task)}</span>

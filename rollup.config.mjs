@@ -66,6 +66,27 @@ function copyAssets() {
   }
 }
 
+function assertMobileSafeEntry() {
+  const desktopModules = "child_process|fs|path|crypto";
+  const topLevelRequire = new RegExp(
+    `^(?:var|let|const)\\s+[^\\n=]+?=\\s*require\\(["'](?:${desktopModules})["']\\)`,
+    "m"
+  );
+  return {
+    name: "assert-mobile-safe-entry",
+    generateBundle(_options, bundle) {
+      for (const output of Object.values(bundle)) {
+        if (output.type !== "chunk" || !output.isEntry) continue;
+        if (topLevelRequire.test(output.code)) {
+          throw new Error(
+            "Mobile-unsafe top-level Node module import found in the plugin entry bundle."
+          );
+        }
+      }
+    },
+  };
+}
+
 export default {
   input: "src/main.ts",
   output: {
@@ -74,7 +95,7 @@ export default {
     exports: "default",
     inlineDynamicImports: true,
   },
-  external: ["obsidian", "fs", "os", "path", "child_process"],
+  external: ["obsidian", "fs", "os", "path", "crypto", "child_process"],
   onwarn(warning, warn) {
     if (isSvelteCircularDependency(warning)) return;
     warn(warning);
@@ -95,6 +116,7 @@ export default {
     commonjs({
       include: "node_modules/**",
     }),
+    assertMobileSafeEntry(),
     copyAssets(),
   ],
 };

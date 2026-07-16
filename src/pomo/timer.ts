@@ -26,6 +26,7 @@ export class Timer {
     autoPaused: boolean;
     pomosSinceStart: number;
     cyclesSinceLastAutoStop: number;
+    private timerEndPromise: Promise<void> | null = null;
 
     constructor(plugin: CalendarPlugin) {
         this.plugin = plugin;
@@ -57,6 +58,15 @@ export class Timer {
     }
 
     async handleTimerEnd(): Promise<void> {
+        if (!this.timerEndPromise) {
+            this.timerEndPromise = this.completeTimerEnd().finally(() => {
+                this.timerEndPromise = null;
+            });
+        }
+        await this.timerEndPromise;
+    }
+
+    private async completeTimerEnd(): Promise<void> {
         if (this.mode === Mode.Pomo) { //completed another pomo
             this.pomosSinceStart += 1;
 
@@ -135,6 +145,18 @@ export class Timer {
         // Validate mode is a known enum value at runtime
         if (typeof state.mode !== 'number' || state.mode < Mode.Pomo || state.mode > Mode.NoTimer) {
             console.warn("[Work Assistant] Invalid timer mode in cache, resetting:", state.mode);
+            return;
+        }
+
+        const numericValues = [
+            state.startTime,
+            state.endTime,
+            state.pausedTime,
+            state.pomosSinceStart,
+            state.cyclesSinceLastAutoStop,
+        ];
+        if (numericValues.some((value) => !Number.isFinite(value)) || typeof state.paused !== 'boolean') {
+            console.warn("[Work Assistant] Invalid timer state in cache, resetting");
             return;
         }
 

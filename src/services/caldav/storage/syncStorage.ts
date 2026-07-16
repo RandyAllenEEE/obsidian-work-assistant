@@ -133,23 +133,44 @@ export class SyncStorage {
    */
   async save(): Promise<void> {
     const promises: Promise<void>[] = [];
+    const saveState = this.stateDirty && !!this.stateCache;
+    const saveBaseline = this.baselineDirty && !!this.baselineCache;
+    const saveMapping = this.idMappingDirty && !!this.idMappingCache;
 
-    if (this.stateDirty && this.stateCache) {
+    if (saveState && this.stateCache) {
       promises.push(this.saveStateToDisk(this.stateCache));
-      this.stateDirty = false;
     }
 
-    if (this.baselineDirty && this.baselineCache) {
+    if (saveBaseline && this.baselineCache) {
       promises.push(this.saveBaselineToDisk(this.baselineCache));
-      this.baselineDirty = false;
     }
 
-    if (this.idMappingDirty && this.idMappingCache) {
+    if (saveMapping && this.idMappingCache) {
       promises.push(this.saveIdMappingToDisk(this.idMappingCache));
-      this.idMappingDirty = false;
     }
 
     await Promise.all(promises);
+    if (saveState) this.stateDirty = false;
+    if (saveBaseline) this.baselineDirty = false;
+    if (saveMapping) this.idMappingDirty = false;
+  }
+
+  async commitSuccessfulSync(idMapping: IdMapping, baseline: CommonTask[]): Promise<void> {
+    const state: SyncState = {
+      ...this.getState(),
+      lastSyncTime: new Date().toISOString(),
+    };
+    await Promise.all([
+      this.saveStateToDisk(state),
+      this.saveBaselineToDisk(baseline),
+      this.saveIdMappingToDisk(idMapping),
+    ]);
+    this.stateCache = state;
+    this.baselineCache = baseline;
+    this.idMappingCache = idMapping;
+    this.stateDirty = false;
+    this.baselineDirty = false;
+    this.idMappingDirty = false;
   }
 
   /**

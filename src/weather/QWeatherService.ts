@@ -62,6 +62,19 @@ interface WeatherApiResponse<T = any> {
 
 export class QWeatherService {
     private plugin: CalendarPlugin;
+    private activeFetch: {
+        type: 'all' | 'warnings-only';
+        forceRefresh: boolean;
+        promise: Promise<WeatherData | null>;
+    } | null = null;
+    private queuedFetch: {
+        type: 'all' | 'warnings-only';
+        forceRefresh: boolean;
+        waiters: Array<{
+            resolve: (value: WeatherData | null) => void;
+            reject: (reason: unknown) => void;
+        }>;
+    } | null = null;
 
     constructor(plugin: CalendarPlugin) {
         this.plugin = plugin;
@@ -91,11 +104,11 @@ export class QWeatherService {
     private warningIntervalId: number | null = null;
 
     async getWeather(forceRefresh = false): Promise<WeatherData | null> {
-        return this.fetchData(forceRefresh, 'all');
+        return this.requestFetch(forceRefresh, 'all');
     }
 
     async getWarnings(forceRefresh = false): Promise<WeatherData | null> {
-        return this.fetchData(forceRefresh, 'warnings-only');
+        return this.requestFetch(forceRefresh, 'warnings-only');
     }
 
     startWarningPolling(): void {
@@ -106,10 +119,7 @@ export class QWeatherService {
             return;
         }
 
-        if (this.warningIntervalId) {
-            window.clearInterval(this.warningIntervalId);
-            this.warningIntervalId = null;
-        }
+        if (this.warningIntervalId) return;
 
         // Default check every 15 minutes for background warnings
         const interval = 15 * 60 * 1000;
@@ -132,6 +142,54 @@ export class QWeatherService {
             window.clearInterval(this.warningIntervalId);
             this.warningIntervalId = null;
         }
+    }
+
+    private requestFetch(
+        forceRefresh: boolean,
+        type: 'all' | 'warnings-only'
+    ): Promise<WeatherData | null> {
+        const active = this.activeFetch;
+        if (!active) return this.startFetch(forceRefresh, type);
+
+        const activeCoversType = active.type === 'all' || active.type === type;
+        if (activeCoversType && (!forceRefresh || active.forceRefresh)) {
+            return active.promise;
+        }
+
+        return new Promise((resolve, reject) => {
+            if (!this.queuedFetch) {
+                this.queuedFetch = { type, forceRefresh, waiters: [] };
+            } else {
+                if (type === 'all') this.queuedFetch.type = 'all';
+                this.queuedFetch.forceRefresh ||= forceRefresh;
+            }
+            this.queuedFetch.waiters.push({ resolve, reject });
+        });
+    }
+
+    private startFetch(
+        forceRefresh: boolean,
+        type: 'all' | 'warnings-only'
+    ): Promise<WeatherData | null> {
+        const promise = this.fetchData(forceRefresh, type);
+        this.activeFetch = { type, forceRefresh, promise };
+        void promise.then(
+            () => this.drainQueuedFetch(promise),
+            () => this.drainQueuedFetch(promise)
+        );
+        return promise;
+    }
+
+    private drainQueuedFetch(completed: Promise<WeatherData | null>): void {
+        if (this.activeFetch?.promise !== completed) return;
+        this.activeFetch = null;
+        const queued = this.queuedFetch;
+        this.queuedFetch = null;
+        if (!queued) return;
+        void this.startFetch(queued.forceRefresh, queued.type).then(
+            (value) => queued.waiters.forEach(({ resolve }) => resolve(value)),
+            (error) => queued.waiters.forEach(({ reject }) => reject(error))
+        );
     }
 
     private async fetchData(forceRefresh: boolean, type: 'all' | 'warnings-only'): Promise<WeatherData | null> {
@@ -171,8 +229,7 @@ export class QWeatherService {
                     if (data.code === "200" && data.location && data.location.length > 0) {
                         locationId = (data.location[0] as any).id;
 
-                        await this.plugin.cacheManager.updateWeather({
-                            ...cache,
+                        await this.plugin.cacheManager.patchWeather({
                             locationId,
                             locationName: weatherCity,
                             weatherData: undefined,
@@ -342,10 +399,7 @@ export class QWeatherService {
             }
 
             if (hasUpdates) {
-                await this.plugin.cacheManager.updateWeather({
-                    ...cache,
-                    ...newTask
-                });
+                await this.plugin.cacheManager.patchWeather(newTask);
 
                 // Refresh local cache ref
                 cache = this.plugin.cacheManager.getWeather() || {};
@@ -378,8 +432,7 @@ export class QWeatherService {
         const cache = this.plugin.cacheManager.getWeather() || {};
         const dismissed = cache.dismissedWarningIds || [];
         if (!dismissed.includes(id)) {
-            await this.plugin.cacheManager.updateWeather({
-                ...cache,
+            await this.plugin.cacheManager.patchWeather({
                 dismissedWarningIds: [...dismissed, id]
             });
         }

@@ -3,7 +3,31 @@ import { get } from "svelte/store";
 
 import { dailyNoteChecklistSource, getNumberOfRemainingTasks } from "../ui/sources/dailyNoteChecklist";
 import { tasksSource } from "../ui/sources/tasks";
-import { tasksStore } from "../ui/stores";
+import { dailyNotes, tasksStore } from "../ui/stores";
+
+jest.mock("svelte/store", () => ({
+  writable: (initial: unknown) => {
+    let value = initial;
+    const subscribers = new Set<(next: unknown) => void>();
+    return {
+      set: (next: unknown) => {
+        value = next;
+        subscribers.forEach((subscriber) => subscriber(value));
+      },
+      update: (updater: (current: unknown) => unknown) => {
+        value = updater(value);
+        subscribers.forEach((subscriber) => subscriber(value));
+      },
+      subscribe: (subscriber: (next: unknown) => void) => {
+        subscriber(value);
+        subscribers.add(subscriber);
+        return () => subscribers.delete(subscriber);
+      },
+      __get: () => value,
+    };
+  },
+  get: (store: { __get(): unknown }) => store.__get(),
+}));
 
 jest.mock("obsidian-daily-notes-interface", () => ({
   getDailyNote: jest.fn((_date, notes) => notes["2026-06-06"] ?? null),
@@ -25,6 +49,9 @@ describe("task calendar sources", () => {
       ready: true,
       loading: false,
       syncing: false,
+    });
+    dailyNotes.reindex({
+      "2026-06-06": { path: "Daily/2026-06-06.md" } as any,
     });
   });
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
 
   import type {
     QWeatherService,
@@ -59,6 +59,8 @@
 
   let visible = true; // Default true, update on mount
   let bannerEl: HTMLElement;
+  let mounted = false;
+  let lastCity = $settings.assistant.weather.city;
 
   export async function refresh() {
     if (!weatherService) return;
@@ -97,6 +99,7 @@
   }
 
   onMount(() => {
+    mounted = true;
     // Visibility Observer
     const observer = new IntersectionObserver((entries) => {
       const isVisible = entries[0].isIntersecting;
@@ -114,6 +117,7 @@
     refresh(); // Initial fetch
 
     return () => {
+      mounted = false;
       observer.disconnect();
       if (refreshTimer) clearInterval(refreshTimer);
     };
@@ -131,7 +135,10 @@
     }, intervalMs);
   }
 
-  $: $settings.assistant.weather.city, refresh();
+  $: if (mounted && $settings.assistant.weather.city !== lastCity) {
+    lastCity = $settings.assistant.weather.city;
+    refresh();
+  }
 </script>
 
 {#if $settings.assistant.weather.enabled && current}

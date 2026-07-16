@@ -26,7 +26,9 @@ import {
   getFormat,
   getPeriodicNoteCreationPath
 } from "./periodic/utils";
+import { resolvePeriodicNotePath } from "./periodic/utils";
 import type { PeriodicNoteCachedMetadata } from "./periodic/cache";
+import TimelineManager from "./periodic/timeline/manager";
 
 import {
   ASSISTANT_VIEW_DISPLAY_TEXT,
@@ -93,6 +95,61 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
   return result;
 }
 
+function deepClone<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => deepClone(entry)) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, deepClone(entry)])
+    ) as T;
+  }
+  return value;
+}
+
+function normalizePositiveInteger(value: number, fallback: number, minimum = 1): number {
+  return Number.isFinite(value) && Number.isInteger(value) && value >= minimum ? value : fallback;
+}
+
+function normalizeSettings(value: ISettings): ISettings {
+  const normalized = deepClone(value);
+  normalized.pomodoro.work = normalizePositiveInteger(normalized.pomodoro.work, defaultSettings.pomodoro.work);
+  normalized.pomodoro.shortBreak = normalizePositiveInteger(normalized.pomodoro.shortBreak, defaultSettings.pomodoro.shortBreak);
+  normalized.pomodoro.longBreak = normalizePositiveInteger(normalized.pomodoro.longBreak, defaultSettings.pomodoro.longBreak);
+  normalized.pomodoro.longBreakInterval = normalizePositiveInteger(
+    normalized.pomodoro.longBreakInterval,
+    defaultSettings.pomodoro.longBreakInterval
+  );
+  normalized.pomodoro.autoCycles = normalizePositiveInteger(
+    normalized.pomodoro.autoCycles,
+    defaultSettings.pomodoro.autoCycles,
+    0
+  );
+  normalized.assistant.weather.refreshInterval = normalizePositiveInteger(
+    normalized.assistant.weather.refreshInterval,
+    defaultSettings.assistant.weather.refreshInterval
+  );
+  normalized.assistant.weather.dailyRefreshInterval = normalizePositiveInteger(
+    normalized.assistant.weather.dailyRefreshInterval,
+    defaultSettings.assistant.weather.dailyRefreshInterval
+  );
+  normalized.wordCount.heatmap.refreshInterval = normalizePositiveInteger(
+    normalized.wordCount.heatmap.refreshInterval,
+    defaultSettings.wordCount.heatmap.refreshInterval,
+    100
+  );
+  normalized.assistant.tasks.syncInterval = normalizePositiveInteger(
+    normalized.assistant.tasks.syncInterval,
+    defaultSettings.assistant.tasks.syncInterval,
+    0
+  );
+  return normalized;
+}
+
+function settingsEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export default class CalendarPlugin extends Plugin {
   public options: ISettings;
   public settings: Writable<ISettings>;
@@ -106,7 +163,6 @@ export default class CalendarPlugin extends Plugin {
   public timer: Timer;
   private ribbonEl: HTMLElement | null;
   public cache: PeriodicNotesCache | null = null;
-  private isInitialized = false;
   private debouncedSync: () => void;
   public systemMediaMonitor: SystemMediaMonitor | null = null;
   private statusBarPlayer: StatusBarPlayer | null = null;
@@ -115,6 +171,14 @@ export default class CalendarPlugin extends Plugin {
   private systemMediaStartScheduled = false;
   private systemMediaStartGeneration = 0;
   private settingsTab: CalendarSettingsTab;
+  private timelineManager: TimelineManager | null = null;
+  private assistantCommandsRegistered = false;
+  private periodicNoteCreations = new Map<string, Promise<TFile | null>>();
+  private appliedOptions: ISettings;
+  private settingsRevision = 0;
+  private persistedSettingsRevision = 0;
+  private settingsDrainPromise: Promise<void> | null = null;
+  private applyingSettings = false;
 
   private getObsidianLanguage(): Language {
     const momentLang = window.moment.locale();
@@ -123,27 +187,6 @@ export default class CalendarPlugin extends Plugin {
     }
     return 'en';
   }
-
-  private onSettingsUpdate = debounce(
-    async () => {
-      if (!this.isInitialized) return;
-
-      await this.saveData(this.options);
-      this.configureCommands();
-      this.configurePomodoro();
-      this.configureSystemMedia();
-      this.configureWordCount();
-      await this.configureTaskSync();
-      this.configurePeriodicNotes();
-      this.configureAssistant();
-
-      if (this.view) {
-        this.view.refresh();
-      }
-    },
-    1000,
-    true
-  );
 
   onunload(): void {
     this.getAssistantLeaves().forEach((leaf) => leaf.detach());
@@ -166,6 +209,7 @@ export default class CalendarPlugin extends Plugin {
     }
 
     this.unloadSystemMedia();
+    this.unloadTimeline();
   }
 
   async onload(): Promise<void> {
@@ -181,9 +225,9 @@ export default class CalendarPlugin extends Plugin {
     this.register(
       settings.subscribe((value) => {
         this.options = value;
-        this.onSettingsUpdate();
       })
     );
+    this.appliedOptions = deepClone(this.options);
 
     this.configureWordCount();
     this.weatherService = new QWeatherService(this);
@@ -225,7 +269,11 @@ export default class CalendarPlugin extends Plugin {
       }
     );
 
+    this.registerAssistantCommands();
     this.configureAssistant();
+    if (this.isAssistantEnabled()) {
+      this.initLeaf();
+    }
 
     this.settingsTab = new CalendarSettingsTab(this.app, this);
     this.addSettingTab(this.settingsTab);
@@ -239,7 +287,6 @@ export default class CalendarPlugin extends Plugin {
       }, 1000)
     );
 
-    this.isInitialized = true;
   }
 
   initLeaf(): void {
@@ -447,43 +494,88 @@ export default class CalendarPlugin extends Plugin {
 
     }
 
-    settings.set(finalSettings);
-    this.options = finalSettings;
-
     // Fix JSON serialization for Infinity in heatmap
-    if (this.options.wordCount.heatmap.colorRanges) {
-      this.options.wordCount.heatmap.colorRanges.forEach(range => {
+    if (finalSettings.wordCount.heatmap.colorRanges) {
+      finalSettings.wordCount.heatmap.colorRanges.forEach(range => {
         if (range.max === null) range.max = Infinity;
       });
     }
+    finalSettings = normalizeSettings(finalSettings);
+    settings.set(finalSettings);
+    this.options = finalSettings;
   }
 
   async writeOptions(
     changeOpts: (settings: ISettings) => Partial<ISettings>
   ): Promise<void> {
+    let nextOptions: ISettings;
     settings.update((old) => {
       const updates = changeOpts(old);
-      // Since our state is nested, updates might be partial. 
-      // But changeOpts usually returns full structure updates in my new settings.ts.
-      // E.g. { assistant: { ...old.assistant, ... } }
-      // So shallow merge at top level is fine if the updater respects structure.
-      return { ...old, ...updates };
+      nextOptions = normalizeSettings({ ...old, ...updates });
+      return nextOptions;
     });
-    // Write full object
-    await this.saveData(this.options);
+    this.options = nextOptions!;
+    const requestedRevision = ++this.settingsRevision;
+    if (this.applyingSettings) return;
+    await this.requestSettingsDrain();
+    if (this.persistedSettingsRevision < requestedRevision) {
+      throw new Error("Settings update was not persisted");
+    }
+  }
 
-    // Cache reset check
-    // Check key fields
-    // Logic changed to checking specific values because we can't easily compare partials here without keeping 'old'.
-    // We'll trust the trigger logic: if we edited granularity or weekStart.
-    // Actually, simpler to just always trigger resolve if Periodic Notes enabled?
-    // Or check if 'periodicNotes' or 'assistant.calendar.weekStart' changed?
-    // Optimization: Just trigger it. It's debounced.
-    this.app.workspace.trigger("periodic-notes:settings-updated");
+  private requestSettingsDrain(): Promise<void> {
+    if (!this.settingsDrainPromise) {
+      this.settingsDrainPromise = this.drainSettingsUpdates().finally(() => {
+        this.settingsDrainPromise = null;
+      });
+    }
+    return this.settingsDrainPromise;
+  }
 
-    this.configureCommands();
-    this.configureRibbonIcons();
-    this.view?.refresh();
+  private async drainSettingsUpdates(): Promise<void> {
+    while (this.persistedSettingsRevision < this.settingsRevision) {
+      const writeRevision = this.settingsRevision;
+      const snapshot = deepClone(this.options);
+      await this.saveData(snapshot);
+      this.persistedSettingsRevision = writeRevision;
+
+      // A newer snapshot supersedes configuration work for this revision.
+      if (writeRevision !== this.settingsRevision) continue;
+      this.applyingSettings = true;
+      try {
+        await this.applySettingsChanges(this.appliedOptions, snapshot);
+      } finally {
+        this.applyingSettings = false;
+      }
+      this.appliedOptions = snapshot;
+    }
+  }
+
+  private async applySettingsChanges(previous: ISettings, next: ISettings): Promise<void> {
+    if (!settingsEqual(previous.pomodoro, next.pomodoro)) {
+      this.configurePomodoro();
+    }
+    if (!settingsEqual(previous.media, next.media)) {
+      this.configureSystemMedia();
+    }
+    if (!settingsEqual(previous.wordCount, next.wordCount)) {
+      this.configureWordCount();
+    }
+    if (!settingsEqual(previous.assistant.tasks, next.assistant.tasks)) {
+      await this.configureTaskSync();
+    }
+
+    const periodicChanged = !settingsEqual(previous.periodicNotes, next.periodicNotes)
+      || previous.assistant.calendar.weekStart !== next.assistant.calendar.weekStart;
+    if (periodicChanged) {
+      this.configurePeriodicNotes();
+      this.app.workspace.trigger("periodic-notes:settings-updated");
+    }
+
+    if (!settingsEqual(previous.assistant, next.assistant)
+      || previous.localeOverride !== next.localeOverride) {
+      this.configureAssistant();
+    }
   }
 
   private configureRibbonIcons(): void {
@@ -546,12 +638,10 @@ export default class CalendarPlugin extends Plugin {
     date: Moment,
     opts?: { inNewSplit?: boolean; leaf?: WorkspaceLeaf }
   ): Promise<void> {
+    if (!this.options.periodicNotes.enabled) return;
     const { inNewSplit = false, leaf: preferredLeaf } = opts ?? {};
     const { workspace } = this.app;
-    let file = this.cache.getPeriodicNote(
-      granularity,
-      date
-    );
+    let file = this.getPeriodicNote(granularity, date);
 
     if (!file) {
       file = await this.createPeriodicNote(granularity, date);
@@ -564,6 +654,24 @@ export default class CalendarPlugin extends Plugin {
   }
 
   public async createPeriodicNote(
+    granularity: Granularity,
+    date: Moment
+  ): Promise<TFile | null> {
+    if (!this.options.periodicNotes.enabled) return null;
+    const destination = resolvePeriodicNotePath(this.options, granularity, date, { extension: true });
+    const inFlight = this.periodicNoteCreations.get(destination);
+    if (inFlight) return inFlight;
+
+    const creation = this.createPeriodicNoteInternal(granularity, date).finally(() => {
+      if (this.periodicNoteCreations.get(destination) === creation) {
+        this.periodicNoteCreations.delete(destination);
+      }
+    });
+    this.periodicNoteCreations.set(destination, creation);
+    return creation;
+  }
+
+  private async createPeriodicNoteInternal(
     granularity: Granularity,
     date: Moment
   ): Promise<TFile | null> {
@@ -608,7 +716,15 @@ export default class CalendarPlugin extends Plugin {
       { settings: this.options }
     );
     const destPath = await getPeriodicNoteCreationPath(this.app, this.options, granularity, date);
-    return this.app.vault.create(destPath, renderedContents);
+    const existing = this.app.vault.getAbstractFileByPath(destPath);
+    if (existing instanceof TFile) return existing;
+    try {
+      return await this.app.vault.create(destPath, renderedContents);
+    } catch (error) {
+      const concurrentlyCreated = this.app.vault.getAbstractFileByPath(destPath);
+      if (concurrentlyCreated instanceof TFile) return concurrentlyCreated;
+      throw error;
+    }
   }
 
   public getPeriodicNote(granularity: Granularity, date: Moment): TFile | null {
@@ -837,10 +953,13 @@ export default class CalendarPlugin extends Plugin {
   private configureWordCount(): void {
     const { wordCount } = this.options;
     if (wordCount.enabled) {
+      const existingStats = this.wordCountStats;
       this.initWordCount();
-      if (this.wordCountStats) {
-        this.wordCountStats.updateStatusBar(wordCount.statusBar);
-        void this.wordCountStats.handleSettingsChanged();
+      this.wordCountStats?.updateStatusBar(wordCount.statusBar);
+      if (existingStats) {
+        void existingStats.handleSettingsChanged().catch((error) => {
+          console.error("[Work Assistant] Failed to apply word count settings", error);
+        });
       }
     } else {
       this.unloadWordCount();
@@ -909,6 +1028,7 @@ export default class CalendarPlugin extends Plugin {
     } else {
       this.unloadPeriodicNotes();
     }
+    this.configureTimeline();
   }
 
   private configureCache(): void {
@@ -924,6 +1044,8 @@ export default class CalendarPlugin extends Plugin {
       if (this.cache) {
         this.removeChild(this.cache);
         this.cache = null;
+        dailyNotes.reindex({});
+        weeklyNotes.reindex({});
       }
     }
   }
@@ -934,9 +1056,26 @@ export default class CalendarPlugin extends Plugin {
   }
 
   private unloadPeriodicNotes(): void {
-
     this.configureCommands();
     this.configureRibbonIcons();
+  }
+
+  private configureTimeline(): void {
+    const shouldEnable = this.options.periodicNotes.enabled
+      && this.options.periodicNotes.timelineComplication
+      && this.cache !== null;
+    if (!shouldEnable) {
+      this.unloadTimeline();
+      return;
+    }
+    if (!this.timelineManager) {
+      this.timelineManager = new TimelineManager(this, this.cache!);
+    }
+  }
+
+  private unloadTimeline(): void {
+    this.timelineManager?.cleanup();
+    this.timelineManager = null;
   }
 
   private configureAssistant(): void {
@@ -958,12 +1097,17 @@ export default class CalendarPlugin extends Plugin {
       this.weatherService.startWarningPolling();
     }
 
-    const lang = this.getObsidianLanguage();
+  }
 
+  private registerAssistantCommands(): void {
+    if (this.assistantCommandsRegistered) return;
+    this.assistantCommandsRegistered = true;
+    const lang = this.getObsidianLanguage();
     this.addCommand({
       id: "show-calendar-view",
       name: t('command-open-view', lang),
       checkCallback: (checking: boolean) => {
+        if (!this.isAssistantEnabled()) return false;
         if (checking) {
           return true;
         }
@@ -975,10 +1119,18 @@ export default class CalendarPlugin extends Plugin {
     this.addCommand({
       id: "reveal-active-note",
       name: t('command-reveal-active-note', lang),
-      callback: () => this.view?.revealActiveNote(),
+      checkCallback: (checking: boolean) => {
+        if (!this.isAssistantEnabled() || !this.view) return false;
+        if (!checking) this.view.revealActiveNote();
+        return true;
+      },
     });
+  }
 
-    this.initLeaf();
+  private isAssistantEnabled(): boolean {
+    const { assistant } = this.options;
+    return assistant.enabled
+      && (assistant.calendar.enabled || assistant.flipClock.enabled || assistant.weather.enabled || assistant.tasks.enabled);
   }
 
   private unloadAssistant(): void {
@@ -986,5 +1138,7 @@ export default class CalendarPlugin extends Plugin {
     if (this.weatherService) {
       this.weatherService.stopWarningPolling();
     }
+    this.getAssistantLeaves().forEach((leaf) => leaf.detach());
+    this.view = null;
   }
 }

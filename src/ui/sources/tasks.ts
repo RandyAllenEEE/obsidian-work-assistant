@@ -2,8 +2,9 @@ import type { Moment } from "moment";
 import type { ICalendarSource, IDayMetadata, IDot } from "obsidian-calendar-ui";
 import { get } from "svelte/store";
 
-import type { CommonTask } from "src/services/caldav/sync/types";
 import { tasksStore } from "../stores";
+import type { CommonTask } from "../../services/caldav/sync/types";
+import { getTaskActionDates, isOpenTask } from "../taskGrouping";
 
 const TASK_DOT: IDot = {
   className: "caldav-task",
@@ -11,40 +12,34 @@ const TASK_DOT: IDot = {
   isFilled: false,
 };
 
+let indexedTasks: CommonTask[] | null = null;
+let indexedDates = new Set<string>();
+
+function getActionDateIndex(): Set<string> {
+  const tasks = get(tasksStore).tasks;
+  if (tasks === indexedTasks) return indexedDates;
+  indexedTasks = tasks;
+  indexedDates = new Set(
+    tasks
+      .filter(isOpenTask)
+      .flatMap(getTaskActionDates)
+  );
+  return indexedDates;
+}
+
 export const tasksSource: ICalendarSource = {
   getDailyMetadata: async (date: Moment): Promise<IDayMetadata> => {
     const dateString = date.format("YYYY-MM-DD");
-    const hasTasks = get(tasksStore).tasks.some((task) => taskIsOpen(task) && taskMatchesDate(task, dateString));
+    const hasTasks = getActionDateIndex().has(dateString);
     return hasTasks ? { dots: [TASK_DOT] } : {};
   },
 
   getWeeklyMetadata: async (date: Moment): Promise<IDayMetadata> => {
     const start = date.clone().startOf("week");
-    const end = date.clone().endOf("week");
-    const hasTasks = get(tasksStore).tasks.some((task) => {
-      if (!taskIsOpen(task)) return false;
-      return getTaskDates(task).some((taskDate) => {
-        const momentDate = window.moment(taskDate, "YYYY-MM-DD");
-        return momentDate.isValid() && momentDate.isBetween(start, end, "day", "[]");
-      });
-    });
+    const dates = getActionDateIndex();
+    const hasTasks = Array.from({ length: 7 }, (_, index) =>
+      start.clone().add(index, "day").format("YYYY-MM-DD")
+    ).some((dateString) => dates.has(dateString));
     return hasTasks ? { dots: [TASK_DOT] } : {};
   },
 };
-
-function taskIsOpen(task: CommonTask): boolean {
-  return task.status !== "DONE" && task.status !== "CANCELLED";
-}
-
-function taskMatchesDate(task: CommonTask, date: string): boolean {
-  return getTaskDates(task).includes(date);
-}
-
-function getTaskDates(task: CommonTask): string[] {
-  return [
-    task.dueDate,
-    task.scheduledDate,
-    task.startDate,
-    task.createdDate ?? null,
-  ].filter((value): value is string => !!value);
-}

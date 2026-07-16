@@ -1,16 +1,16 @@
 /**
  * Generates unique, human-readable task IDs using timestamp-based format
- * Format: YYYYMMDD-xxx where xxx is a random 3-character hex string
+ * Format: YYYYMMDD-xxxxxxxx where the suffix contains 32 bits of random data.
  *
  * This provides:
  * - Human readability: dates are visible at a glance
  * - Sortability: lexicographic order matches chronological order
- * - Collision resistance: ~65k combinations per day
+ * - Collision resistance: 2^32 combinations per day
  */
 
 /**
  * Generate a timestamp-based task ID
- * @returns A task ID in format YYYYMMDD-xxx (e.g., 20250105-a4f)
+ * @returns A task ID in format YYYYMMDD-xxxxxxxx (e.g., 20250105-a4f19c2e)
  */
 export function generateTaskId(): string {
   const now = new Date();
@@ -21,8 +21,15 @@ export function generateTaskId(): string {
   const day = String(now.getDate()).padStart(2, '0');
   const datePart = `${year}${month}${day}`;
 
-  // Generate 3-character random hex string
-  const randomPart = Math.floor(Math.random() * 4096).toString(16).padStart(3, '0');
+  const bytes = new Uint8Array(4);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index++) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  const randomPart = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 
   return `${datePart}-${randomPart}`;
 }
@@ -52,5 +59,5 @@ export function extractTaskId(taskText: string): string | null {
  * @returns true if valid, false otherwise
  */
 export function isValidTaskId(id: string): boolean {
-  return /^\d{8}-[0-9a-f]{3}$/.test(id);
+  return /^\d{8}-(?:[0-9a-f]{3}|[0-9a-f]{8})$/.test(id);
 }

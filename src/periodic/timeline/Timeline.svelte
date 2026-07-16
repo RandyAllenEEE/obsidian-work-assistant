@@ -24,7 +24,7 @@
   let relativeDataStr: string;
 
   let settings = plugin.settings;
-  let showComplication = $settings.periodicNotes.timelineComplication;
+  $: showComplication = $settings.periodicNotes.timelineComplication;
 
   $: {
     periodicData = cache.find(view.file?.path);
@@ -56,10 +56,6 @@
     await plugin.openPeriodicNote(granularity, date, { leaf: view.leaf });
   }
 
-  function updateComplicationVisibility() {
-    showComplication = $settings.periodicNotes.timelineComplication;
-  }
-
   function toggleCalendarVisibility() {
     showTimeline = !showTimeline;
   }
@@ -77,16 +73,19 @@
   }
 
   onMount(() => {
-    plugin.registerEvent(plugin.app.workspace.on("file-open", updateView));
-    plugin.registerEvent(
+    const eventRefs = [
+      plugin.app.workspace.on("file-open", updateView),
       plugin.app.workspace.on("periodic-notes:resolve", updateView),
-    );
-    plugin.registerEvent(
-      plugin.app.workspace.on(
-        "periodic-notes:settings-updated",
-        updateComplicationVisibility,
-      ),
-    );
+    ];
+    const heartbeat = window.setInterval(() => {
+      today = window.moment();
+      updateView();
+    }, 60_000);
+
+    return () => {
+      window.clearInterval(heartbeat);
+      eventRefs.forEach((eventRef) => plugin.app.workspace.offref(eventRef));
+    };
   });
 </script>
 

@@ -97,10 +97,11 @@
 
   // 1 minute heartbeat to keep `today` reflecting the current day
   let heartbeat = setInterval(() => {
+    const previousToday = today.clone();
+    const wasViewingCurrentMonth = displayedMonth?.isSame(previousToday, "month") ?? false;
     tick();
 
-    const isViewingCurrentMonth = displayedMonth.isSame(today, "day");
-    if (isViewingCurrentMonth) {
+    if (wasViewingCurrentMonth && !displayedMonth.isSame(today, "month")) {
       // if it's midnight on the last day of the month, this will
       // update the display to show the new month.
       displayedMonth = today;
@@ -132,7 +133,7 @@
           {onClickYear}
         />
         {#if $settings.assistant.tasks?.enabled && !hasDedicatedTasksWidget}
-          <TaskList {taskSyncManager} />
+          <TaskList {taskSyncManager} todayDate={today.format("YYYY-MM-DD")} />
         {/if}
       {/if}
     {:else if widget === "flipClock"}
@@ -141,7 +142,7 @@
       {/if}
     {:else if widget === "tasks"}
       {#if $settings.assistant.tasks?.enabled}
-        <TaskList {taskSyncManager} />
+        <TaskList {taskSyncManager} todayDate={today.format("YYYY-MM-DD")} />
       {/if}
     {:else if widget === "weather"}
       {#if $settings.assistant.weather.enabled}

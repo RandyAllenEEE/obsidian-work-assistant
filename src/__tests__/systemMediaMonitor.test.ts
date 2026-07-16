@@ -58,10 +58,12 @@ describe("SystemMediaMonitor process buffer", () => {
       destroyed: false,
       write: jest.fn(),
     };
+    kill = jest.fn();
   }
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (global as any).window = globalThis;
   });
 
   function readStoreValue<T>(store: { subscribe: (fn: (value: T) => void) => () => void }): T | undefined {
@@ -115,6 +117,9 @@ describe("SystemMediaMonitor process buffer", () => {
     monitor.buffer = "JSON_STARTnullJSON_END";
     monitor.processBuffer();
     expect(readStoreValue(monitor.mediaStore)).toBeNull();
+    expect(monitor.cacheManager.updateMedia).toHaveBeenCalledWith({
+      lastUpdate: expect.any(Number),
+    });
   });
 
   test("processBuffer preserves large thumbnail payload until complete", () => {
@@ -148,8 +153,9 @@ describe("SystemMediaMonitor process buffer", () => {
     warnSpy.mockRestore();
   });
 
-  test("controlMedia writes to monitor stdin when available", () => {
+  test("controlMedia writes to monitor stdin when available", async () => {
     const monitor = createMonitor();
+    await monitor.loadDesktopRuntime();
     const child = new MockChildProcess();
     monitor.process = child;
 
@@ -159,8 +165,9 @@ describe("SystemMediaMonitor process buffer", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  test("controlMedia falls back to one-shot process when stdin is unavailable", () => {
+  test("controlMedia falls back to one-shot process when stdin is unavailable", async () => {
     const monitor = createMonitor();
+    await monitor.loadDesktopRuntime();
     const monitorChild = new MockChildProcess();
     monitorChild.stdin.writable = false;
     monitor.process = monitorChild;
@@ -177,6 +184,31 @@ describe("SystemMediaMonitor process buffer", () => {
     );
     warnSpy.mockRestore();
   });
+
+  test("unexpected monitor exit schedules a backoff restart", async () => {
+    jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const monitor = createMonitor();
+      await monitor.loadDesktopRuntime();
+      jest.spyOn(monitor, "ensureBridge").mockResolvedValue(true);
+      const child = new MockChildProcess();
+      (spawn as jest.Mock).mockReturnValue(child as any);
+      const restartSpy = jest.spyOn(monitor, "startMonitoring");
+
+      await monitor.startMonitoring();
+      child.emit("close", 1);
+      expect(restartSpy).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(1000);
+      await Promise.resolve();
+      expect(restartSpy).toHaveBeenCalledWith(false);
+      monitor.stopMonitoring();
+    } finally {
+      warnSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe("getActiveWindow", () => {
@@ -190,6 +222,7 @@ describe("getActiveWindow", () => {
     (spawn as jest.Mock).mockReturnValueOnce(child as any);
 
     const pending = getActiveWindow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     child.stdout.emit("data", Buffer.from("Obsidian Vault\n"));
     child.emit("close", 0);
 
@@ -202,6 +235,7 @@ describe("getActiveWindow", () => {
     (spawn as jest.Mock).mockReturnValueOnce(child as any);
 
     const pending = getActiveWindow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     child.emit("error", new Error("spawn failed"));
 
     const result = await pending;

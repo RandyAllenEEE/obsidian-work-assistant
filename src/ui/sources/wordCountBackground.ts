@@ -16,10 +16,12 @@ const DEFAULT_COLOR_MAPPING = [
 ];
 
 export class WordCountBackgroundSource {
-  private wordCountStats: WordCountStats;
+  private getWordCountStats: () => WordCountStats | null;
 
-  constructor(wordCountStats: WordCountStats) {
-    this.wordCountStats = wordCountStats;
+  constructor(wordCountStats: WordCountStats | (() => WordCountStats | null)) {
+    this.getWordCountStats = typeof wordCountStats === "function"
+      ? wordCountStats
+      : () => wordCountStats;
   }
 
   private getColorMapping(): Array<{ min: number; max: number; opacity: number }> {
@@ -42,11 +44,14 @@ export class WordCountBackgroundSource {
   }
 
   getDailyMetadata: (date: Moment) => Promise<IDayMetadata> = async (date: Moment) => {
+    const wordCountStats = this.getWordCountStats();
+    const currentSettings = get(settings);
+    if (!wordCountStats || currentSettings.wordCount?.heatmap?.enabled === false) return {};
     const file = getDailyNote(date, get(dailyNotes));
 
     // Get word count for this date
     const dateString = date.format("YYYY-MM-DD"); // Match the format used in wordCountStats
-    const wordCount = Math.max(0, this.wordCountStats.getWordCountForDate(dateString));
+    const wordCount = Math.max(0, wordCountStats.getWordCountForDate(dateString));
     const colorMapping = this.getColorMapping();
 
     // Check if we should ignore 0 word counts.
@@ -89,8 +94,8 @@ export class WordCountBackgroundSource {
 }
 
 // Export a factory function to create the source with word count stats
-export function createWordCountBackgroundSource(wordCountStats: WordCountStats): ICalendarSource {
-  const source = new WordCountBackgroundSource(wordCountStats);
+export function createWordCountBackgroundSource(getStats: () => WordCountStats | null): ICalendarSource {
+  const source = new WordCountBackgroundSource(getStats);
 
   return {
     getDailyMetadata: source.getDailyMetadata,

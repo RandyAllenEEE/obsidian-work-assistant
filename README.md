@@ -5,6 +5,20 @@ This is a comprehensive productivity center for [Obsidian](https://obsidian.md/)
 ![screenshot-hero](https://raw.githubusercontent.com/liamcain/obsidian-calendar-plugin/master/images/screenshot-full.png)
 *(Note: Due to rich functionality, the actual interface includes enhanced periodic notes integration and heatmap display)*
 
+## 🚀 Version 4.4.0 Update: Stability, Data Safety, and Performance
+
+This release strengthens the plugin's core data flows and reduces background work across desktop and mobile:
+
+*   **📊 Reliable Word Count History**: Statistics now keep the newest date first, preserve deleted-note history in the broken-links aggregate, and protect an existing `stats.md` from accidental overwrite after read or parse failures.
+*   **📁 Robust File Lifecycles**: Create, rename, move, and delete events now update word-count, task, and periodic-note state consistently, including folder operations and delayed worker results.
+*   **✅ Correct Task Dates and Safer Sync**: Task grouping follows the current day across midnight, handles mixed start/scheduled/due dates correctly, and CalDAV sync no longer advances its baseline after partial failures.
+*   **⚡ Event-Driven Calendar**: The calendar no longer performs a full refresh every two seconds; shared note metrics, indexed task dates, scan cancellation, and bounded concurrency reduce repeated reads and parsing.
+*   **🧭 Restored Timeline Lifecycle**: Timeline complications now use the Svelte 5 mounting API and cleanly release view components and listeners when disabled or unloaded.
+*   **🎵 Desktop-Only SMTC Runtime**: Windows media modules load only on supported desktop environments, with chunk-safe album art, restart backoff, empty-media persistence, and mobile-safe entry validation.
+*   **🌤️ Coordinated Cache and Weather Updates**: Domain-level cache patches and single-flight weather requests prevent concurrent widgets from overwriting one another or issuing duplicate network calls.
+
+---
+
 ## 🚀 Version 4.3.0 Update: CalDAV Task Sync
 
 This release adds a real bidirectional task workflow on top of the existing calendar and productivity panel:

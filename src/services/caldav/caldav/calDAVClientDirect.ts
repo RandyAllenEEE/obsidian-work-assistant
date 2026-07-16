@@ -17,6 +17,7 @@ export interface CalDAVClient {
   fetchVTODOs(): Promise<CalendarObject[]>;
   createVTODO(vtodoData: string, uid: string): Promise<void>;
   updateVTODO(vtodo: { data: string; url: string; etag?: string }, newData: string): Promise<void>;
+  deleteVTODO(vtodo: { data: string; url: string; etag?: string }): Promise<void>;
   deleteVTODOByUID(uid: string): Promise<void>;
   fetchVTODOByUID(uid: string): Promise<{ data: string; url: string; etag?: string } | null>;
 }
@@ -38,8 +39,10 @@ export class CalDAVClientDirect implements CalDAVClient {
     this.mapper = new VTODOMapper();
     this.httpClient = httpClient ?? new ObsidianHttpClient();
 
-    const credentials = `${config.username}:${config.password}`;
-    this.authHeader = 'Basic ' + btoa(credentials);
+    const credentials = new TextEncoder().encode(`${config.username}:${config.password}`);
+    let binaryCredentials = '';
+    credentials.forEach((byte) => { binaryCredentials += String.fromCharCode(byte); });
+    this.authHeader = 'Basic ' + btoa(binaryCredentials);
   }
 
   /**
@@ -54,8 +57,12 @@ export class CalDAVClientDirect implements CalDAVClient {
       const calendars = await this.findCalendars(homeUrl);
 
       // Step 3: Find our specific calendar
-      const calendar = calendars.find(c => c.displayName === this.config.calendarName);
+      const namedCalendars = calendars.filter(c => c.displayName === this.config.calendarName);
+      const calendar = namedCalendars.find(c => c.supportsVTODO);
       if (!calendar) {
+        if (namedCalendars.length > 0) {
+          throw new Error(`Calendar '${this.config.calendarName}' does not support VTODO tasks`);
+        }
         throw new Error(`Calendar '${this.config.calendarName}' not found. Available: ${calendars.map(c => c.displayName).join(', ')}`);
       }
 
@@ -418,9 +425,8 @@ export class CalDAVClientDirect implements CalDAVClient {
    */
   async deleteVTODOByUID(uid: string): Promise<void> {
     const vtodo = await this.fetchVTODOByUID(uid);
-    if (vtodo) {
-      await this.deleteVTODO(vtodo);
-    }
+    if (!vtodo) throw new Error(`VTODO ${uid} not found for deletion`);
+    await this.deleteVTODO(vtodo);
   }
 
   /**

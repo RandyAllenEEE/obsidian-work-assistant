@@ -15,9 +15,18 @@ export function tasksEqual(a: CommonTask, b: CommonTask): boolean {
     a.priority === b.priority &&
     a.recurrenceRule === b.recurrenceRule &&
     a.body === b.body &&
-    a.tags.length === b.tags.length &&
-    a.tags.every((tag, i) => tag === b.tags[i])
+    tagsEqual(a.tags, b.tags)
   );
+}
+
+function tagsEqual(left: string[], right: string[]): boolean {
+  const normalize = (tags: string[]) => [...new Set(
+    tags.map((tag) => tag.replace(/^#/, '').toLowerCase())
+  )].sort();
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((tag, index) => tag === normalizedRight[index]);
 }
 
 function resolveChangeType(current: CommonTask, baseline: CommonTask): 'update' | 'complete' {

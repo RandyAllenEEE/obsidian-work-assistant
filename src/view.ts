@@ -24,27 +24,25 @@ import {
   createWordCountBackgroundSource,
   createDailyStatsSource,
 } from "./ui/sources";
-import WordCountStats from "./wordCountStats";
 import { WORD_COUNT_STATS_UPDATED_EVENT } from "./wordCountStats";
 import type CalendarPlugin from "./main";
 import { isMetaPressed } from "./periodic/utils";
 import type { Granularity, PeriodicNotesConfig } from "./periodic/types";
 import type { ICalendarSource } from "obsidian-calendar-ui";
+import { invalidateNoteMetrics } from "./ui/sources/noteMetrics";
 
 export default class CalendarView extends ItemView {
   private calendar: Calendar;
   private plugin: CalendarPlugin;
   private settings: ISettings;
-  private wordCountStats: WordCountStats;
-  private refreshInterval: number | undefined;
+  private refreshTimer: number | undefined;
+  private lastRefreshAt = 0;
   private settingsUnsubscribe: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: CalendarPlugin) {
     super(leaf);
 
     this.plugin = plugin;
-    this.wordCountStats = plugin.wordCountStats;
-
     this.openOrCreateDailyNote = this.openOrCreateDailyNote.bind(this);
     this.openOrCreateWeeklyNote = this.openOrCreateWeeklyNote.bind(this);
 
@@ -73,43 +71,41 @@ export default class CalendarView extends ItemView {
     this.registerEvent(this.app.vault.on("create", this.onFileCreated));
     this.registerEvent(this.app.vault.on("delete", this.onFileDeleted));
     this.registerEvent(this.app.vault.on("modify", this.onFileModified));
-    this.registerEvent((<any>this.app.workspace).on(WORD_COUNT_STATS_UPDATED_EVENT, () => this.calendar?.tick()));
+    this.registerEvent((<any>this.app.workspace).on(WORD_COUNT_STATS_UPDATED_EVENT, () => this.requestCalendarTick()));
     this.registerEvent(this.app.workspace.on("file-open", this.onFileOpen));
 
     this.settings = null;
     this.settingsUnsubscribe = settings.subscribe((val) => {
       this.settings = val;
-      this.resetRefreshInterval();
       this.updateHeatmapStyles();
-      if (this.calendar) {
-        // In Svelte 5 with mount(), we need to recreate the component
-        // to update props, or better yet, just refresh the calendar
-        this.calendar.tick();
-      }
+      this.requestCalendarTick();
     });
   }
 
-  private resetRefreshInterval(): void {
-    this.stopRefreshInterval();
-    this.startRefreshInterval();
-  }
-
-  private startRefreshInterval(): void {
-    const intervalTime = this.settings?.wordCount.heatmap.refreshInterval || DEFAULT_REFRESH_INTERVAL;
-    if (this.refreshInterval) {
-      window.clearInterval(this.refreshInterval);
+  private requestCalendarTick(): void {
+    if (!this.calendar) return;
+    const throttle = Math.max(
+      100,
+      this.settings?.wordCount.heatmap.refreshInterval || DEFAULT_REFRESH_INTERVAL
+    );
+    const elapsed = Date.now() - this.lastRefreshAt;
+    if (elapsed >= throttle && this.refreshTimer === undefined) {
+      this.lastRefreshAt = Date.now();
+      this.calendar.tick();
+      return;
     }
-    this.refreshInterval = window.setInterval(() => {
-      if (this.calendar) {
-        this.calendar.tick();
-      }
-    }, intervalTime);
+    if (this.refreshTimer !== undefined) return;
+    this.refreshTimer = window.setTimeout(() => {
+      this.refreshTimer = undefined;
+      this.lastRefreshAt = Date.now();
+      this.calendar?.tick();
+    }, Math.max(0, throttle - elapsed));
   }
 
-  private stopRefreshInterval(): void {
-    if (this.refreshInterval) {
-      window.clearInterval(this.refreshInterval);
-      this.refreshInterval = undefined;
+  private stopPendingRefresh(): void {
+    if (this.refreshTimer !== undefined) {
+      window.clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
     }
   }
 
@@ -127,7 +123,7 @@ export default class CalendarView extends ItemView {
   }
 
   onClose(): Promise<void> {
-    this.stopRefreshInterval();
+    this.stopPendingRefresh();
     if (this.settingsUnsubscribe) {
       this.settingsUnsubscribe();
       this.settingsUnsubscribe = null;
@@ -179,13 +175,8 @@ export default class CalendarView extends ItemView {
       tasksSource,
     ];
 
-    if (this.settings?.wordCount.heatmap.enabled && this.wordCountStats) {
-      sources.push(createWordCountBackgroundSource(this.wordCountStats));
-    }
-
-    if (this.wordCountStats) {
-      sources.push(createDailyStatsSource(this.wordCountStats));
-    }
+    sources.push(createWordCountBackgroundSource(() => this.plugin.wordCountStats));
+    sources.push(createDailyStatsSource(() => this.plugin.wordCountStats));
 
     return sources;
   }
@@ -199,7 +190,7 @@ export default class CalendarView extends ItemView {
       return;
     }
     const { format } = this.plugin.options.periodicNotes.day;
-    const note = this.plugin.cache.getPeriodicNote("day", date);
+    const note = this.plugin.cache?.getPeriodicNote("day", date);
     this.app.workspace.trigger(
       "link-hover",
       this,
@@ -217,7 +208,7 @@ export default class CalendarView extends ItemView {
     if (!isMetaPressed) {
       return;
     }
-    const note = this.plugin.cache.getPeriodicNote("week", date);
+    const note = this.plugin.cache?.getPeriodicNote("week", date);
     const { format } = this.plugin.options.periodicNotes.week;
     this.app.workspace.trigger(
       "link-hover",
@@ -241,7 +232,7 @@ export default class CalendarView extends ItemView {
   }
 
   private onContextMenuDay(date: Moment, event: MouseEvent): void {
-    const note = this.plugin.cache.getPeriodicNote("day", date);
+    const note = this.plugin.cache?.getPeriodicNote("day", date);
     if (!note) {
       return;
     }
@@ -252,7 +243,7 @@ export default class CalendarView extends ItemView {
   }
 
   private onContextMenuWeek(date: Moment, event: MouseEvent): void {
-    const note = this.plugin.cache.getPeriodicNote("week", date);
+    const note = this.plugin.cache?.getPeriodicNote("week", date);
     if (!note) {
       return;
     }
@@ -267,24 +258,23 @@ export default class CalendarView extends ItemView {
   }
 
   private async onFileDeleted(file: TFile): Promise<void> {
-    const meta = this.plugin.cache.find(file.path);
-    if (meta) {
-      this.updateActiveFile();
-    }
+    invalidateNoteMetrics(file.path);
+    this.updateActiveFile();
   }
 
   private async onFileModified(file: TFile): Promise<void> {
-    const meta = this.plugin.cache.find(file.path);
-    if (meta && this.calendar) {
-      this.calendar.tick();
+    invalidateNoteMetrics(file.path);
+    const meta = this.plugin.cache?.find(file.path);
+    if (meta) {
+      this.requestCalendarTick();
     }
   }
 
   private onFileCreated(file: TFile): void {
     if (this.app.workspace.layoutReady && this.calendar) {
-      const meta = this.plugin.cache.find(file.path);
+      const meta = this.plugin.cache?.find(file.path);
       if (meta) {
-        this.calendar.tick();
+        this.requestCalendarTick();
       }
     }
   }
@@ -296,7 +286,7 @@ export default class CalendarView extends ItemView {
   }
 
   private updateActiveFile(): void {
-    const { view } = this.app.workspace.activeLeaf;
+    const view = this.app.workspace.activeLeaf?.view;
 
     let file = null;
     if (view instanceof FileView) {
@@ -305,7 +295,7 @@ export default class CalendarView extends ItemView {
     activeFile.setFile(file);
 
     if (this.calendar) {
-      this.calendar.tick();
+      this.requestCalendarTick();
     }
   }
 
@@ -314,7 +304,7 @@ export default class CalendarView extends ItemView {
 
     if (activeLeaf.view instanceof FileView) {
       const file = activeLeaf.view.file;
-      const meta = this.plugin.cache.find(file.path);
+      const meta = this.plugin.cache?.find(file.path);
       if (meta) {
         // In Svelte 5, we can't use $set, so we'll need to use bind:displayedMonth
         // For now, we'll just refresh the Calendar component to show the current month
@@ -343,7 +333,8 @@ export default class CalendarView extends ItemView {
     inNewSplit: boolean
   ): Promise<void> {
     // Check Linkage setting first
-    if (!this.plugin.options.periodicNotes.calendarLinkage) {
+    if (!this.plugin.options.periodicNotes.enabled
+      || !this.plugin.options.periodicNotes.calendarLinkage) {
       return;
     }
 
@@ -354,9 +345,6 @@ export default class CalendarView extends ItemView {
   }
 
   public refresh(): void {
-    if (this.calendar) {
-      unmount(this.calendar);
-      this.onOpen();
-    }
+    this.requestCalendarTick();
   }
 }

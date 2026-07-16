@@ -12,6 +12,7 @@ export class CalDAVAdapter {
   private mapper: VTODOMapper;
   private client: CalDAVClient;
   private caldavCategory: string;
+  private remoteByUid = new Map<string, CalendarObject>();
 
   constructor(client: CalDAVClient, caldavCategory = '', mapper?: VTODOMapper) {
     this.client = client;
@@ -27,6 +28,11 @@ export class CalDAVAdapter {
   async fetchTasks(idMapping: IdMapping): Promise<CommonTask[]> {
     await this.client.connect();
     const vtodos = await this.client.fetchVTODOs();
+    this.remoteByUid = new Map();
+    for (const vtodo of vtodos) {
+      const uid = this.mapper.extractUID(vtodo.data);
+      if (uid) this.remoteByUid.set(uid, vtodo);
+    }
     const allTasks = this.normalize(vtodos, idMapping);
     const filtered = this.filterByCategory(allTasks);
     return filtered.map((t) => ({
@@ -101,31 +107,30 @@ export class CalDAVAdapter {
           break;
         }
         case 'update': {
-          const existing = await this.client.fetchVTODOByUID(caldavUID);
-          if (!existing) {
-            console.error(`[CalDAVAdapter] VTODO ${caldavUID} not found for update, skipping`);
-            continue;
-          }
+          const existing = this.remoteByUid.get(caldavUID);
+          if (!existing) throw new Error(`VTODO ${caldavUID} not found for update`);
           const newData = this.fromCommonTask(change.task, caldavUID);
           await this.client.updateVTODO(existing, newData);
+          this.remoteByUid.set(caldavUID, { ...existing, data: newData, etag: undefined });
           break;
         }
         case 'complete': {
-          const existing = await this.client.fetchVTODOByUID(caldavUID);
-          if (!existing) {
-            console.error(`[CalDAVAdapter] VTODO ${caldavUID} not found for complete, skipping`);
-            continue;
-          }
+          const existing = this.remoteByUid.get(caldavUID);
+          if (!existing) throw new Error(`VTODO ${caldavUID} not found for completion`);
           const completedTask: CommonTask = {
             ...change.task,
             recurrenceRule: '',
           };
           const newData = this.fromCommonTask(completedTask, caldavUID);
           await this.client.updateVTODO(existing, newData);
+          this.remoteByUid.set(caldavUID, { ...existing, data: newData, etag: undefined });
           break;
         }
         case 'delete': {
-          await this.client.deleteVTODOByUID(caldavUID);
+          const existing = this.remoteByUid.get(caldavUID);
+          if (!existing) throw new Error(`VTODO ${caldavUID} not found for deletion`);
+          await this.client.deleteVTODO(existing);
+          this.remoteByUid.delete(caldavUID);
           break;
         }
         case 'reconcile':

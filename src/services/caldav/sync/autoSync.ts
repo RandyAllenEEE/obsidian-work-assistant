@@ -8,6 +8,8 @@ export class AutoSyncScheduler {
 	private syncFn: () => Promise<void>;
 	private registerInterval: (id: number) => void;
 	private timers: SchedulerTimers;
+	private running = false;
+	private queued = false;
 
 	constructor(
 		syncFn: () => Promise<void>,
@@ -27,9 +29,7 @@ export class AutoSyncScheduler {
 		if (intervalMinutes <= 0) return;
 		const ms = intervalMinutes * 60 * 1000;
 		this.intervalId = this.timers.setInterval(() => {
-			this.syncFn().catch((error: unknown) => {
-				console.error('Auto-sync failed:', error);
-			});
+			void this.runOnce();
 		}, ms);
 		this.registerInterval(this.intervalId);
 	}
@@ -43,5 +43,23 @@ export class AutoSyncScheduler {
 
 	isRunning(): boolean {
 		return this.intervalId !== null;
+	}
+
+	private async runOnce(): Promise<void> {
+		if (this.running) {
+			this.queued = true;
+			return;
+		}
+		this.running = true;
+		try {
+			do {
+				this.queued = false;
+				await this.syncFn();
+			} while (this.queued && this.intervalId !== null);
+		} catch (error) {
+			console.error('Auto-sync failed:', error);
+		} finally {
+			this.running = false;
+		}
 	}
 }

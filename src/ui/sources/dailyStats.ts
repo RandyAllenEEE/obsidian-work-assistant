@@ -3,9 +3,11 @@ import type { ICalendarSource, IDayMetadata } from "obsidian-calendar-ui";
 import type WordCountStats from "../../wordCountStats";
 import { t } from "../../i18n";
 
-export function createDailyStatsSource(wordCountStats: WordCountStats): ICalendarSource {
+export function createDailyStatsSource(getStats: () => WordCountStats | null): ICalendarSource {
     return {
         getDailyMetadata: async (date: Moment): Promise<IDayMetadata> => {
+            const wordCountStats = getStats();
+            if (!wordCountStats) return {};
             const dateStr = date.format("YYYY-MM-DD");
             // Use logical OR for fallback just in case, assuming methods return number
             const wordCount = wordCountStats.getWordCountForDate(dateStr) || 0;
@@ -24,6 +26,8 @@ export function createDailyStatsSource(wordCountStats: WordCountStats): ICalenda
             };
         },
         getWeeklyMetadata: async (date: Moment): Promise<IDayMetadata> => {
+            const wordCountStats = getStats();
+            if (!wordCountStats) return {};
             const wordCount = wordCountStats.getWeeklyWordCount(date) || 0;
             const pomoCount = wordCountStats.getWeeklyPomoCount(date) || 0;
 

@@ -32,6 +32,9 @@ export class StatusBarPlayer {
         if (this.unsubscribe) {
             this.unsubscribe();
         }
+        this.hidePopover();
+        this.container.onmouseenter = null;
+        this.container.onmouseleave = null;
         this.container.empty();
     }
 

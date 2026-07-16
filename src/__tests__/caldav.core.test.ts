@@ -5,8 +5,10 @@ jest.mock("obsidian", () => ({
 
 import { CalDAVClientDirect } from "../services/caldav/caldav/calDAVClientDirect";
 import { VTODOMapper } from "../services/caldav/caldav/vtodoMapper";
-import { diff } from "../services/caldav/sync/diff";
+import { diff, tasksEqual } from "../services/caldav/sync/diff";
+import { CalDAVAdapter } from "../services/caldav/sync/caldavAdapter";
 import { shouldExcludeTaskPath } from "../services/caldav/sync/obsidianAdapter";
+import { generateTaskId, isValidTaskId } from "../services/caldav/utils/taskIdGenerator";
 import type { CommonTask } from "../services/caldav/sync/types";
 
 function task(overrides: Partial<CommonTask> = {}): CommonTask {
@@ -61,6 +63,78 @@ describe("CalDAV sync core", () => {
     expect(parsed.priority).toBe("high");
     expect(parsed.tags).toContain("work");
     expect(parsed.body).toBe("Check edge cases");
+  });
+
+  test("vtodo mapper preserves distinct start and scheduled dates", () => {
+    const mapper = new VTODOMapper();
+    const ics = mapper.taskToVTODO(task({
+      startDate: "2026-06-01",
+      scheduledDate: "2026-06-03",
+    }), "caldav-dates");
+
+    const parsed = mapper.vtodoToTask({ data: ics, url: "https://example.test/dates.ics" });
+    expect(parsed.startDate).toBe("2026-06-01");
+    expect(parsed.scheduledDate).toBe("2026-06-03");
+    expect(ics).toContain("DTSTART;VALUE=DATE:20260601");
+  });
+
+  test("task equality treats tags as an unordered case-insensitive set", () => {
+    expect(tasksEqual(
+      task({ tags: ["#Work", "urgent"] }),
+      task({ tags: ["URGENT", "work", "work"] })
+    )).toBe(true);
+  });
+
+  test("new task IDs use eight hex digits while legacy IDs remain valid", () => {
+    const generated = generateTaskId();
+    expect(generated).toMatch(/^\d{8}-[0-9a-f]{8}$/);
+    expect(isValidTaskId(generated)).toBe(true);
+    expect(isValidTaskId("20250105-a4f")).toBe(true);
+  });
+
+  test("Basic Auth encodes non-ASCII credentials as UTF-8", () => {
+    const client = new CalDAVClientDirect({
+      serverUrl: "https://example.test",
+      username: "用户",
+      password: "päss",
+      calendarName: "Tasks",
+    });
+    const expected = Buffer.from("用户:päss", "utf8").toString("base64");
+    expect((client as any).authHeader).toBe(`Basic ${expected}`);
+  });
+
+  test("CalDAV adapter reuses the initial UID index for updates and deletes", async () => {
+    const mapper = new VTODOMapper();
+    const remote = {
+      url: "https://example.test/cal/remote-1.ics",
+      etag: "one",
+      data: mapper.taskToVTODO(task({ tags: ["sync"] }), "remote-1"),
+    };
+    const client = {
+      connect: jest.fn(async () => undefined),
+      fetchVTODOs: jest.fn(async () => [remote]),
+      createVTODO: jest.fn(async () => undefined),
+      updateVTODO: jest.fn(async () => undefined),
+      deleteVTODO: jest.fn(async () => undefined),
+      deleteVTODOByUID: jest.fn(async () => undefined),
+      fetchVTODOByUID: jest.fn(async () => null),
+    };
+    const adapter = new CalDAVAdapter(client, "sync", mapper);
+    const mapping = {
+      taskIdToCaldavUid: { "task-1": "remote-1" },
+      caldavUidToTaskId: { "remote-1": "task-1" },
+    };
+
+    await adapter.fetchTasks(mapping);
+    await adapter.applyChanges([
+      { type: "update", task: task({ title: "Updated" }) },
+      { type: "delete", task: task() },
+    ], mapping);
+
+    expect(client.fetchVTODOs).toHaveBeenCalledTimes(1);
+    expect(client.fetchVTODOByUID).not.toHaveBeenCalled();
+    expect(client.updateVTODO).toHaveBeenCalledTimes(1);
+    expect(client.deleteVTODO).toHaveBeenCalledTimes(1);
   });
 
   test("CalDAV XML parser extracts VTODO calendar data and etags", () => {

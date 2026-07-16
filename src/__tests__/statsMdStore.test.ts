@@ -56,6 +56,7 @@ describe("StatsMdStore", () => {
           }
           return null;
         }),
+        getMarkdownFiles: jest.fn(() => [...markdownFiles.values()]),
         off: jest.fn(),
       },
     } as any;
@@ -67,6 +68,14 @@ describe("StatsMdStore", () => {
         const { TFile } = jest.requireMock("obsidian") as any;
         markdownFiles.set(path, new TFile(path, mtime));
       },
+      removeFile: (path: string) => markdownFiles.delete(path),
+      renameFile: (oldPath: string, newPath: string) => {
+        const file = markdownFiles.get(oldPath);
+        if (!file) return;
+        markdownFiles.delete(oldPath);
+        file.path = newPath;
+        markdownFiles.set(newPath, file);
+      },
     };
   }
 
@@ -76,10 +85,20 @@ describe("StatsMdStore", () => {
     const today = moment().format("YYYY-MM-DD");
 
     const snapshot = await store.load();
-    expect(snapshot.settings.dayCounts).toEqual({});
+    expect(snapshot.settings.dayCounts).toEqual({ [today]: 0 });
     expect(env.fileMap.has("stats.md")).toBe(true);
     expect(env.fileMap.get("stats.md")).toContain("# Work Assistant Stats");
     expect(env.fileMap.get("stats.md")).toContain(`| Note | Initial | Current | ${today} |`);
+  });
+
+  test("load rejects malformed existing stats without overwriting it", async () => {
+    const malformed = "# Work Assistant Stats\n\nThis table was interrupted";
+    const env = createEnv({ "stats.md": malformed });
+    const store = new StatsMdStore(env.app, () => "stats.md");
+
+    await expect(store.load()).rejects.toThrow();
+    expect(env.app.vault.adapter.write).not.toHaveBeenCalled();
+    expect(env.fileMap.get("stats.md")).toBe(malformed);
   });
 
   test("save writes markdown table and returns snapshot", async () => {
@@ -103,6 +122,32 @@ describe("StatsMdStore", () => {
     expect(snapshot.settings.pomoCounts[today]).toBe(2);
   });
 
+  test("save keeps today first and sorts all remaining date columns descending", async () => {
+    const today = moment().format("YYYY-MM-DD");
+    const future = moment().add(1, "day").format("YYYY-MM-DD");
+    const older = moment().subtract(2, "day").format("YYYY-MM-DD");
+    const existing = [
+      "# Work Assistant Stats",
+      "",
+      `| Note | Initial | Current | ${older} | ${future} | ${today} |`,
+      "| --- | --- | --- | --- | --- | --- |",
+      "| 🍅 POMO |  |  | 1 | 2 | 3 |",
+      "| 失效链接 |  |  | 4 | 5 | 6 |",
+      "",
+    ].join("\n");
+    const env = createEnv({ "stats.md": existing });
+    const store = new StatsMdStore(env.app, () => "stats.md");
+
+    await store.load();
+    await store.save();
+
+    expect(env.fileMap.get("stats.md")).toContain(
+      `| Note | Initial | Current | ${today} | ${future} | ${older} |`
+    );
+    expect(env.fileMap.get("stats.md")).toContain("| 🍅 POMO |  |  | 3 | 2 | 1 |");
+    expect(env.fileMap.get("stats.md")).toContain("| 失效链接 |  |  | 6 | 5 | 4 |");
+  });
+
   test("save preserves negative delta in aggregate", async () => {
     const env = createEnv();
     env.addFile("Daily/note.md");
@@ -118,7 +163,7 @@ describe("StatsMdStore", () => {
     });
 
     expect(snapshot.todaysAggregate.total).toBe(-20);
-    expect(snapshot.todaysAggregate.byFile["Daily/note.md"].displayDelta).toBe(-20);
+    expect(snapshot.todaysAggregate.byFile["Daily/note"].displayDelta).toBe(-20);
     expect(snapshot.settings.dayCounts[today]).toBe(-20);
   });
 
@@ -156,8 +201,8 @@ describe("StatsMdStore", () => {
     });
 
     const content = env.fileMap.get("stats.md") ?? "";
-    expect(content).toContain(`| Note | Initial | Current | ${yesterday} | ${today} |`);
-    expect(content).toContain("| [[Daily/note]] | 0 | 0 | 30 | 0 |");
+    expect(content).toContain(`| Note | Initial | Current | ${today} | ${yesterday} |`);
+    expect(content).toContain("| [[Daily/note.md]] | 0 | 0 | 0 | 30 |");
   });
 
   test("load keeps signed negative totals from existing history rows", async () => {
@@ -202,7 +247,7 @@ describe("StatsMdStore", () => {
     expect(snapshot.settings.dayCounts[yesterday]).toBe(-70);
   });
 
-  test("load merges broken links accumulator with existing broken links row counts", async () => {
+  test("load archives an externally deleted row without inventing a deletion-day delta", async () => {
     const yesterday = moment().subtract(1, "day").format("YYYY-MM-DD");
     const today = moment().format("YYYY-MM-DD");
     // stats.md has existing broken links row with -30 for yesterday and 0 for today
@@ -226,76 +271,8 @@ describe("StatsMdStore", () => {
     expect(snapshot.settings.dayCounts[yesterday]).toBe(-50);
     // dayCounts[today] = note (0) + broken links (0) = 0 (today's broken links row value is 0)
     expect(snapshot.settings.dayCounts[today]).toBe(0);
-    // Externally deleted file's netChange added to today's brokenLinksAccumulator
-    expect(store.getTodaysBrokenLinksCount()).toBe(-20);
-  });
-
-  test("buildTemplate discards new note with no prior record instead of routing to broken links (Bug 2 fix)", async () => {
-    // Scenario: stats.md has NO record for a file, but todaysWordCount has a stale entry
-    // This can happen when a new file was initialized but never saved, then doesn't exist
-    const today = moment().format("YYYY-MM-DD");
-    const existing = [
-      "# Work Assistant Stats",
-      "",
-      `| Note | Initial | Current | ${today} |`,
-      "| --- | --- | --- | --- |",
-      "| 🍅 POMO |  |  | 0 |",
-      "| [[Daily/existing.md]] | 50 | 60 | 10 |",
-      "",
-    ].join("\n");
-    const env = createEnv({ "stats.md": existing });
-    env.addFile("Daily/existing.md");
-    // "Daily/new.md" does NOT exist in vault
-    const store = new StatsMdStore(env.app, () => "stats.md") as any;
-
-    // Pre-populate filePathToRowId so "Daily/existing.md" is known
-    store.filePathToRowId.set("Daily/existing", "row-existing");
-
-    // Simulate todaysWordCount with a stale entry for non-existent file that was never in stats.md
-    // netChange = 100 - 100 = 0, but even if it were non-zero, no knownRowId means skip accumulator
-    const accumulatorBefore = store.brokenLinksAccumulator.countsByDate[today] ?? 0;
-
-    await store.save({
-      dayCounts: {},
-      todaysWordCount: {
-        "Daily/new": { initial: 100, current: 100 }, // no change, no prior record
-      },
-      pomoCounts: {},
-    });
-
-    // The stale entry should be deleted without adding to accumulator
-    expect(store.brokenLinksAccumulator.countsByDate[today] ?? 0).toBe(accumulatorBefore);
-  });
-
-  test("buildTemplate routes externally deleted file WITH prior record to broken links accumulator", async () => {
-    const today = moment().format("YYYY-MM-DD");
-    const existing = [
-      "# Work Assistant Stats",
-      "",
-      `| Note | Initial | Current | ${today} |`,
-      "| --- | --- | --- | --- |",
-      "| 🍅 POMO |  |  | 0 |",
-      "| [[Daily/deleted.md]] | 100 | 150 | 50 |",
-      "",
-    ].join("\n");
-    const env = createEnv({ "stats.md": existing });
-    // deleted.md does NOT exist in vault (was externally deleted)
-    const store = new StatsMdStore(env.app, () => "stats.md") as any;
-
-    // Pre-populate filePathToRowId so "Daily/deleted" IS known
-    store.filePathToRowId.set("Daily/deleted", "row-deleted");
-
-    // todaysWordCount has the file with netChange = 150 - 100 = 50
-    await store.save({
-      dayCounts: {},
-      todaysWordCount: {
-        "Daily/deleted": { initial: 100, current: 150 },
-      },
-      pomoCounts: {},
-    });
-
-    // Since knownRowId exists and netChange !== 0, it SHOULD go to accumulator
-    expect(store.brokenLinksAccumulator.countsByDate[today] ?? 0).toBe(50);
+    // Existing history is reclassified on its original date; deletion itself adds nothing today.
+    expect(store.getTodaysBrokenLinksCount()).toBe(0);
   });
 
   test("save correctly reconstructs empty new note row (initial=0, current=0) after buildTemplate", async () => {
@@ -330,16 +307,14 @@ describe("StatsMdStore", () => {
     });
   });
 
-  test("constructor registers rename handler and cleanup unregisters it once", () => {
+  test("store leaves Vault event ownership to WordCountStats", () => {
     const env = createEnv();
     const store = new StatsMdStore(env.app, () => "stats.md");
 
-    expect(env.app.vault.on).toHaveBeenCalledWith("rename", expect.any(Function));
+    expect(env.app.vault.on).not.toHaveBeenCalled();
     store.cleanup();
     store.cleanup();
-
-    expect(env.app.vault.off).toHaveBeenCalledTimes(1);
-    expect(env.app.vault.off).toHaveBeenCalledWith("rename", expect.any(Function));
+    expect(env.app.vault.off).not.toHaveBeenCalled();
   });
 
   test("save correctly reconstructs new note row in todaysWordCount after buildTemplate", async () => {
@@ -374,15 +349,116 @@ describe("StatsMdStore", () => {
     });
   });
 
-  test("rename handler remaps row id from old path to new path", () => {
-    const env = createEnv();
-    const store = new StatsMdStore(env.app, () => "stats.md") as any;
-    const { TFile } = jest.requireMock("obsidian") as any;
-    const renamedFile = new TFile("Daily/new.md");
-    store.filePathToRowId.set("Daily/old.md", "row-1");
+  test("rename preserves history and updates the persisted link", async () => {
+    const today = moment().format("YYYY-MM-DD");
+    const existing = [
+      "# Work Assistant Stats",
+      "",
+      `| Note | Initial | Current | ${today} |`,
+      "| --- | --- | --- | --- |",
+      "| 🍅 POMO |  |  | 0 |",
+      "| 失效链接 |  |  | 0 |",
+      "| [[Daily/old]] | 10 | 15 | 5 |",
+      "",
+    ].join("\n");
+    const env = createEnv({ "stats.md": existing });
+    env.addFile("Daily/old.md");
+    const store = new StatsMdStore(env.app, () => "stats.md");
+    await store.load();
 
-    store.handleRename(renamedFile, "Daily/old.md");
-    expect(store.filePathToRowId.get("Daily/old.md")).toBeUndefined();
-    expect(store.filePathToRowId.get("Daily/new.md")).toBe("row-1");
+    env.renameFile("Daily/old.md", "Daily/new.md");
+    expect(store.handleRename("Daily/old.md", "Daily/new.md")).toBe(true);
+    await store.save();
+
+    const content = env.fileMap.get("stats.md") ?? "";
+    expect(content).toContain("| [[Daily/new]] | 10 | 15 | 5 |");
+    expect(content).not.toContain("[[Daily/old]]");
+  });
+
+  test("delete moves every historical cell to broken links exactly once", async () => {
+    const today = moment().format("YYYY-MM-DD");
+    const yesterday = moment().subtract(1, "day").format("YYYY-MM-DD");
+    const existing = [
+      "# Work Assistant Stats",
+      "",
+      `| Note | Initial | Current | ${yesterday} | ${today} |`,
+      "| --- | --- | --- | --- | --- |",
+      "| 🍅 POMO |  |  | 0 | 0 |",
+      "| 失效链接 |  |  | 2 | 3 |",
+      "| [[Daily/deleted]] | 10 | 15 | 4 | 5 |",
+      "",
+    ].join("\n");
+    const env = createEnv({ "stats.md": existing });
+    env.addFile("Daily/deleted.md");
+    const store = new StatsMdStore(env.app, () => "stats.md");
+    await store.load();
+
+    expect(store.handleDelete("Daily/deleted.md")).toBe(true);
+    env.removeFile("Daily/deleted.md");
+    await store.save();
+    const firstSave = env.fileMap.get("stats.md") ?? "";
+    expect(firstSave).not.toContain("[[Daily/deleted]]");
+    expect(firstSave).toContain(`| 失效链接 |  |  | 8 | 6 |`);
+
+    const reloaded = new StatsMdStore(env.app, () => "stats.md");
+    await reloaded.load();
+    await reloaded.save();
+    expect(env.fileMap.get("stats.md")).toContain(`| 失效链接 |  |  | 8 | 6 |`);
+  });
+
+  test("a change made during a write remains pending for the next save", async () => {
+    const env = createEnv();
+    env.addFile("Daily/note.md");
+    const store = new StatsMdStore(env.app, () => "stats.md");
+    await store.load();
+
+    let releaseWrite: (() => void) | undefined;
+    let signalWriteStarted: (() => void) | undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      signalWriteStarted = resolve;
+    });
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    env.app.vault.adapter.write.mockImplementationOnce(async (path: string, content: string) => {
+      signalWriteStarted?.();
+      await writeReleased;
+      env.fileMap.set(path, content);
+    });
+
+    const firstSave = store.save({
+      dayCounts: {},
+      todaysWordCount: { "Daily/note": { initial: 10, current: 10 } },
+      pomoCounts: {},
+    });
+    await writeStarted;
+    store.settings.todaysWordCount["Daily/note"].current = 12;
+    store.markRuntimeChanged();
+    releaseWrite?.();
+    await firstSave;
+
+    expect(store.hasUnpersistedChanges()).toBe(true);
+    await store.save();
+    expect(store.hasUnpersistedChanges()).toBe(false);
+    expect(env.fileMap.get("stats.md")).toContain("| [[Daily/note]] | 10 | 12 | 2 |");
+  });
+
+  test("a failed write keeps the revision pending and can be retried", async () => {
+    const env = createEnv();
+    env.addFile("Daily/note.md");
+    const store = new StatsMdStore(env.app, () => "stats.md");
+    await store.load();
+    env.app.vault.adapter.write.mockRejectedValueOnce(new Error("disk unavailable"));
+
+    await expect(store.save({
+      dayCounts: {},
+      todaysWordCount: { "Daily/note": { initial: 10, current: 11 } },
+      pomoCounts: {},
+    })).rejects.toThrow("disk unavailable");
+    expect(store.hasUnpersistedChanges()).toBe(true);
+
+    await store.save();
+    expect(store.hasUnpersistedChanges()).toBe(false);
+    expect(env.fileMap.get("stats.md")).toContain("| [[Daily/note]] | 10 | 11 | 1 |");
   });
 });

@@ -54,7 +54,7 @@ export class ObsidianMapper {
   }
 
   private toEmojiMarkdown(task: CommonTask, syncTag?: string, globalFilter?: string): string {
-    let line = task.status === 'DONE' ? '- [x] ' : '- [ ] ';
+    let line = `- [${this.statusSymbol(task.status)}] `;
 
     line += task.title;
 
@@ -92,7 +92,7 @@ export class ObsidianMapper {
   }
 
   private toDataviewMarkdown(task: CommonTask, syncTag?: string, globalFilter?: string): string {
-    let line = task.status === 'DONE' ? '- [x] ' : '- [ ] ';
+    let line = `- [${this.statusSymbol(task.status)}] `;
 
     line += task.title;
 
@@ -191,8 +191,20 @@ export class ObsidianMapper {
   }
 
   private mapStatus(task: ObsidianTask): TaskStatus {
+    const statusType = task.status?.configuration?.type?.toUpperCase().replace(/[- ]/g, '_');
+    if (statusType === 'CANCELLED' || statusType === 'CANCELED') return 'CANCELLED';
+    if (statusType === 'IN_PROGRESS' || statusType === 'INPROGRESS') return 'IN_PROGRESS';
     if (task.isDone) return 'DONE';
     return 'TODO';
+  }
+
+  private statusSymbol(status: TaskStatus): string {
+    switch (status) {
+      case 'DONE': return 'x';
+      case 'IN_PROGRESS': return '/';
+      case 'CANCELLED': return '-';
+      default: return ' ';
+    }
   }
 
   private mapPriority(priority: string): TaskPriority {

@@ -589,6 +589,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
                       .setDesc(t("settings-weather-interval-desc", lang))
                       .addText(text => {
                         text.inputEl.type = "number";
+                        text.inputEl.min = "1";
                         text.setValue(String(assistant.weather.refreshInterval));
                         text.onChange(async (value) => {
                           const num = parseInt(value);
@@ -608,6 +609,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
                       .setDesc(t("settings-weather-daily-interval-desc", lang))
                       .addText(text => {
                         text.inputEl.type = "number";
+                        text.inputEl.min = "1";
                         text.setValue(String(assistant.weather.dailyRefreshInterval));
                         text.onChange(async (value) => {
                           const num = parseInt(value);
@@ -651,6 +653,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .addText((textfield) => {
         textfield.setPlaceholder(String(DEFAULT_WORDS_PER_DOT));
         textfield.inputEl.type = "number";
+        textfield.inputEl.min = "1";
         textfield.setValue(String(this.plugin.options.periodicNotes.wordsPerDot));
         textfield.onChange(async (value) => {
           const num = value !== "" ? Number(value) : DEFAULT_WORDS_PER_DOT;
@@ -852,6 +855,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .addText((textfield) => {
         textfield.setPlaceholder(String(DEFAULT_REFRESH_INTERVAL));
         textfield.inputEl.type = "number";
+        textfield.inputEl.min = "100";
         textfield.setValue(String(this.plugin.options.wordCount.heatmap.refreshInterval));
         textfield.onChange(async (value) => {
           const num = value !== "" ? Number(value) : DEFAULT_REFRESH_INTERVAL;
@@ -1265,6 +1269,7 @@ Inbox/              # Folder prefix match (includes subfolders)
               .setDesc(t("settings-pomo-work-desc", lang))
               .addText((text) => {
                 text.inputEl.type = "number";
+                text.inputEl.min = "1";
                 text.setValue(String(pomo.work));
                 text.onChange(async (value) => {
                   const num = parseInt(value);
@@ -1280,6 +1285,7 @@ Inbox/              # Folder prefix match (includes subfolders)
               .setDesc(t("settings-pomo-short-break-desc", lang))
               .addText((text) => {
                 text.inputEl.type = "number";
+                text.inputEl.min = "1";
                 text.setValue(String(pomo.shortBreak));
                 text.onChange(async (value) => {
                   const num = parseInt(value);
@@ -1295,6 +1301,7 @@ Inbox/              # Folder prefix match (includes subfolders)
               .setDesc(t("settings-pomo-long-break-desc", lang))
               .addText((text) => {
                 text.inputEl.type = "number";
+                text.inputEl.min = "1";
                 text.setValue(String(pomo.longBreak));
                 text.onChange(async (value) => {
                   const num = parseInt(value);
@@ -1310,6 +1317,7 @@ Inbox/              # Folder prefix match (includes subfolders)
               .setDesc(t("settings-pomo-long-break-interval-desc", lang))
               .addText((text) => {
                 text.inputEl.type = "number";
+                text.inputEl.min = "1";
                 text.setValue(String(pomo.longBreakInterval));
                 text.onChange(async (value) => {
                   const num = parseInt(value);
@@ -1325,6 +1333,7 @@ Inbox/              # Folder prefix match (includes subfolders)
               .setDesc(t("settings-pomo-auto-cycles-desc", lang))
               .addText((text) => {
                 text.inputEl.type = "number";
+                text.inputEl.min = "0";
                 text.setValue(String(pomo.autoCycles));
                 text.onChange(async (value) => {
                   const num = parseInt(value);

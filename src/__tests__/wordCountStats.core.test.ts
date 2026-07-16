@@ -12,13 +12,27 @@ jest.mock("obsidian", () => {
   }
   class MarkdownView {}
   const debounce = jest.fn(<T extends (...args: any[]) => any>(fn: T) => fn);
-  class TFile {}
-  return { Component, MarkdownView, debounce, TFile };
+  class TFile {
+    path: string;
+    extension: string;
+    constructor(path = "") {
+      this.path = path;
+      this.extension = path.split(".").pop() ?? "";
+    }
+  }
+  class TFolder {
+    path: string;
+    constructor(path = "") {
+      this.path = path;
+    }
+  }
+  return { Component, MarkdownView, debounce, TFile, TFolder };
 });
 
 jest.mock("../io/statsMdStore", () => ({
   DEFAULT_DAILY_STATS_SETTINGS: { dayCounts: {}, todaysWordCount: {}, pomoCounts: {} },
   StatsMdStore: class {
+    settings = { dayCounts: {}, todaysWordCount: {}, pomoCounts: {} };
     constructor(_app: unknown, _getter: unknown) {
       // noop
     }
@@ -31,7 +45,10 @@ jest.mock("../io/statsMdStore", () => ({
       todaysAggregate: { total: 0, byFile: {} },
     }));
     cleanup = jest.fn();
-    registerAccumulatorChangedCallback = jest.fn();
+    markRuntimeChanged = jest.fn();
+    hasUnpersistedChanges = jest.fn(() => false);
+    handleDelete = jest.fn(() => true);
+    handleRename = jest.fn(() => true);
     getTodaysBrokenLinksCount = jest.fn(() => 0);
     getTodaysWordCountAggregate = jest.fn((data: Record<string, { initial: number; current: number }>) => {
       let total = 0;
@@ -48,7 +65,12 @@ jest.mock("../io/statsMdStore", () => ({
 
 describe("WordCountStats core logic", () => {
   beforeAll(() => {
-    (global as any).window = { moment, setInterval };
+    (global as any).window = {
+      moment,
+      setInterval: jest.fn(() => 1),
+      setTimeout,
+      clearTimeout,
+    };
   });
 
   function createStats(overrides: Partial<any> = {}) {
@@ -66,6 +88,7 @@ describe("WordCountStats core logic", () => {
     const app = {
       workspace: {
         on: jest.fn(),
+        onLayoutReady: jest.fn((callback: () => void) => callback()),
         getActiveFile: jest.fn(() => null),
         trigger: jest.fn(),
         getActiveViewOfType: jest.fn(() => null),
@@ -147,9 +170,8 @@ describe("WordCountStats core logic", () => {
 
     await stats.initialize();
 
-    expect(debounceMock).toHaveBeenCalledTimes(2);
-    expect(debounceMock).toHaveBeenNthCalledWith(1, expect.any(Function), 2000, false);
-    expect(debounceMock).toHaveBeenNthCalledWith(2, expect.any(Function), 2000, true);
+    expect(debounceMock).toHaveBeenCalledTimes(1);
+    expect(debounceMock).toHaveBeenCalledWith(expect.any(Function), 2000, true);
     expect(intervalSpy).toHaveBeenCalledWith(expect.any(Function), 30000);
 
     intervalSpy.mockRestore();
@@ -377,5 +399,53 @@ describe("WordCountStats core logic", () => {
     stats.replayBufferedUpdatesAfterTransition();
     expect(updateCountsSpy).toHaveBeenCalled();
     expect(stats.settings.todaysWordCount["Daily/buffered"]).toEqual({ initial: 10, current: 10 });
+  });
+
+  test("word-count debounce retains updates for different files", () => {
+    const stats = createStats();
+    const callbacks: Array<() => void> = [];
+    const originalSetTimeout = window.setTimeout;
+    const originalClearTimeout = window.clearTimeout;
+    window.setTimeout = jest.fn((callback: () => void) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    }) as unknown as typeof window.setTimeout;
+    window.clearTimeout = jest.fn();
+    const updateSpy = jest.spyOn(stats, "updateWordCount").mockImplementation(() => undefined);
+
+    try {
+      stats.scheduleWordCountUpdate("first", "Daily/a.md", 100);
+      stats.scheduleWordCountUpdate("second", "Daily/b.md", 100);
+      callbacks.forEach((callback) => callback());
+
+      expect(updateSpy).toHaveBeenCalledTimes(2);
+      expect(updateSpy).toHaveBeenCalledWith("first", "Daily/a.md");
+      expect(updateSpy).toHaveBeenCalledWith("second", "Daily/b.md");
+    } finally {
+      window.setTimeout = originalSetTimeout;
+      window.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  test("delete archives the latest content waiting in the debounce queue", () => {
+    const stats = createStats();
+    const { TFile } = jest.requireMock("obsidian") as { TFile: new (path: string) => unknown };
+    stats.debouncedSave = jest.fn();
+    stats.settings.dayCounts[stats.today] = 0;
+    stats.settings.todaysWordCount["Daily/a"] = { initial: 1, current: 1 };
+    stats.pendingWordCountUpdates.set("Daily/a.md", {
+      timer: 99,
+      contents: "one two three",
+    });
+    let archivedCurrent = 0;
+    stats.statsStore.handleDelete.mockImplementation(() => {
+      archivedCurrent = stats.settings.todaysWordCount["Daily/a"]?.current ?? 0;
+      return true;
+    });
+
+    stats.handleVaultDelete(new TFile("Daily/a.md"));
+
+    expect(archivedCurrent).toBe(3);
+    expect(stats.pendingWordCountUpdates.size).toBe(0);
   });
 });

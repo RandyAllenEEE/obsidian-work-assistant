@@ -5,15 +5,14 @@ import { getDailyNote, getWeeklyNote } from "obsidian-daily-notes-interface";
 import { get } from "svelte/store";
 
 import { dailyNotes, weeklyNotes } from "../stores";
+import { getNoteMetrics } from "./noteMetrics";
 
 export async function getNumberOfRemainingTasks(note: TFile): Promise<number> {
   if (!note) {
     return 0;
   }
 
-  const { vault } = window.app;
-  const fileContents = await vault.cachedRead(note);
-  return (fileContents.match(/(-|\*) \[ \]/g) || []).length;
+  return (await getNoteMetrics(note)).remainingTasks;
 }
 
 export async function getDotsForDailyNote(

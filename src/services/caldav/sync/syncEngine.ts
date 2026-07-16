@@ -14,6 +14,7 @@ import { calendarStorageId } from "../utils/calendarStorageId";
 
 export interface SyncResult {
 	calendarName: string;
+	status: "success" | "failed" | "busy";
 	success: boolean;
 	message: string;
 	created: { toObsidian: number; toCalDAV: number };
@@ -85,7 +86,11 @@ export class SyncEngine {
 				}));
 			}
 
-			const idMapping = this.storage.getIdMapping();
+			const storedMapping = this.storage.getIdMapping();
+			const idMapping: IdMapping = {
+				taskIdToCaldavUid: { ...storedMapping.taskIdToCaldavUid },
+				caldavUidToTaskId: { ...storedMapping.caldavUidToTaskId },
+			};
 
 			const caldavTasks = await this.caldavAdapter.fetchTasks(idMapping);
 			const obsidianTasks = await this.obsidianAdapter.fetchTasks();
@@ -105,8 +110,8 @@ export class SyncEngine {
 			await this.obsidianAdapter.writeBackIds(obsidianTasks);
 
 			this.updateIdMapping(idMapping, createdMappings, completionRemappings, changeset);
-			this.persistState(obsidianTasks, activeCaldavTasks, changeset, idMapping);
-			await this.storage.save();
+			const nextBaseline = this.computeNewBaseline(obsidianTasks, activeCaldavTasks, changeset);
+			await this.storage.commitSuccessfulSync(idMapping, nextBaseline);
 
 			return this.buildResult(changeset, obsidianTasks, activeCaldavTasks, baseline, false, showProgress);
 		} catch (error) {
@@ -224,19 +229,6 @@ export class SyncEngine {
 		delete idMapping.taskIdToCaldavUid[taskId];
 	}
 
-	private persistState(
-		obsidianTasks: CommonTask[],
-		caldavTasks: CommonTask[],
-		changeset: { toObsidian: SyncChange[]; toCalDAV: SyncChange[] },
-		idMapping: IdMapping,
-	): void {
-		this.storage.setIdMapping(idMapping);
-		this.storage.setBaseline(
-			this.computeNewBaseline(obsidianTasks, caldavTasks, changeset),
-		);
-		this.storage.updateLastSyncTime();
-	}
-
 	private computeNewBaseline(
 		obsidianTasks: CommonTask[],
 		caldavTasks: CommonTask[],
@@ -317,6 +309,7 @@ export class SyncEngine {
 
 		return {
 			calendarName: this.calendar.calendarName,
+			status: "success",
 			success: true,
 			message,
 			...counts,
@@ -362,6 +355,7 @@ export class SyncEngine {
 		console.error("Sync error:", error);
 		return {
 			calendarName: this.calendar.calendarName,
+			status: "failed",
 			success: false,
 			message,
 			created: { toObsidian: 0, toCalDAV: 0 },

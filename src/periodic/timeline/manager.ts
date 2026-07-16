@@ -1,64 +1,67 @@
 import { MarkdownView } from "obsidian";
-import { PeriodicNotesCache } from "src/periodic/cache";
-import type PeriodicNotesPlugin from "src/main";
-import type { SvelteComponent } from "svelte";
+import type { EventRef } from "obsidian";
+import { mount, unmount } from "svelte";
 
+import type { PeriodicNotesCache } from "../cache";
+import type CalendarPlugin from "../../main";
 import Timeline from "./Timeline.svelte";
 
+type MountedTimeline = ReturnType<typeof mount>;
+
 export default class TimelineManager {
-  private btnComponents: SvelteComponent[];
+  private readonly components = new Map<HTMLElement, MountedTimeline>();
+  private readonly eventRefs: EventRef[] = [];
+  private active = true;
 
-  constructor(readonly plugin: PeriodicNotesPlugin, readonly cache: PeriodicNotesCache) {
-    this.btnComponents = [];
-
+  constructor(readonly plugin: CalendarPlugin, readonly cache: PeriodicNotesCache) {
     this.plugin.app.workspace.onLayoutReady(() => {
-      plugin.registerEvent(
-        plugin.app.workspace.on("layout-change", this.onLayoutChange, this)
+      if (!this.active) return;
+      this.eventRefs.push(
+        this.plugin.app.workspace.on("layout-change", this.onLayoutChange)
       );
       this.onLayoutChange();
     });
   }
 
   public cleanup(): void {
-    for (const existingEl of this.btnComponents) {
-      existingEl.$destroy();
+    if (!this.active) return;
+    this.active = false;
+    this.eventRefs.splice(0).forEach((eventRef) =>
+      this.plugin.app.workspace.offref(eventRef)
+    );
+    for (const component of this.components.values()) {
+      void unmount(component);
     }
+    this.components.clear();
   }
 
-  private onLayoutChange(): void {
-    const openViews: MarkdownView[] = [];
+  private onLayoutChange = (): void => {
+    if (!this.active) return;
+
+    const openViews = new Map<HTMLElement, MarkdownView>();
     this.plugin.app.workspace.iterateAllLeaves((leaf) => {
       if (leaf.view instanceof MarkdownView) {
-        openViews.push(leaf.view);
+        openViews.set(leaf.view.containerEl, leaf.view);
       }
     });
 
-    // Clean up timelines on closed leaves
-    for (const existingEl of this.btnComponents) {
-      if (
-        !openViews
-          .map((view) => view.containerEl)
-          .includes(existingEl.$$.root as HTMLElement)
-      ) {
-        existingEl.$destroy();
-      }
+    for (const [container, component] of [...this.components]) {
+      if (openViews.has(container)) continue;
+      void unmount(component);
+      this.components.delete(container);
     }
 
-    // Add to any view that doesn't already have one
-    for (const view of openViews) {
-      const btn = this.btnComponents.find((btn) => btn.$$.root === view.containerEl);
-      if (!btn) {
-        this.btnComponents.push(
-          new Timeline({
-            target: view.containerEl,
-            props: {
-              plugin: this.plugin,
-              cache: this.cache,
-              view,
-            },
-          })
-        );
-      }
+    for (const [container, view] of openViews) {
+      if (this.components.has(container)) continue;
+      const component = mount(Timeline, {
+        target: container,
+        props: {
+          plugin: this.plugin,
+          cache: this.cache,
+          view,
+        },
+      });
+      this.components.set(container, component);
     }
-  }
+  };
 }

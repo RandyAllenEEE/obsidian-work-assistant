@@ -6,7 +6,7 @@ import {
 } from "../tasks/obsidianTasksWrapper";
 import { ObsidianMapper } from "../tasks/obsidianMapper";
 import { generateTaskId } from "../utils/taskIdGenerator";
-import { stripTagIdentifier } from "../utils/tagIdentifier";
+import { normalizeTagIdentifier, stripTagIdentifier } from "../utils/tagIdentifier";
 
 export type { TaskWithBody } from "../tasks/obsidianTasksWrapper";
 
@@ -47,9 +47,16 @@ export class ObsidianAdapter {
 	}
 
 	async fetchTasks(): Promise<CommonTask[]> {
-		const allInputs = await this.wrapper.getAllTasksWithBody();
-		const pathFiltered = this.filterExcludedPaths(allInputs);
-		const filtered = this.wrapper.filterByTag(pathFiltered, this.settings.syncTag);
+		const { globalFilter } = await this.wrapper.getTasksPluginConfig();
+		const pathFiltered = this.filterExcludedTasks(this.wrapper.getAllTasks());
+		const syncTag = normalizeTagIdentifier(this.settings.syncTag ?? "");
+		const globalTag = normalizeTagIdentifier(globalFilter);
+		const tagFiltered = !syncTag || syncTag === globalTag
+			? pathFiltered
+			: pathFiltered.filter((task) => task.tags?.some(
+				(tag) => normalizeTagIdentifier(tag) === syncTag
+			));
+		const filtered = await this.wrapper.getTasksWithBody(tagFiltered);
 		const normalized = this.normalize(
 			filtered,
 			(task) => this.wrapper.extractId(task),
@@ -57,7 +64,6 @@ export class ObsidianAdapter {
 		// Strip both reserved identifiers so the diff layer only sees user-content
 		// tags. obsidian-tasks normally pre-strips its globalFilter (PR #93), but
 		// stripping it here keeps the adapter independent of that behavior.
-		const { globalFilter } = await this.wrapper.getTasksPluginConfig();
 		return normalized.map((t) => {
 			let tags = stripTagIdentifier(t.tags, this.settings.syncTag ?? '');
 			tags = stripTagIdentifier(tags, globalFilter);
@@ -65,12 +71,12 @@ export class ObsidianAdapter {
 		});
 	}
 
-	private filterExcludedPaths(inputs: TaskWithBody[]): TaskWithBody[] {
+	private filterExcludedTasks(inputs: ObsidianTask[]): ObsidianTask[] {
 		const patterns = this.settings.excludedPaths ?? [];
 		this.excludedTaskIds = new Set();
 		if (patterns.length === 0) return inputs;
 
-		return inputs.filter(({ task }) => {
+		return inputs.filter((task) => {
 			if (!shouldExcludeTaskPath(task.taskLocation.path, patterns)) return true;
 
 			const taskId = this.wrapper.extractId(task);
@@ -97,9 +103,16 @@ export class ObsidianAdapter {
 	): CommonTask[] {
 		const tasks: CommonTask[] = [];
 		this.tasksById = new Map();
+		const assignedIds = new Set(
+			inputs.map(({ task }) => extractId(task)).filter((id): id is string => !!id)
+		);
 
 		for (const { task, body } of inputs) {
-			const taskId = extractId(task) ?? generateTaskId();
+			let taskId = extractId(task);
+			if (!taskId) {
+				do taskId = generateTaskId(); while (assignedIds.has(taskId));
+				assignedIds.add(taskId);
+			}
 			this.tasksById.set(taskId, task);
 			const common = this.mapper.toCommonTask(task, taskId, body);
 
@@ -134,6 +147,7 @@ export class ObsidianAdapter {
 			oldTaskId: string;
 			newTaskId: string;
 		}> = [];
+		const allocatedTaskIds = new Set(this.tasksById.keys());
 
 		// used by the create and update cases; the complete case delegates serialisation to obsidian-tasks
 		const { format, globalFilter } = await this.wrapper.getTasksPluginConfig();
@@ -141,7 +155,9 @@ export class ObsidianAdapter {
 			try {
 				switch (change.type) {
 					case "create": {
-						const taskId = generateTaskId();
+						let taskId: string;
+						do taskId = generateTaskId(); while (allocatedTaskIds.has(taskId));
+						allocatedTaskIds.add(taskId);
 						const taskWithId: CommonTask = {
 							...change.task,
 							uid: taskId,
@@ -170,7 +186,7 @@ export class ObsidianAdapter {
 						const existingTask =
 							this.tasksById.get(change.task.uid) ??
 							this.wrapper.findTaskById(change.task.uid);
-						if (!existingTask) continue;
+						if (!existingTask) throw new Error(`Task ${change.task.uid} was not found for update`);
 
 						const markdown = this.mapper.toMarkdown(
 							change.task,
@@ -189,7 +205,7 @@ export class ObsidianAdapter {
 						const existingTask =
 							this.tasksById.get(change.task.uid) ??
 							this.wrapper.findTaskById(change.task.uid);
-						if (!existingTask) continue;
+						if (!existingTask) throw new Error(`Task ${change.task.uid} was not found for completion`);
 
 						const toggleFn = this.wrapper.getToggleCommand();
 						if (!toggleFn) {
@@ -220,18 +236,22 @@ export class ObsidianAdapter {
 					}
 
 					case "delete": {
-						// Return mapping removal info — SyncEngine handles storage
+						const existingTask =
+							this.tasksById.get(change.task.uid) ??
+							this.wrapper.findTaskById(change.task.uid);
+						if (!existingTask) throw new Error(`Task ${change.task.uid} was not found for deletion`);
+						await this.wrapper.deleteTaskInVault(existingTask);
 						break;
 					}
 					case "reconcile":
 						break;
 				}
 			} catch (error) {
-				if (change.type === "complete") throw error;
 				console.error(
 					`Failed to apply ${change.type} for task ${change.task.uid}:`,
 					error,
 				);
+				throw error;
 			}
 		}
 
@@ -263,6 +283,7 @@ export class ObsidianAdapter {
 					`[ObsidianAdapter] Failed to write back ID for task ${task.uid}:`,
 					error,
 				);
+				throw error;
 			}
 		}
 	}

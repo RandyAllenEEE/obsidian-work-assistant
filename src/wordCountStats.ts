@@ -1,9 +1,9 @@
-import { MarkdownView, debounce, TFile, Component } from 'obsidian';
-import type { Debouncer, App } from 'obsidian';
+import { MarkdownView, Notice, debounce, TFile, TFolder, Component } from 'obsidian';
+import type { Debouncer, App, TAbstractFile } from 'obsidian';
 import type { Moment } from "moment";
 import { t } from "./i18n";
 import { WORKER_CODE } from "./workers/worker";
-import { DEFAULT_DAILY_STATS_SETTINGS, StatsMdStore } from "./io/statsMdStore";
+import { StatsMdStore } from "./io/statsMdStore";
 import type { DailyStatsSettings } from "./io/statsMdStore";
 import type { TodaysWordCountAggregate } from "./io/statsMdStore";
 import type { WordCountSnapshot } from "./io/statsMdStore";
@@ -16,7 +16,7 @@ export default class WordCountStats extends Component {
 	settings: DailyStatsSettings;
 	currentWordCount: number;
 	today: string;
-	debouncedUpdate: Debouncer<[string, string], void>;
+	debouncedUpdate: (contents: string, filepath: string) => void;
 	private debouncedSave: Debouncer<[], Promise<void>>;
 	plugin: CalendarPlugin;
 	app: App;
@@ -29,6 +29,7 @@ export default class WordCountStats extends Component {
 	private lastNonce = 0;
 	private latestNonceByPath = new Map<string, number>();
 	private pathByNonce = new Map<number, string>();
+	private pendingWorkerContentsByPath = new Map<string, string>();
 	private dirty = false; // Check for unsaved changes
 	private activeStatsMdPath: string;
 
@@ -42,19 +43,17 @@ export default class WordCountStats extends Component {
 	private saveRequested = false;
 	private pendingSkipUpdateDateCheck = true;
 	private bufferedUpdatesDuringTransition = new Map<string, number>();
+	private pendingWordCountUpdates = new Map<string, { timer: number; contents: string }>();
+	private fileGenerations = new Map<string, number>();
 
 	constructor(plugin: CalendarPlugin, app: App) {
 		super();
 		this.plugin = plugin;
 		this.app = app;
-		this.settings = Object.assign({}, DEFAULT_DAILY_STATS_SETTINGS);
 		this.today = window.moment().format("YYYY-MM-DD");
 		this.activeStatsMdPath = this.resolveStatsMdPath();
 		this.statsStore = new StatsMdStore(this.app, () => this.resolveStatsMdPath());
-		// 注册回调：当文件删除或外部删除检测到时，设置 dirty 标志
-		this.statsStore.registerAccumulatorChangedCallback(() => {
-			this.dirty = true;
-		});
+		this.settings = this.statsStore.settings;
 	}
 
 	onload(): void {
@@ -89,6 +88,11 @@ export default class WordCountStats extends Component {
 	}
 
 	private finalizeUnload(): void {
+		for (const update of this.pendingWordCountUpdates.values()) {
+			window.clearTimeout(update.timer);
+		}
+		this.pendingWordCountUpdates.clear();
+		this.fileGenerations.clear();
 		this.statsStore.cleanup();
 		this.terminateWorker();
 	}
@@ -120,6 +124,7 @@ export default class WordCountStats extends Component {
 		}
 		this.latestNonceByPath.clear();
 		this.pathByNonce.clear();
+		this.pendingWorkerContentsByPath.clear();
 	}
 
 	private handleWorkerMessage(nonce: number, count: number, hash: string): void {
@@ -134,6 +139,7 @@ export default class WordCountStats extends Component {
 		}
 
 		this.latestNonceByPath.delete(filepath);
+		this.pendingWorkerContentsByPath.delete(filepath);
 		this.wordCountCache.set(filepath, {
 			contentHash: hash,
 			wordCount: count,
@@ -144,7 +150,13 @@ export default class WordCountStats extends Component {
 	}
 
 	async initialize(): Promise<void> {
-		await this.loadSettings();
+		try {
+			await this.loadSettings();
+		} catch (error) {
+			console.error("[Work Assistant] Word count statistics disabled because stats.md could not be loaded", error);
+			new Notice("Work Assistant: stats.md 无法读取或格式无效，字数统计已暂停以保护原文件。");
+			return;
+		}
 
 		this.updateDate();
 		this.updateCounts();
@@ -154,9 +166,9 @@ export default class WordCountStats extends Component {
 
 		// 使用带校验的配置值，避免异常配置直接生效
 		const debounceDelay = this.getDebounceDelay();
-		this.debouncedUpdate = debounce((contents: string, filepath: string) => {
-			this.updateWordCount(contents, filepath);
-		}, debounceDelay, false);
+		this.debouncedUpdate = (contents: string, filepath: string) => {
+			this.scheduleWordCountUpdate(contents, filepath, debounceDelay);
+		};
 
 		this.debouncedSave = debounce(async () => {
 			await this.saveSettings();
@@ -167,16 +179,13 @@ export default class WordCountStats extends Component {
 			this.app.workspace.on("quick-preview", this.onQuickPreview.bind(this))
 		);
 
-		this.registerEvent(
-			this.app.vault.on("modify", async (file: TFile) => {
-				// Only process markdown files
-				if (file instanceof TFile && file.extension === "md" && !this.isStatsFile(file.path) && !this.shouldIgnoreFile(file.path)) {
-					// We need to read the file content to update the word count
-					const contents = await this.app.vault.read(file);
-					this.debouncedUpdate(contents, file.path);
-				}
-			})
-		);
+		this.app.workspace.onLayoutReady(() => {
+			if (this.isUnloading) return;
+			this.registerEvent(this.app.vault.on("create", (file) => void this.handleVaultCreate(file)));
+			this.registerEvent(this.app.vault.on("modify", (file) => void this.handleVaultModify(file)));
+			this.registerEvent(this.app.vault.on("rename", this.handleVaultRename));
+			this.registerEvent(this.app.vault.on("delete", this.handleVaultDelete));
+		});
 
 		// 使用带校验的配置值，避免异常配置直接生效
 		const autoSaveInterval = this.getAutoSaveInterval();
@@ -192,6 +201,195 @@ export default class WordCountStats extends Component {
 		// this.statusBarEl = this.plugin.addStatusBarItem();
 		this.registerStatusBarUpdates();
 		void this.initializeActiveFileWordCount();
+	}
+
+	private scheduleWordCountUpdate(contents: string, filepath: string, delay: number): void {
+		const existing = this.pendingWordCountUpdates.get(filepath);
+		if (existing) {
+			window.clearTimeout(existing.timer);
+		}
+
+		const timer = window.setTimeout(() => {
+			this.pendingWordCountUpdates.delete(filepath);
+			this.updateWordCount(contents, filepath);
+		}, delay);
+		this.pendingWordCountUpdates.set(filepath, { timer, contents });
+	}
+
+	private handleVaultCreate = async (file: TAbstractFile): Promise<void> => {
+		if (!this.isTrackableMarkdownFile(file)) return;
+		await this.readVaultFileForUpdate(file, true);
+	};
+
+	private handleVaultModify = async (file: TAbstractFile): Promise<void> => {
+		if (!this.isTrackableMarkdownFile(file)) return;
+		await this.readVaultFileForUpdate(file, false);
+	};
+
+	private async readVaultFileForUpdate(file: TFile, seedBaseline: boolean): Promise<void> {
+		const eventPath = file.path;
+		const generation = (this.fileGenerations.get(eventPath) ?? 0) + 1;
+		this.fileGenerations.set(eventPath, generation);
+
+		try {
+			const contents = await this.app.vault.read(file);
+			const currentPath = file.path;
+			if (this.fileGenerations.get(currentPath) !== generation) return;
+			if (this.app.vault.getAbstractFileByPath(currentPath) !== file) return;
+			if (this.isStatsFile(currentPath) || this.shouldIgnoreFile(currentPath)) return;
+
+			const normalizedPath = normalizePathForStorage(currentPath);
+			if (seedBaseline && !Object.prototype.hasOwnProperty.call(this.settings.todaysWordCount, normalizedPath)) {
+				this.updateStoreImmediate(currentPath, this.countWords(contents));
+				return;
+			}
+			this.debouncedUpdate(contents, currentPath);
+		} catch (error) {
+			// A delete can legitimately win the race with this read.
+			if (this.app.vault.getAbstractFileByPath(file.path) === file) {
+				console.warn("[Work Assistant] Failed to read modified file:", error);
+			}
+		}
+	}
+
+	private handleVaultRename = (file: TAbstractFile, oldPath: string): void => {
+		const isFolder = file instanceof TFolder;
+		if (!isFolder && (!(file instanceof TFile) || file.extension !== "md")) return;
+
+		this.remapAsyncPaths(oldPath, file.path, isFolder);
+		if (this.isStatsFile(oldPath) || this.isStatsFile(file.path)) return;
+
+		if (this.statsStore.handleRename(oldPath, file.path, isFolder)) {
+			this.dirty = true;
+			this.updateCounts();
+			void this.requestSave();
+		}
+	};
+
+	private handleVaultDelete = (file: TAbstractFile): void => {
+		const isFolder = file instanceof TFolder;
+		if (!isFolder && (!(file instanceof TFile) || file.extension !== "md")) return;
+
+		this.flushKnownCountsBeforeDelete(file.path, isFolder);
+		this.invalidateAsyncPaths(file.path, isFolder);
+		if (this.isStatsFile(file.path)) {
+			this.statsStore.markRuntimeChanged();
+			this.dirty = true;
+			void this.requestSave();
+			return;
+		}
+
+		if (this.statsStore.handleDelete(file.path, isFolder)) {
+			this.dirty = true;
+			this.updateCounts();
+			void this.requestSave();
+		}
+	};
+
+	private isTrackableMarkdownFile(file: TAbstractFile): file is TFile {
+		return file instanceof TFile
+			&& file.extension === "md"
+			&& !this.isStatsFile(file.path)
+			&& !this.shouldIgnoreFile(file.path);
+	}
+
+	private remapAsyncPaths(oldPath: string, newPath: string, isFolder: boolean): void {
+		const remap = (path: string): string | null => {
+			if (path === oldPath) return newPath;
+			if (isFolder && path.startsWith(`${oldPath}/`)) {
+				return `${newPath}${path.slice(oldPath.length)}`;
+			}
+			return null;
+		};
+
+		for (const [path, update] of [...this.pendingWordCountUpdates]) {
+			const nextPath = remap(path);
+			if (!nextPath) continue;
+			window.clearTimeout(update.timer);
+			this.pendingWordCountUpdates.delete(path);
+			this.scheduleWordCountUpdate(update.contents, nextPath, this.getDebounceDelay());
+		}
+
+		for (const [path, generation] of [...this.fileGenerations]) {
+			const nextPath = remap(path);
+			if (!nextPath) continue;
+			this.fileGenerations.delete(path);
+			this.fileGenerations.set(nextPath, generation);
+		}
+
+		for (const [path, cache] of [...this.wordCountCache]) {
+			const nextPath = remap(path);
+			if (!nextPath) continue;
+			this.wordCountCache.delete(path);
+			this.wordCountCache.set(nextPath, cache);
+		}
+
+		for (const [path, count] of [...this.bufferedUpdatesDuringTransition]) {
+			const nextPath = remap(path);
+			if (!nextPath) continue;
+			this.bufferedUpdatesDuringTransition.delete(path);
+			this.bufferedUpdatesDuringTransition.set(nextPath, count);
+		}
+
+		for (const [path, nonce] of [...this.latestNonceByPath]) {
+			const nextPath = remap(path);
+			if (!nextPath) continue;
+			this.latestNonceByPath.delete(path);
+			this.latestNonceByPath.set(nextPath, nonce);
+			this.pathByNonce.set(nonce, nextPath);
+		}
+
+		for (const [path, contents] of [...this.pendingWorkerContentsByPath]) {
+			const nextPath = remap(path);
+			if (!nextPath) continue;
+			this.pendingWorkerContentsByPath.delete(path);
+			this.pendingWorkerContentsByPath.set(nextPath, contents);
+		}
+	}
+
+	private flushKnownCountsBeforeDelete(path: string, isFolder: boolean): void {
+		const matches = (candidate: string) => candidate === path
+			|| (isFolder && candidate.startsWith(`${path}/`));
+		const latestContents = new Map<string, string>();
+
+		for (const [candidate, contents] of this.pendingWorkerContentsByPath) {
+			if (matches(candidate)) latestContents.set(candidate, contents);
+		}
+		for (const [candidate, update] of this.pendingWordCountUpdates) {
+			if (matches(candidate)) latestContents.set(candidate, update.contents);
+		}
+
+		for (const [candidate, contents] of latestContents) {
+			this.updateStoreImmediate(candidate, this.countWords(contents), true);
+		}
+	}
+
+	private invalidateAsyncPaths(path: string, isFolder: boolean): void {
+		const matches = (candidate: string) => candidate === path
+			|| (isFolder && candidate.startsWith(`${path}/`));
+
+		for (const [candidate, update] of [...this.pendingWordCountUpdates]) {
+			if (!matches(candidate)) continue;
+			window.clearTimeout(update.timer);
+			this.pendingWordCountUpdates.delete(candidate);
+		}
+		for (const candidate of [...this.fileGenerations.keys()]) {
+			if (matches(candidate)) this.fileGenerations.delete(candidate);
+		}
+		for (const candidate of [...this.wordCountCache.keys()]) {
+			if (matches(candidate)) this.wordCountCache.delete(candidate);
+		}
+		for (const candidate of [...this.bufferedUpdatesDuringTransition.keys()]) {
+			if (matches(candidate)) this.bufferedUpdatesDuringTransition.delete(candidate);
+		}
+		for (const [candidate, nonce] of [...this.latestNonceByPath]) {
+			if (!matches(candidate)) continue;
+			this.latestNonceByPath.delete(candidate);
+			this.pathByNonce.delete(nonce);
+		}
+		for (const candidate of [...this.pendingWorkerContentsByPath.keys()]) {
+			if (matches(candidate)) this.pendingWorkerContentsByPath.delete(candidate);
+		}
 	}
 
 		public async handleSettingsChanged(): Promise<void> {
@@ -213,6 +411,11 @@ export default class WordCountStats extends Component {
 			this.updateDate();
 			this.updateCounts();
 		}
+	}
+
+	private markDirty(): void {
+		this.dirty = true;
+		this.statsStore.markRuntimeChanged();
 	}
 
 	private updateStore(filepath: string, count: number): void {
@@ -245,26 +448,12 @@ export default class WordCountStats extends Component {
 		const existingRecord = this.settings.todaysWordCount[normalizedPath];
 
 		if (!existingRecord) {
-			// New file: check if delta >= shock threshold
-			const delta = count;  // from 0 to count
-			if (delta >= this.getShockThreshold()) {
-				// Shock handling for new file: initial=0, current=count
-				// This preserves the net change (count - 0 = count)
-				this.settings.todaysWordCount[normalizedPath] = {
-					initial: 0,
-					current: count
-				};
-				this.dirty = true;
-				this.updateCounts();
-				void this.saveSettings();
-				return;
-			}
-			// Normal case for new file: initial = current = count
+			// First observation establishes a baseline, regardless of file size.
 			this.settings.todaysWordCount[normalizedPath] = {
 				initial: count,
 				current: count
 			};
-			this.dirty = true;
+			this.markDirty();
 			this.updateCounts();
 			this.debouncedSave();
 			return;
@@ -281,7 +470,7 @@ export default class WordCountStats extends Component {
 				initial: existingRecord.initial + delta,
 				current: count
 			};
-			this.dirty = true;
+			this.markDirty();
 			this.updateCounts();
 			void this.saveSettings();
 			return;
@@ -297,7 +486,7 @@ export default class WordCountStats extends Component {
 		}
 
 		if (changed) {
-			this.dirty = true;
+			this.markDirty();
 			this.updateCounts();
 			this.debouncedSave();
 		}
@@ -403,7 +592,7 @@ export default class WordCountStats extends Component {
 				initial: count,
 				current: count
 			};
-			this.dirty = true;
+			this.markDirty();
 			this.updateCounts();
 			void this.saveSettings();
 			return;
@@ -418,7 +607,7 @@ export default class WordCountStats extends Component {
 				initial: existingRecord.initial + delta,
 				current: count
 			};
-			this.dirty = true;
+			this.markDirty();
 			this.updateCounts();
 			void this.saveSettings();
 			return;
@@ -430,7 +619,7 @@ export default class WordCountStats extends Component {
 				initial: existingRecord.initial,
 				current: count
 			};
-			this.dirty = true;
+			this.markDirty();
 			this.updateCounts();
 			void this.saveSettings();
 		}
@@ -506,6 +695,7 @@ export default class WordCountStats extends Component {
 			}
 			this.latestNonceByPath.set(filepath, nonce);
 			this.pathByNonce.set(nonce, filepath);
+			this.pendingWorkerContentsByPath.set(filepath, contents);
 			this.worker.postMessage({ id: nonce, text: contents });
 		} else {
 			// Fallback to main thread
@@ -575,7 +765,7 @@ export default class WordCountStats extends Component {
 		this.settings.todaysWordCount = {};
 		this.settings.dayCounts[this.today] = 0;
 		this.updateCounts();
-		this.dirty = true;
+		this.markDirty();
 	}
 
 	private async transitionToNewDay(newToday: string): Promise<void> {
@@ -630,7 +820,11 @@ export default class WordCountStats extends Component {
 	}
 
 	private applySnapshot(snapshot: WordCountSnapshot): void {
-		this.settings = snapshot.settings;
+		if (snapshot.settings !== this.settings) {
+			this.settings.dayCounts = { ...(snapshot.settings.dayCounts ?? {}) };
+			this.settings.todaysWordCount = { ...(snapshot.settings.todaysWordCount ?? {}) };
+			this.settings.pomoCounts = { ...(snapshot.settings.pomoCounts ?? {}) };
+		}
 		this.todaysAggregate = snapshot.todaysAggregate;
 		this.currentWordCount = this.todaysAggregate.total;
 
@@ -661,7 +855,7 @@ export default class WordCountStats extends Component {
 		}
 
 		this.settings.pomoCounts[date]++;
-		this.dirty = true;
+		this.markDirty();
 		this.debouncedSave();
 	}
 
@@ -677,9 +871,13 @@ export default class WordCountStats extends Component {
 		);
 		this.applySnapshot(snapshot);
 		if (!hasTodayInSnapshot && !this.isDayTransitioning) {
-			void this.transitionToNewDay(this.today);
+			await this.transitionToNewDay(this.today);
 		}
 		await this.reconcileActiveFileBaselineAfterLoad(hasTodayInSnapshot);
+		if (this.statsStore.hasUnpersistedChanges()) {
+			this.dirty = true;
+			void this.requestSave();
+		}
 		// 不需要特殊初始化wordCountCache，因为它会在updateStore中按需填充
 	}
 
@@ -711,7 +909,7 @@ export default class WordCountStats extends Component {
 		// If today already exists but active baseline drifts too much, treat it as stale baseline.
 		if (Math.abs(count - existing.current) >= this.getShockThreshold()) {
 			this.settings.todaysWordCount[normalizedPath] = { initial: count, current: count };
-			this.dirty = true;
+			this.markDirty();
 			this.updateCounts();
 			void this.requestSave();
 			return;
@@ -738,26 +936,30 @@ export default class WordCountStats extends Component {
 	}
 
 	private async drainSaveRequests(): Promise<void> {
-		while (this.saveRequested) {
+		while (this.saveRequested || this.dirty || this.statsStore.hasUnpersistedChanges()) {
 			const skipUpdateDateCheck = this.pendingSkipUpdateDateCheck;
 			this.saveRequested = false;
 			this.pendingSkipUpdateDateCheck = true;
 
-			if (!this.dirty || this.isSaving) {
-				continue;
-			}
+			if ((!this.dirty && !this.statsStore.hasUnpersistedChanges()) || this.isSaving) break;
 
 			this.isSaving = true;
 			try {
 				const refreshedSnapshot = await this.statsStore.save(this.settings);
 				this.applySnapshot(refreshedSnapshot);
-				this.dirty = false;
+				this.dirty = this.saveRequested || this.statsStore.hasUnpersistedChanges();
+				if (this.statsStore.hasUnpersistedChanges()) {
+					this.saveRequested = true;
+				}
 				this.emitStatsUpdated();
 				if (!skipUpdateDateCheck) {
 					this.updateDate();
 				}
 			} catch (error) {
 				console.error("[Work Assistant] Failed to save stats.md data:", error);
+				this.dirty = true;
+				this.saveRequested = false;
+				break;
 			} finally {
 				this.isSaving = false;
 			}

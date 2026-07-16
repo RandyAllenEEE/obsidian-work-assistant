@@ -104,4 +104,24 @@ describe("Timer", () => {
     timer.mode = Mode.NoTimer;
     await expect(timer.setStatusBarText()).resolves.toBe("🍅");
   });
+
+  test("concurrent expiry heartbeats complete a Pomodoro only once", async () => {
+    const plugin = createPlugin();
+    plugin.wordCountStats = {
+      incrementPomoCount: jest.fn(),
+    };
+    const timer = new Timer(plugin);
+    timer.mode = Mode.Pomo;
+    timer.startTime = moment().subtract(26, "minutes");
+    timer.endTime = moment().subtract(1, "minute");
+
+    await Promise.all([
+      timer.setStatusBarText(),
+      timer.setStatusBarText(),
+      timer.handleTimerEnd(),
+    ]);
+
+    expect(plugin.wordCountStats.incrementPomoCount).toHaveBeenCalledTimes(1);
+    expect(timer.pomosSinceStart).toBe(1);
+  });
 });

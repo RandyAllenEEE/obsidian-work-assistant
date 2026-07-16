@@ -198,9 +198,8 @@ export class ObsidianTasksWrapper {
         const content = await this.app.vault.read(file);
         const lines = content.split('\n');
 
-        // Find the task by its original markdown (don't trust line numbers from cache)
         const originalMarkdown = task.originalMarkdown;
-        const taskIndex = lines.findIndex(line => line.trim() === originalMarkdown.trim());
+        const taskIndex = this.findTaskLineIndex(lines, task);
 
         if (taskIndex === -1) {
             throw new Error(`Could not find task in file: ${originalMarkdown}`);
@@ -221,6 +220,27 @@ export class ObsidianTasksWrapper {
         lines.splice(taskIndex, 1 + noteLineCount, ...newLines);
 
         // Write back to file
+        await this.app.vault.modify(file, lines.join('\n'));
+    }
+
+    async deleteTaskInVault(task: ObsidianTask): Promise<void> {
+        const filePath = task.taskLocation.path;
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!file || !(file instanceof TFile)) {
+            throw new Error(`File not found: ${filePath}`);
+        }
+        const content = await this.app.vault.read(file);
+        const lines = content.split('\n');
+        const taskIndex = this.findTaskLineIndex(lines, task);
+        if (taskIndex === -1) {
+            throw new Error(`Could not find task in file: ${task.originalMarkdown}`);
+        }
+        let noteLineCount = 0;
+        for (let index = taskIndex + 1; index < lines.length; index++) {
+            if (!/^(?:\s{2,}|\t)- /.test(lines[index])) break;
+            noteLineCount++;
+        }
+        lines.splice(taskIndex, 1 + noteLineCount);
         await this.app.vault.modify(file, lines.join('\n'));
     }
 
@@ -320,6 +340,10 @@ export class ObsidianTasksWrapper {
         return this.loadBodies(this.getAllTasks());
     }
 
+    async getTasksWithBody(tasks: ObsidianTask[]): Promise<TaskWithBody[]> {
+        return this.loadBodies(tasks);
+    }
+
     /**
      * Resolve a task's containing file path via the public obsidian-tasks
      * accessor. Returns null (and warns) if the path is absent, so one task
@@ -341,8 +365,6 @@ export class ObsidianTasksWrapper {
      * Groups tasks by file to avoid re-reading the same file multiple times.
      */
     private async loadBodies(tasks: ObsidianTask[]): Promise<TaskWithBody[]> {
-        const result: TaskWithBody[] = [];
-
         const tasksByFile = new Map<string, ObsidianTask[]>();
         for (const task of tasks) {
             const filePath = this.resolveTaskPath(task);
@@ -357,39 +379,96 @@ export class ObsidianTasksWrapper {
             }
         }
 
-        for (const [filePath, fileTasks] of tasksByFile) {
-            try {
-                const file = this.app.vault.getAbstractFileByPath(filePath);
-                if (!file || !(file instanceof TFile)) {
-                    for (const task of fileTasks) {
-                        result.push({ task, body: '' });
-                    }
-                    continue;
-                }
-                const content = await this.app.vault.read(file);
-                const lines = content.split('\n');
+        const groups = [...tasksByFile.entries()];
+        const groupResults: TaskWithBody[][] = new Array(groups.length);
+        let nextGroup = 0;
+        const processNextGroup = async (): Promise<void> => {
+            while (nextGroup < groups.length) {
+                const groupIndex = nextGroup++;
+                const [filePath, fileTasks] = groups[groupIndex];
+                groupResults[groupIndex] = await this.loadBodiesForFile(filePath, fileTasks);
+            }
+        };
+        await Promise.all(
+            Array.from({ length: Math.min(8, groups.length) }, () => processNextGroup())
+        );
+        return groupResults.flat();
+    }
 
-                for (const task of fileTasks) {
-                    const lineIndex = lines.findIndex(
-                        line => line.trim() === task.originalMarkdown.trim()
-                    );
-                    if (lineIndex === -1) {
-                        result.push({ task, body: '' });
-                        continue;
-                    }
+    private async loadBodiesForFile(
+        filePath: string,
+        fileTasks: ObsidianTask[]
+    ): Promise<TaskWithBody[]> {
+        try {
+            const file = this.app.vault.getAbstractFileByPath(filePath);
+            if (!file || !(file instanceof TFile)) {
+                return fileTasks.map((task) => ({ task, body: '' }));
+            }
+            const content = await this.app.vault.read(file);
+            const lines = content.split('\n');
+            const usedLineIndexes = new Set<number>();
+            return fileTasks.map((task) => {
+                const lineIndex = this.findTaskLineIndex(lines, task, usedLineIndexes);
+                if (lineIndex === -1) return { task, body: '' };
+                usedLineIndexes.add(lineIndex);
+                return { task, body: this.extractBodyFromFile(content, lineIndex) };
+            });
+        } catch (error) {
+            console.error(`[ObsidianTasksWrapper] Failed to read file for body: ${filePath}`, error);
+            return fileTasks.map((task) => ({ task, body: '' }));
+        }
+    }
 
-                    const body = this.extractBodyFromFile(content, lineIndex);
-                    result.push({ task, body });
-                }
-            } catch (error) {
-                console.error(`[ObsidianTasksWrapper] Failed to read file for body: ${filePath}`, error);
-                for (const task of fileTasks) {
-                    result.push({ task, body: '' });
+    private findTaskLineIndex(
+        lines: string[],
+        task: ObsidianTask,
+        usedLineIndexes: ReadonlySet<number> = new Set()
+    ): number {
+        const configuredLine = task.taskLocation?._lineNumber;
+        if (Number.isInteger(configuredLine)) {
+            for (const candidate of [configuredLine as number, (configuredLine as number) - 1]) {
+                if (candidate >= 0
+                    && candidate < lines.length
+                    && !usedLineIndexes.has(candidate)
+                    && this.lineMatchesTask(lines[candidate], task)) {
+                    return candidate;
                 }
             }
         }
 
-        return result;
+        const taskId = this.getTaskId(task);
+        if (taskId) {
+            const idIndex = lines.findIndex((line, index) =>
+                !usedLineIndexes.has(index) && this.extractIdFromLine(line) === taskId
+            );
+            if (idIndex !== -1) return idIndex;
+        }
+
+        const matches = lines
+            .map((line, index) => ({ line, index }))
+            .filter(({ line, index }) =>
+                !usedLineIndexes.has(index)
+                && line.trim() === task.originalMarkdown.trim()
+            );
+        if (matches.length <= 1) return matches[0]?.index ?? -1;
+
+        const siblings = this.getAllTasks().filter((candidate) =>
+            candidate.taskLocation?.path === task.taskLocation?.path
+            && candidate.originalMarkdown.trim() === task.originalMarkdown.trim()
+        );
+        const occurrence = Math.max(0, siblings.indexOf(task));
+        return matches[occurrence]?.index ?? matches[0].index;
+    }
+
+    private lineMatchesTask(line: string, task: ObsidianTask): boolean {
+        const taskId = this.getTaskId(task);
+        return line.trim() === task.originalMarkdown.trim()
+            || (!!taskId && this.extractIdFromLine(line) === taskId);
+    }
+
+    private extractIdFromLine(line: string): string | null {
+        const match = line.match(/\[id::\s*([^\]]+)\]/) ?? line.match(/🆔\s+(\S+)/);
+        return match?.[1]?.trim() ?? null;
     }
 
     /**

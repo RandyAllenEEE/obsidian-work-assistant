@@ -104,7 +104,7 @@ function resolveTemplateDate(baseDate: Moment, selector?: string): Moment | null
 
   const weekday = trimmed.toLowerCase();
   if (["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes(weekday)) {
-    return baseDate.clone().weekday(getDayOfWeekNumericalValue(weekday));
+    return resolveIsoWeekday(baseDate, weekday);
   }
 
   const offsetMatch = /^([+-]\d+)([yqMwdhms])$/.exec(trimmed);
@@ -113,6 +113,19 @@ function resolveTemplateDate(baseDate: Moment, selector?: string): Moment | null
   }
 
   return applyTemplateOffset(baseDate, offsetMatch[1], offsetMatch[2]);
+}
+
+function resolveIsoWeekday(baseDate: Moment, weekday: string): Moment {
+  const weekdays = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+  ];
+  return baseDate.clone().startOf("isoWeek").add(weekdays.indexOf(weekday), "day");
 }
 
 function renderDate(date: Moment, fallback: string, momentFormat?: string): string {
@@ -133,7 +146,7 @@ export function resolvePeriodicNotePath(
     ? `${filename}.md`
     : filename;
 
-  return normalizePath(join(directory, filenameWithExt));
+  return normalizePath(directory ? join(directory, filenameWithExt) : filenameWithExt);
 }
 
 export function applyTemplateTransformations(
@@ -181,8 +194,7 @@ export function applyTemplateTransformations(
     templateContents = templateContents.replace(
       /{{\s*(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s*:(.*?)}}/gi,
       (_, dayOfWeek, momentFormat) => {
-        const day = getDayOfWeekNumericalValue(dayOfWeek);
-        return date.clone().weekday(day).format(momentFormat.trim());
+        return resolveIsoWeekday(date, dayOfWeek.toLowerCase()).format(momentFormat.trim());
       }
     );
   }
@@ -355,7 +367,9 @@ export async function applyPeriodicTemplateToFile(
     templateContents,
     { settings }
   );
-  return app.vault.modify(file, renderedContents);
+  await app.vault.process(file, (currentContents) =>
+    currentContents.length === 0 ? renderedContents : currentContents
+  );
 }
 
 export async function getTemplateContents(
@@ -512,10 +526,15 @@ async function ensureFolderExists(app: App, path: string): Promise<void> {
   const dirs = path.replace(/\\/g, "/").split("/");
   dirs.pop(); // remove basename
 
-  if (dirs.length) {
-    const dir = join(...dirs);
-    if (!app.vault.getAbstractFileByPath(dir)) {
-      await app.vault.createFolder(dir);
+  let currentDir = "";
+  for (const segment of dirs.filter(Boolean)) {
+    currentDir = currentDir ? join(currentDir, segment) : segment;
+    if (app.vault.getAbstractFileByPath(currentDir)) continue;
+    try {
+      await app.vault.createFolder(currentDir);
+    } catch (error) {
+      // Another create may have completed while this one was pending.
+      if (!app.vault.getAbstractFileByPath(currentDir)) throw error;
     }
   }
 }
