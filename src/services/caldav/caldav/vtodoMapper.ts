@@ -22,7 +22,7 @@ export class VTODOMapper {
    * @param uid The CalDAV UID (use for updates, generate new for creates)
    * @returns VTODO iCalendar string
    */
-  taskToVTODO(task: Omit<CommonTask, 'uid'>, uid: string): string {
+  taskToVTODO(task: Omit<CommonTask, 'uid'>, uid: string, sourceId?: string): string {
     const lines: string[] = [];
 
     lines.push('BEGIN:VCALENDAR');
@@ -30,6 +30,9 @@ export class VTODOMapper {
     lines.push('PRODID:-//Obsidian//Tasks CalDAV Sync//EN');
     lines.push('BEGIN:VTODO');
     lines.push(`UID:${uid}`);
+    if (sourceId) {
+      lines.push(`X-WORK-ASSISTANT-SOURCE-ID:${this.escapeText(sourceId)}`);
+    }
     lines.push(`DTSTAMP:${this.formatDateTimeUTC(new Date())}`);
     lines.push(`LAST-MODIFIED:${this.formatDateTimeUTC(new Date())}`);
     lines.push(`SUMMARY:${this.escapeText(task.title)}`);
@@ -126,6 +129,28 @@ export class VTODOMapper {
     const unfolded = this.unfold(data);
     const match = unfolded.match(/^UID:(.+)$/m);
     return match ? match[1].trim() : '';
+  }
+
+  /** Extract the stable local source identity written by Work Assistant. */
+  extractSourceId(data: string): string | null {
+    return this.extractProperty(this.unfold(data), 'X-WORK-ASSISTANT-SOURCE-ID');
+  }
+
+  /**
+   * Mark a VTODO complete while retaining all server-owned properties, such
+   * as a third-party RRULE or vendor extension. Only VTODO status fields are
+   * replaced; VTIMEZONE and sibling components remain untouched.
+   */
+  completeVTODO(data: string, completedDate: string): string {
+    const completed = this.formatDateTimeUTC(this.toCompletedInstant(completedDate));
+    return data.replace(/BEGIN:VTODO[\s\S]*?END:VTODO/, (vtodo) => {
+      const lines = vtodo.split(/\r?\n/).filter((line) => !/^(STATUS|COMPLETED|PERCENT-COMPLETE)[;:]/i.test(line));
+      const endIndex = lines.findIndex((line) => line.trim() === 'END:VTODO');
+      const insertAt = endIndex === -1 ? lines.length : endIndex;
+      lines.splice(insertAt, 0, 'STATUS:COMPLETED', `COMPLETED:${completed}`, 'PERCENT-COMPLETE:100');
+      const newline = data.includes('\r\n') ? '\r\n' : '\n';
+      return lines.join(newline);
+    });
   }
 
   /**

@@ -1,308 +1,198 @@
-import { Component, Notice, TFile, TFolder, debounce } from "obsidian";
+import { Component, Notice, TFile, TFolder } from "obsidian";
 
 import type CalendarPlugin from "../../main";
 import { t } from "../../i18n";
-import {
-  defaultTaskSyncState,
-  tasksStore,
-} from "../../ui/stores";
-import { runMigrations } from "./migrations/migrationRunner";
+import { defaultTaskSyncState, tasksStore } from "../../ui/stores";
 import { AutoSyncScheduler } from "./sync/autoSync";
-import { ObsidianAdapter } from "./sync/obsidianAdapter";
-import { SyncEngine, type SyncResult } from "./sync/syncEngine";
 import type { CommonTask } from "./sync/types";
-import { getEarliestTaskActionDate } from "../../ui/taskGrouping";
-import { ObsidianTasksWrapper, type ObsidianTask } from "./tasks/obsidianTasksWrapper";
-import type { CalDAVSettings, CalendarMapping } from "./types";
-import { SyncResultModal } from "./ui/syncResultModal";
+import { LocalTaskPublisher } from "./localTaskPublisher";
+import { RemoteTaskRepository } from "./remoteTaskRepository";
+import { TaskCoordinator, type CoordinationResult } from "./taskCoordinator";
+import { TaskStateStore } from "./storage/taskStateStore";
+import type { CalendarMapping } from "./types";
 import { describeIncompleteCalendar } from "./utils/calendarConfig";
+import { calendarStorageId } from "./utils/calendarStorageId";
+
+interface RuntimeTaskSettings {
+  calendar: CalendarMapping;
+  syncInterval: number;
+  excludedPaths: string[];
+  includeObsidianLink: boolean;
+  showAutoSyncNotifications: boolean;
+}
 
 interface RuntimeSettingsBuild {
-  settings: CalDAVSettings | null;
+  settings: RuntimeTaskSettings | null;
   skipped: string | null;
 }
 
+/** Runtime owner for the CalDAV-authoritative task pipeline. */
 export class TaskSyncManager extends Component {
-  private plugin: CalendarPlugin;
-  private syncEngine: SyncEngine | null = null;
+  private coordinator: TaskCoordinator | null = null;
   private autoSync: AutoSyncScheduler | null = null;
-  private taskOrigins = new Map<string, ObsidianTask>();
-  private refreshLocalTasksDebounced: () => void;
-  private refreshGeneration = 0;
-  private syncPromise: Promise<SyncResult[]> | null = null;
-  private backgroundSyncQueued = false;
-  private knownTaskPaths = new Set<string>();
-  private relevanceTimer: number | null = null;
-  private pendingRelevancePaths = new Set<string>();
+  private configurationGeneration = 0;
+  private localInspectionTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private localInspectionGeneration = 0;
+  private pendingLocalPaths = new Set<string>();
+  private pendingFolderEvent = false;
 
-  constructor(plugin: CalendarPlugin) {
+  constructor(private readonly plugin: CalendarPlugin) {
     super();
-    this.plugin = plugin;
-    this.refreshLocalTasksDebounced = debounce(
-      () => void this.refreshLocalTasks(false),
-      500,
-      true
-    );
   }
 
   onload(): void {
-    this.registerEvent(this.plugin.app.vault.on("modify", (file) => this.onVaultChanged(file, undefined, true)));
-    this.registerEvent(this.plugin.app.vault.on("create", (file) => this.onVaultChanged(file, undefined, true)));
-    this.registerEvent(this.plugin.app.vault.on("delete", (file) => this.onVaultChanged(file, undefined, false)));
-    this.registerEvent(this.plugin.app.vault.on("rename", (file, oldPath) => this.onVaultChanged(file, oldPath, true)));
+    this.registerEvent(this.plugin.app.vault.on("modify", (file) => this.onVaultChanged(file)));
+    this.registerEvent(this.plugin.app.vault.on("create", (file) => this.onVaultChanged(file)));
+    this.registerEvent(this.plugin.app.vault.on("delete", (file) => this.onVaultDeleted(file)));
+    this.registerEvent(this.plugin.app.vault.on("rename", (file, oldPath) => this.onVaultRenamed(file, oldPath)));
   }
 
   onunload(): void {
+    this.configurationGeneration++;
     this.stopAutoSync();
-    this.syncEngine = null;
-    this.refreshGeneration++;
-    this.taskOrigins.clear();
-    this.knownTaskPaths.clear();
-    if (this.relevanceTimer !== null) window.clearTimeout(this.relevanceTimer);
-    this.relevanceTimer = null;
-    this.pendingRelevancePaths.clear();
+    this.coordinator?.dispose();
+    this.coordinator = null;
+    if (this.localInspectionTimer !== null) globalThis.clearTimeout(this.localInspectionTimer);
+    this.localInspectionTimer = null;
+    this.localInspectionGeneration++;
+    this.pendingLocalPaths.clear();
+    this.pendingFolderEvent = false;
     tasksStore.set(defaultTaskSyncState);
   }
 
   async configure(): Promise<void> {
+    const generation = ++this.configurationGeneration;
     this.stopAutoSync();
-    this.syncEngine = null;
+    const previousCoordinator = this.coordinator;
+    this.coordinator = null;
+    if (this.localInspectionTimer !== null) globalThis.clearTimeout(this.localInspectionTimer);
+    this.localInspectionTimer = null;
+    this.localInspectionGeneration++;
+    this.pendingLocalPaths.clear();
+    this.pendingFolderEvent = false;
+    await previousCoordinator?.stop();
+    if (generation !== this.configurationGeneration) return;
+    tasksStore.set(defaultTaskSyncState);
 
-    const taskSettings = this.plugin.options.assistant.tasks;
-    if (!taskSettings.enabled) {
-      this.refreshGeneration++;
-      this.taskOrigins.clear();
-      tasksStore.set(defaultTaskSyncState);
+    if (!this.plugin.options.assistant.tasks.enabled) return;
+    const runtime = this.buildRuntimeSettings();
+    if (!runtime.settings) {
+      const reason = runtime.skipped ?? t("tasks-notice-check-settings");
+      tasksStore.set({ ...defaultTaskSyncState, error: reason });
+      new Notice(t("tasks-notice-no-calendar-ready").replace("{reason}", reason), 8000);
       return;
     }
 
-    const runtime = this.buildRuntimeSettings();
-    if (runtime.skipped) {
-      new Notice(t("tasks-notice-calendar-skipped").replace("{reason}", runtime.skipped), 8000);
+    const settings = runtime.settings;
+    const calendarId = calendarStorageId(settings.calendar.serverUrl, settings.calendar.calendarName);
+    let stateStore: TaskStateStore | null = new TaskStateStore(
+      this.plugin.app,
+      this.plugin.manifest.dir ?? `.obsidian/plugins/${this.plugin.manifest.id}`,
+    );
+    let stateError: string | undefined;
+    try {
+      await stateStore.load();
+    } catch (error) {
+      stateError = `task-state.json could not be loaded; local publishing is disabled: ${errorMessage(error)}`;
+      console.error("[Work Assistant] Task state is read-only after a load failure:", error);
+      new Notice(stateError, 10000);
+      stateStore = null;
     }
+    if (generation !== this.configurationGeneration) return;
 
-    if (runtime.settings) {
-      await this.runStorageMigrations(runtime.settings);
-      await this.initializeEngine(runtime.settings);
-      this.autoSync = new AutoSyncScheduler(
-        () => this.syncAll({ background: true }).then(() => undefined),
-        (id) => this.plugin.registerInterval(id)
-      );
-      this.autoSync.start(runtime.settings.syncInterval);
-    }
+    const localPublisher = new LocalTaskPublisher(this.plugin.app, {
+      syncTag: settings.calendar.obsidianTag,
+      excludedPaths: settings.excludedPaths,
+      includeObsidianLink: settings.includeObsidianLink,
+      getVaultName: () => this.plugin.app.vault.getName(),
+    });
+    const coordinator = new TaskCoordinator({
+      app: this.plugin.app,
+      calendarId,
+      vaultName: this.plugin.app.vault.getName(),
+      repository: new RemoteTaskRepository(settings.calendar),
+      localPublisher,
+      stateStore,
+      stateError,
+    });
+    this.coordinator = coordinator;
 
-    await this.refreshLocalTasks();
+    this.autoSync = new AutoSyncScheduler(
+      async () => {
+        const result = await coordinator.coordinate();
+        if (settings.showAutoSyncNotifications && result?.status === "failed") {
+          new Notice(result.error ?? "Task coordination failed", 8000);
+        }
+      },
+      (id) => this.plugin.registerInterval(id),
+    );
+    this.autoSync.start(settings.syncInterval);
+
+    // A live CalDAV query, never a disk snapshot, gates the first sidebar data.
+    await coordinator.coordinate();
   }
 
   async syncNow(): Promise<void> {
-    const results = await this.syncAll();
-    if (results.length === 0) return;
-    new SyncResultModal(this.plugin.app, results, false).open();
+    const coordinator = this.coordinator;
+    if (!coordinator) {
+      this.noticeUnavailable();
+      return;
+    }
+    const result = await coordinator.coordinateManually();
+    new Notice(formatResult(result), result.status === "success" ? 5000 : 9000);
   }
 
   async previewSync(): Promise<void> {
-    const results = await this.syncAll({ dryRun: true });
-    if (results.length === 0) return;
-    new SyncResultModal(this.plugin.app, results, true, () => this.syncAll()).open();
+    const coordinator = this.coordinator;
+    if (!coordinator) {
+      this.noticeUnavailable();
+      return;
+    }
+    try {
+      const preview = await coordinator.preview();
+      new Notice(
+        `CalDAV: ${preview.remoteTaskCount}\n` +
+        `Would create: ${preview.create.length}\n` +
+        `Would complete remotely: ${preview.completeRemote.length}\n` +
+        `Would complete locally: ${preview.completeLocal.length}`,
+        9000,
+      );
+    } catch (error) {
+      new Notice(`Task preview failed: ${errorMessage(error)}`, 9000);
+    }
   }
 
   async showStatus(): Promise<void> {
-    if (!(await this.ensureEngineAvailable())) return;
-    new Notice(this.syncEngine?.getStatus() ?? t("tasks-notice-status-not-ready"), 8000);
+    if (!this.coordinator) {
+      this.noticeUnavailable();
+      return;
+    }
+    new Notice(this.coordinator.getStatus(), 8000);
   }
 
   async completeTask(task: CommonTask): Promise<void> {
-    if (task.status === "DONE" || task.status === "CANCELLED") return;
-
-    const wrapper = new ObsidianTasksWrapper(this.plugin.app);
-    if (!wrapper.initialize()) {
-      this.setStoreError(t("tasks-error-plugin-unavailable"));
-      new Notice(t("tasks-notice-completion-requires-plugin"));
-      return;
-    }
-
-    const existingTask = this.taskOrigins.get(task.uid) ?? wrapper.findTaskById(task.uid);
-    if (!existingTask) {
-      new Notice(t("tasks-notice-task-not-found"));
-      await this.refreshLocalTasks();
-      return;
-    }
-
-    const toggle = wrapper.getToggleCommand();
-    if (!toggle) {
-      new Notice(t("tasks-notice-toggle-unavailable"));
-      return;
-    }
-
-    try {
-      tasksStore.update((state) => ({ ...state, syncing: true, error: undefined }));
-      const updatedMarkdown = toggle(existingTask.originalMarkdown, existingTask.taskLocation.path);
-      await wrapper.updateTaskInVault(existingTask, updatedMarkdown);
-      await this.waitForTaskCache();
-      await this.refreshLocalTasks(false);
-
-      if (this.syncEngine) {
-        await this.syncAll({ background: true });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.setStoreError(message);
-      new Notice(t("tasks-notice-update-failed").replace("{message}", message), 8000);
-    } finally {
-      tasksStore.update((state) => ({ ...state, syncing: false }));
+    if (!this.coordinator || task.status === "DONE" || task.status === "CANCELLED") return;
+    const result = await this.coordinator.completeTask(task);
+    if (result.status === "failed") {
+      new Notice(`Task completion is pending: ${result.error ?? "unknown error"}`, 9000);
     }
   }
 
-  async refreshLocalTasks(showLoading = true): Promise<void> {
-    const generation = ++this.refreshGeneration;
-    const taskSettings = this.plugin.options.assistant.tasks;
-    if (!taskSettings.enabled) {
-      tasksStore.set(defaultTaskSyncState);
+  /** Refresh means a server query only; it never scans or publishes local data. */
+  async refreshRemoteTasks(): Promise<void> {
+    if (!this.coordinator) {
+      this.noticeUnavailable();
       return;
     }
-
-    if (showLoading) {
-      tasksStore.update((state) => ({ ...state, loading: true, error: undefined }));
-    }
-
-    const wrapper = new ObsidianTasksWrapper(this.plugin.app);
-    if (!wrapper.initialize()) {
-      if (generation !== this.refreshGeneration) return;
-      this.taskOrigins.clear();
-      this.knownTaskPaths.clear();
-      tasksStore.set({
-        ...defaultTaskSyncState,
-        error: t("tasks-error-plugin-unavailable"),
-      });
-      return;
-    }
-
-    try {
-      const tasks = new Map<string, CommonTask>();
-      const taskOrigins = new Map<string, ObsidianTask>();
-
-      const calendar = taskSettings.calendar;
-      const adapter = new ObsidianAdapter(wrapper, {
-        syncTag: calendar.obsidianTag,
-        excludedPaths: taskSettings.excludedPaths,
-        newTasksDestination: taskSettings.newTasksDestination,
-        newTasksSection: taskSettings.newTasksSection,
-        includeObsidianLink: taskSettings.includeObsidianLink,
-        getVaultName: () => this.plugin.app.vault.getName(),
-      });
-      const calendarTasks = await adapter.fetchTasks();
-      for (const task of calendarTasks) {
-        tasks.set(task.uid, task);
-        const original = adapter.findOriginalTask(task.uid);
-        if (original) {
-          taskOrigins.set(task.uid, original);
-        }
-      }
-
-      if (generation !== this.refreshGeneration) return;
-      const sortedTasks = Array.from(tasks.values()).sort(compareTasks);
-      this.taskOrigins = taskOrigins;
-      this.knownTaskPaths = new Set(
-        [...taskOrigins.values()].map((task) => task.taskLocation.path)
-      );
-      tasksStore.update((state) => ({
-        ...state,
-        tasks: sortedTasks,
-        ready: true,
-        loading: false,
-        error: undefined,
-      }));
-    } catch (error) {
-      if (generation !== this.refreshGeneration) return;
-      const message = error instanceof Error ? error.message : String(error);
-      this.setStoreError(message);
+    const result = await this.coordinator.refreshRemoteManually();
+    if (result.status !== "success") {
+      new Notice(result.error ?? "Task refresh failed", result.status === "busy" ? 5000 : 8000);
     }
   }
 
-  private async syncAll({
-    dryRun = false,
-    background = false,
-  }: { dryRun?: boolean; background?: boolean } = {}): Promise<SyncResult[]> {
-    if (this.syncPromise) {
-      if (background) {
-        this.backgroundSyncQueued = true;
-        return [];
-      }
-      const busy = this.buildBusyResult();
-      new Notice(busy.message);
-      return [busy];
-    }
-
-    const run = this.runSync({ dryRun, background });
-    this.syncPromise = run;
-    try {
-      return await run;
-    } finally {
-      if (this.syncPromise === run) this.syncPromise = null;
-      if (this.backgroundSyncQueued) {
-        this.backgroundSyncQueued = false;
-        void this.syncAll({ background: true });
-      }
-    }
-  }
-
-  private async runSync({
-    dryRun,
-    background,
-  }: { dryRun: boolean; background: boolean }): Promise<SyncResult[]> {
-    if (!(await this.ensureEngineAvailable(background))) {
-      return [];
-    }
-
-    const results: SyncResult[] = [];
-    tasksStore.update((state) => ({ ...state, syncing: true, error: undefined }));
-
-    try {
-      if (this.syncEngine) {
-        results.push(await this.syncEngine.sync({ dryRun, background }));
-      }
-      if (!dryRun) {
-        await this.waitForTaskCache();
-        await this.refreshLocalTasks(false);
-        if (results.length > 0 && results.every((result) => result.success)) {
-          tasksStore.update((state) => ({
-            ...state,
-            lastSyncTime: new Date().toISOString(),
-          }));
-        } else if (results.some((result) => !result.success)) {
-          this.setStoreError(results.find((result) => !result.success)?.message ?? "Task sync failed");
-        }
-      }
-    } finally {
-      tasksStore.update((state) => ({ ...state, syncing: false }));
-    }
-
-    return results;
-  }
-
-  private buildBusyResult(): SyncResult {
-    const message = "Task sync is already running.";
-    return {
-      calendarName: this.plugin.options.assistant.tasks.calendar.calendarName,
-      status: "busy",
-      success: false,
-      message,
-      created: { toObsidian: 0, toCalDAV: 0 },
-      updated: { toObsidian: 0, toCalDAV: 0 },
-      deleted: { toObsidian: 0, toCalDAV: 0 },
-      reconciled: 0,
-      conflicts: 0,
-      details: { toObsidian: [], toCalDAV: [], conflictDetails: [] },
-    };
-  }
-
-  private async initializeEngine(settings: CalDAVSettings, showNotice = true): Promise<void> {
-    const engine = new SyncEngine(this.plugin.app, settings.calendar, settings);
-    const ready = await engine.initialize(showNotice);
-    this.syncEngine = ready ? engine : null;
-    if (showNotice && !this.syncEngine) {
-      new Notice(t("tasks-notice-sync-configured-plugin-missing"));
-    }
+  /** Kept as an internal compatibility alias for callers compiled against 4.4. */
+  async refreshLocalTasks(): Promise<void> {
+    await this.refreshRemoteTasks();
   }
 
   private buildRuntimeSettings(): RuntimeSettingsBuild {
@@ -318,18 +208,15 @@ export class TaskSyncManager extends Component {
     };
 
     const incomplete = describeIncompleteCalendar(candidate, 0);
-    if (incomplete) {
-      return { settings: null, skipped: incomplete };
-    }
-
+    if (incomplete) return { settings: null, skipped: incomplete };
     const password = calendar.passwordSecretId
       ? this.plugin.app.secretStorage?.getSecret(calendar.passwordSecretId) ?? ""
       : "";
     if (!password) {
-      const calendarName = calendar.calendarName || calendar.serverUrl || t("settings-tasks-calendar");
+      const name = calendar.calendarName || calendar.serverUrl || t("settings-tasks-calendar");
       return {
         settings: null,
-        skipped: t("tasks-notice-missing-password-secret").replace("{calendar}", calendarName),
+        skipped: t("tasks-notice-missing-password-secret").replace("{calendar}", name),
       };
     }
 
@@ -338,64 +225,76 @@ export class TaskSyncManager extends Component {
       settings: {
         calendar: { ...candidate, password },
         syncInterval: taskSettings.syncInterval,
-        newTasksDestination: taskSettings.newTasksDestination,
-        newTasksSection: taskSettings.newTasksSection || undefined,
         excludedPaths: taskSettings.excludedPaths,
-        requireManualConflictResolution: false,
-        autoResolveObsidianWins: taskSettings.autoResolveObsidianWins,
-        syncCompletedTasks: false,
-        deleteBehavior: "ask",
         includeObsidianLink: taskSettings.includeObsidianLink,
         showAutoSyncNotifications: taskSettings.showAutoSyncNotifications,
-        appliedMigrations: taskSettings.appliedMigrations ?? [],
       },
     };
   }
 
-  private async runStorageMigrations(settings: CalDAVSettings): Promise<void> {
-    try {
-      const migrated = await runMigrations(this.plugin.app, settings);
-      if (!migrated) return;
-
-      await this.plugin.writeOptions((old) => ({
-        ...old,
-        assistant: {
-          ...old.assistant,
-          tasks: {
-            ...old.assistant.tasks,
-            appliedMigrations: settings.appliedMigrations ?? [],
-          },
-        },
-      }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      new Notice(t("tasks-notice-migration-failed").replace("{message}", message), 8000);
-      console.error("[Work Assistant] Task sync migration failed:", error);
+  private onVaultChanged(file: unknown): void {
+    if (!this.plugin.options.assistant.tasks.enabled) return;
+    if (!this.isRelevantVaultPath(file)) return;
+    if (file instanceof TFolder) {
+      this.pendingFolderEvent = true;
+    } else {
+      this.pendingLocalPaths.add(file.path);
     }
+    if (this.localInspectionTimer !== null) globalThis.clearTimeout(this.localInspectionTimer);
+    const generation = this.configurationGeneration;
+    const inspectionGeneration = ++this.localInspectionGeneration;
+    this.localInspectionTimer = globalThis.setTimeout(() => {
+      this.localInspectionTimer = null;
+      const paths = this.pendingLocalPaths;
+      const includeFolderEvent = this.pendingFolderEvent;
+      this.pendingLocalPaths = new Set();
+      this.pendingFolderEvent = false;
+      void this.runLocalInspection(generation, inspectionGeneration, paths, includeFolderEvent);
+    }, 400);
   }
 
-  private async ensureEngineAvailable(background = false): Promise<boolean> {
-    if (this.syncEngine) return true;
+  private onVaultDeleted(file: unknown): void {
+    if (!this.isRelevantVaultPath(file)) return;
+    void this.coordinator?.handleLocalDelete(file.path).catch((error) => {
+      console.error("[Work Assistant] Failed to retire deleted task paths:", error);
+    });
+    this.onVaultChanged(file);
+  }
 
-    const taskSettings = this.plugin.options.assistant.tasks;
-    if (!taskSettings.enabled) return false;
+  private onVaultRenamed(file: unknown, oldPath: string): void {
+    if (!this.isRelevantVaultPath(file)) return;
+    if (typeof oldPath === "string") {
+      void this.coordinator?.handleLocalRename(oldPath, file.path).catch((error) => {
+        console.error("[Work Assistant] Failed to migrate renamed task paths:", error);
+      });
+    }
+    this.onVaultChanged(file);
+  }
 
-    const runtime = this.buildRuntimeSettings();
-    if (!runtime.settings) {
-      if (!background) {
-        const reason = runtime.skipped ?? t("tasks-notice-check-settings");
-        new Notice(t("tasks-notice-no-calendar-ready").replace("{reason}", reason), 8000);
+  private isRelevantVaultPath(file: unknown): file is TFile | TFolder {
+    return file instanceof TFolder || (file instanceof TFile && file.extension === "md");
+  }
+
+  private async runLocalInspection(
+    generation: number,
+    inspectionGeneration: number,
+    paths: ReadonlySet<string>,
+    includeFolderEvent: boolean,
+  ): Promise<void> {
+    const coordinator = this.coordinator;
+    if (!coordinator
+      || generation !== this.configurationGeneration
+      || inspectionGeneration !== this.localInspectionGeneration) return;
+    try {
+      if (await coordinator.hasActionableLocalChangesAtPaths(paths, includeFolderEvent)) {
+        if (generation !== this.configurationGeneration
+          || inspectionGeneration !== this.localInspectionGeneration
+          || coordinator !== this.coordinator) return;
+        await coordinator.coordinate();
       }
-      return false;
+    } catch (error) {
+      console.error("[Work Assistant] Failed to inspect local task changes:", error);
     }
-
-    await this.initializeEngine(runtime.settings, !background);
-    if (this.syncEngine) return true;
-
-    if (!background) {
-      new Notice(t("tasks-notice-plugin-not-ready"), 8000);
-    }
-    return false;
   }
 
   private stopAutoSync(): void {
@@ -403,55 +302,21 @@ export class TaskSyncManager extends Component {
     this.autoSync = null;
   }
 
-  private onVaultChanged(file: unknown, oldPath?: string, mayContainNewTasks = false): void {
-    if (!this.plugin.options.assistant.tasks.enabled) return;
-    if (file instanceof TFolder) {
-      this.queueLocalTaskRefresh();
-      return;
-    }
-    if (!(file instanceof TFile) || file.extension !== "md") return;
-    if (this.knownTaskPaths.has(file.path) || (!!oldPath && this.knownTaskPaths.has(oldPath))) {
-      this.queueLocalTaskRefresh();
-      return;
-    }
-    if (!mayContainNewTasks) return;
-
-    this.pendingRelevancePaths.add(file.path);
-    if (this.relevanceTimer !== null) return;
-    this.relevanceTimer = window.setTimeout(() => {
-      this.relevanceTimer = null;
-      const pendingPaths = this.pendingRelevancePaths;
-      this.pendingRelevancePaths = new Set();
-      const wrapper = new ObsidianTasksWrapper(this.plugin.app);
-      if (!wrapper.initialize()) return;
-      if (wrapper.getAllTasks().some((task) => pendingPaths.has(task.taskLocation?.path))) {
-        this.queueLocalTaskRefresh();
-      }
-    }, 250);
-  }
-
-  private queueLocalTaskRefresh(): void {
-    this.refreshGeneration++;
-    this.refreshLocalTasksDebounced();
-  }
-
-  private setStoreError(error: string): void {
-    tasksStore.update((state) => ({
-      ...state,
-      loading: false,
-      ready: false,
-      error,
-    }));
-  }
-
-  private waitForTaskCache(): Promise<void> {
-    return new Promise((resolve) => window.setTimeout(resolve, 250));
+  private noticeUnavailable(): void {
+    new Notice(t("tasks-notice-no-calendar-ready").replace("{reason}", t("tasks-notice-check-settings")), 8000);
   }
 }
 
-function compareTasks(a: CommonTask, b: CommonTask): number {
-  const aDate = getEarliestTaskActionDate(a) ?? "9999-12-31";
-  const bDate = getEarliestTaskActionDate(b) ?? "9999-12-31";
-  if (aDate !== bDate) return aDate.localeCompare(bDate);
-  return a.title.localeCompare(b.title);
+function formatResult(result: CoordinationResult): string {
+  if (result.status === "busy") {
+    return result.error ?? "Task coordination is already running.";
+  }
+  if (result.status === "failed") {
+    return `Task coordination finished with pending work: ${result.error ?? "unknown error"}`;
+  }
+  return `CalDAV confirmed ${result.remoteTaskCount} tasks; created ${result.created}, completed ${result.completedRemote} remotely and ${result.completedLocal} locally.`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

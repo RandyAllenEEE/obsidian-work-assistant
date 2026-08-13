@@ -11,8 +11,8 @@ describe("CacheManager persistence", () => {
     pluginCacheSet.mockClear();
   });
 
-  function createManager() {
-    const files = new Map<string, string>();
+  function createManager(initialFiles: Record<string, string> = {}) {
+    const files = new Map<string, string>(Object.entries(initialFiles));
     const adapter = {
       exists: jest.fn(async (path: string) => files.has(path)),
       read: jest.fn(async (path: string) => files.get(path) ?? ""),
@@ -66,6 +66,57 @@ describe("CacheManager persistence", () => {
     expect(persisted.weather.locationId).toBe("101020100");
     expect(persisted.media.Artist).toBe("Artist");
     expect(adapter.write).toHaveBeenCalledTimes(2);
+    errorSpy.mockRestore();
+  });
+
+  test("does not replace the in-memory cache after a malformed disk cache fails to load", async () => {
+    const path = ".obsidian/plugins/work-assistant/cache.json";
+    const { manager, adapter, files } = createManager({ [path]: "{ malformed" });
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await manager.load();
+    await manager.patchWeather({ locationName: "Shanghai" });
+
+    expect(manager.getWeather()).toEqual({});
+    expect(files.get(path)).toBe("{ malformed");
+    expect(adapter.write).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  test("drops legacy task snapshots while preserving the three cache domains", async () => {
+    const path = ".obsidian/plugins/work-assistant/cache.json";
+    const { manager, files } = createManager({
+      [path]: JSON.stringify({
+        weather: { locationName: "Shanghai" },
+        media: { Title: "Track" },
+        timer: { mode: 0, paused: true },
+        syncedTasks: [{ uid: "stale-local-snapshot" }],
+      }),
+    });
+
+    await manager.load();
+    await manager.patchWeather({ locationId: "101020100" });
+
+    const persisted = JSON.parse(files.get(path) ?? "{}");
+    expect(persisted).toMatchObject({
+      weather: { locationName: "Shanghai", locationId: "101020100" },
+      media: { Title: "Track" },
+      timer: { mode: 0, paused: true },
+    });
+    expect(persisted).not.toHaveProperty("syncedTasks");
+  });
+
+  test("protects cache.json when a known domain has an invalid shape", async () => {
+    const path = ".obsidian/plugins/work-assistant/cache.json";
+    const malformed = JSON.stringify({ weather: "not-an-object" });
+    const { manager, adapter, files } = createManager({ [path]: malformed });
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await manager.load();
+    await manager.updateMedia({ Title: "Must not overwrite" });
+
+    expect(files.get(path)).toBe(malformed);
+    expect(adapter.write).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 });

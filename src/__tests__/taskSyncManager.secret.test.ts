@@ -81,7 +81,6 @@ describe("TaskSyncManager secret handling", () => {
             includeObsidianLink: false,
             showAutoSyncNotifications: false,
             excludedPaths: [],
-            appliedMigrations: [],
             calendar: {
               obsidianTag: "sync",
               caldavCategory: "sync",
@@ -106,26 +105,25 @@ describe("TaskSyncManager secret handling", () => {
     expect(plugin.options.assistant.tasks.calendar.passwordSecretId).toBe("secret-id");
   });
 
-  test("a Vault change invalidates an in-flight task refresh before debounce", () => {
+  test("a Vault change schedules a debounced local inspection", () => {
     const plugin = {
       app: { vault: { on: jest.fn() } },
       options: { assistant: { tasks: { enabled: true } } },
     };
     const manager = new TaskSyncManager(plugin as any) as any;
-    const refresh = jest.fn();
-    manager.refreshLocalTasksDebounced = refresh;
-    manager.refreshGeneration = 4;
+    const inspect = jest.fn();
+    manager.runLocalInspection = inspect;
+    manager.configurationGeneration = 4;
     const { TFile } = jest.requireMock("obsidian") as { TFile: new () => unknown };
 
     const file = new TFile() as any;
-    manager.knownTaskPaths.add(file.path);
     manager.onVaultChanged(file);
 
-    expect(manager.refreshGeneration).toBe(5);
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(manager.localInspectionTimer).not.toBeNull();
+    expect(inspect).not.toHaveBeenCalled();
   });
 
-  test("a manual sync reports busy while another sync transaction is active", async () => {
+  test("refresh compatibility alias delegates to the server refresh", async () => {
     const plugin = {
       app: { vault: { on: jest.fn() } },
       options: {
@@ -138,11 +136,11 @@ describe("TaskSyncManager secret handling", () => {
       },
     };
     const manager = new TaskSyncManager(plugin as any) as any;
-    manager.syncPromise = Promise.resolve([]);
+    const refreshRemoteTasks = jest.fn(async () => undefined);
+    manager.refreshRemoteTasks = refreshRemoteTasks;
 
-    const results = await manager.syncAll();
+    await manager.refreshLocalTasks();
 
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ status: "busy", success: false, calendarName: "Work" });
+    expect(refreshRemoteTasks).toHaveBeenCalledTimes(1);
   });
 });

@@ -183,6 +183,8 @@ export interface TaskSyncState {
   loading: boolean;
   syncing: boolean;
   lastSyncTime?: string;
+  stale?: boolean;
+  warning?: string;
   error?: string;
 }
 
@@ -191,6 +193,7 @@ export const defaultTaskSyncState: TaskSyncState = {
   ready: false,
   loading: false,
   syncing: false,
+  stale: false,
 };
 
 export const tasksStore = writable<TaskSyncState>(defaultTaskSyncState);

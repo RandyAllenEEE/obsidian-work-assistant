@@ -24,13 +24,9 @@ export interface TaskSyncSettings {
   enabled: boolean;
   calendar: TaskCalendarSettings;
   syncInterval: number;
-  newTasksDestination: string;
-  newTasksSection: string;
   excludedPaths: string[];
-  autoResolveObsidianWins: boolean;
   includeObsidianLink: boolean;
   showAutoSyncNotifications: boolean;
-  appliedMigrations?: string[];
 }
 
 export function createDefaultTaskCalendarSettings(): TaskCalendarSettings {
@@ -147,13 +143,9 @@ export const defaultSettings: ISettings = {
       enabled: false,
       calendar: createDefaultTaskCalendarSettings(),
       syncInterval: 5,
-      newTasksDestination: "Inbox.md",
-      newTasksSection: "",
       excludedPaths: [],
-      autoResolveObsidianWins: false,
       includeObsidianLink: false,
       showAutoSyncNotifications: false,
-      appliedMigrations: [],
     },
   },
 
@@ -1026,57 +1018,7 @@ Inbox/              # Folder prefix match (includes subfolders)
         });
       });
 
-    new Setting(container)
-      .setName(t("settings-tasks-new-destination", lang))
-      .setDesc(t("settings-tasks-new-destination-desc", lang))
-      .addText((text) => {
-        text.setPlaceholder("Inbox.md");
-        text.setValue(tasks.newTasksDestination);
-        text.onChange(async (value) => {
-          this.plugin.writeOptions((old) => ({
-            ...old,
-            assistant: {
-              ...old.assistant,
-              tasks: { ...old.assistant.tasks, newTasksDestination: value.trim() || "Inbox.md" },
-            },
-          }));
-        });
-      });
-
-    new Setting(container)
-      .setName(t("settings-tasks-new-section", lang))
-      .setDesc(t("settings-tasks-new-section-desc", lang))
-      .addText((text) => {
-        text.setPlaceholder("Tasks");
-        text.setValue(tasks.newTasksSection);
-        text.onChange(async (value) => {
-          this.plugin.writeOptions((old) => ({
-            ...old,
-            assistant: {
-              ...old.assistant,
-              tasks: { ...old.assistant.tasks, newTasksSection: value.trim() },
-            },
-          }));
-        });
-      });
-
     this.addTaskExcludedPathsSetting(container, lang);
-
-    new Setting(container)
-      .setName(t("settings-tasks-obsidian-wins", lang))
-      .setDesc(t("settings-tasks-obsidian-wins-desc", lang))
-      .addToggle((toggle) => {
-        toggle.setValue(tasks.autoResolveObsidianWins);
-        toggle.onChange(async (value) => {
-          this.plugin.writeOptions((old) => ({
-            ...old,
-            assistant: {
-              ...old.assistant,
-              tasks: { ...old.assistant.tasks, autoResolveObsidianWins: value },
-            },
-          }));
-        });
-      });
 
     new Setting(container)
       .setName(t("settings-tasks-include-link", lang))

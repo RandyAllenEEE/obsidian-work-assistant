@@ -14,29 +14,6 @@ export interface CommonTask {
   tags: string[];               // without # prefix
   recurrenceRule: string;       // RRULE string or ''
   body: string;                 // multi-line body text, '' = no body
-  // Outbound-only: set by ObsidianAdapter when includeObsidianLink is enabled.
-  // Never populated on inbound, and must not participate in diff equality.
+  // Outbound-only on first local publication when deep links are enabled.
   obsidianUrl?: string;
 }
-
-export interface SyncChange {
-  type: 'create' | 'update' | 'delete' | 'complete' | 'reconcile';
-  task: CommonTask;
-  previousVersion?: CommonTask;
-  counterpartUid?: string;
-}
-
-export interface Changeset {
-  toObsidian: SyncChange[];
-  toCalDAV: SyncChange[];
-  conflicts: Conflict[];
-}
-
-export interface Conflict {
-  uid: string;
-  obsidianVersion: CommonTask;
-  caldavVersion: CommonTask;
-  baselineVersion: CommonTask;
-}
-
-export type ConflictStrategy = 'caldav-wins' | 'obsidian-wins';

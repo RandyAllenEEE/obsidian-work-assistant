@@ -42,6 +42,17 @@ export interface TaskWithBody {
     body: string;
 }
 
+export interface PersistedTaskIdentity {
+    /** The task line still exists in the vault and was resolved unambiguously. */
+    found: boolean;
+    /** `null` means the resolved task line has not received an ID yet. */
+    id: string | null;
+}
+
+export interface TaskWithCurrentFileState extends TaskWithBody {
+    identity: PersistedTaskIdentity;
+}
+
 /**
  * Interface for obsidian-tasks plugin
  */
@@ -73,7 +84,9 @@ export class ObsidianTasksWrapper {
             ObsidianTasksPlugin | undefined;
 
         if (!plugin || typeof plugin.getTasks !== 'function') {
-            console.error('obsidian-tasks plugin not found or getTasks() method unavailable');
+            // A missing Tasks plugin should not turn every scheduled remote
+            // refresh into a console error: remote-only CalDAV still works.
+            this.tasksPlugin = null;
             return false;
         }
 
@@ -98,55 +111,6 @@ export class ObsidianTasksWrapper {
         }
 
         return this.tasksPlugin.getTasks();
-    }
-
-    /**
-     * Get tasks that should be synced based on query
-     * @param query Sync query string (e.g., "not done", "tags include #sync")
-     */
-    getTasksToSync(query: string): ObsidianTask[] {
-        const allTasks = this.getAllTasks();
-        return this.filterTasks(allTasks, query);
-    }
-
-    /**
-     * Filter tasks based on sync query
-     * Supports simple queries initially:
-     * - "not done" - only incomplete tasks
-     * - "done" - only completed tasks
-     * - "tags include #tagname" - tasks with specific tag
-     * - "all" - all tasks
-     */
-    filterTasks(tasks: ObsidianTask[], query: string): ObsidianTask[] {
-        const lowerQuery = query.toLowerCase().trim();
-
-        // Handle "not done" query
-        if (lowerQuery === 'not done') {
-            return tasks.filter(task => !task.isDone);
-        }
-
-        // Handle "done" query
-        if (lowerQuery === 'done') {
-            return tasks.filter(task => task.isDone);
-        }
-
-        // Handle "tags include #tagname" query
-        const tagMatch = lowerQuery.match(/tags?\s+include\s+#?(\S+)/);
-        if (tagMatch) {
-            const tagName = tagMatch[1];
-            return tasks.filter(task =>
-                task.tags.some(tag => tag.toLowerCase() === tagName.toLowerCase())
-            );
-        }
-
-        // Handle "all" query
-        if (lowerQuery === 'all') {
-            return tasks;
-        }
-
-        // Default: return all non-done tasks
-        // Unsupported query, default to "not done"
-        return tasks.filter(task => !task.isDone);
     }
 
     /**
@@ -183,19 +147,134 @@ export class ObsidianTasksWrapper {
     }
 
     /**
-     * Update a task's content in the vault
+     * Compatibility helper for callers that intentionally replace a task and
+     * its indented note block. Identity injection uses updateTaskLineInVault
+     * instead, so ordinary publication never rewrites user-authored notes.
      */
     async updateTaskInVault(task: ObsidianTask, newContent: string): Promise<void> {
         const filePath = task.taskLocation.path;
-
-        // Get the file
         const file = this.app.vault.getAbstractFileByPath(filePath);
         if (!file || !(file instanceof TFile)) {
             throw new Error(`File not found: ${filePath}`);
         }
 
-        // Read current content
-        const content = await this.app.vault.read(file);
+        await this.app.vault.process(file, (content) =>
+            this.replaceTaskInContent(content, task, newContent),
+        );
+    }
+
+    /**
+     * Update only the task line. This is used for identity injection so a
+     * first sync cannot discard indented notes, subtasks, or user formatting.
+     */
+    async updateTaskLineInVault(task: ObsidianTask, newLine: string): Promise<void> {
+        const filePath = task.taskLocation.path;
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!file || !(file instanceof TFile)) {
+            throw new Error(`File not found: ${filePath}`);
+        }
+
+        await this.app.vault.process(file, (content) => {
+            const lines = content.split('\n');
+            const taskIndex = this.findTaskLineIndex(lines, task);
+            if (taskIndex === -1) {
+                throw new Error(`Could not find task in file: ${task.originalMarkdown}`);
+            }
+            lines[taskIndex] = newLine;
+            return lines.join('\n');
+        });
+    }
+
+    /**
+     * Resolve a task ID from the current Markdown file when the Tasks cache
+     * has not yet observed a just-written ID. A missing or changed task is
+     * reported separately so callers do not publish a stale cache entry.
+     */
+    async getPersistedTaskIdentity(task: ObsidianTask): Promise<PersistedTaskIdentity> {
+        const file = this.app.vault.getAbstractFileByPath(task.taskLocation.path);
+        if (!file || !(file instanceof TFile)) return { found: false, id: null };
+
+        const lines = (await this.app.vault.read(file)).split('\n');
+        const taskIndex = this.findTaskLineIndex(lines, task);
+        if (taskIndex === -1) return { found: false, id: null };
+        return { found: true, id: this.extractIdFromLine(lines[taskIndex]) };
+    }
+
+    /**
+     * Verify a known task identity directly from its current Markdown file.
+     * `null` deliberately means unknown (for example an interrupted read), so
+     * lifecycle code can wait rather than treating a transient vault failure
+     * as a deletion.
+     */
+    async hasTaskIdentityAtPath(path: string, taskId: string): Promise<boolean | null> {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!file || !(file instanceof TFile)) return false;
+        try {
+            return (await this.app.vault.read(file))
+                .split('\n')
+                .some((line) => this.extractIdFromLine(line) === taskId);
+        } catch (error) {
+            console.warn(`[ObsidianTasksWrapper] Failed to verify task identity in ${path}:`, error);
+            return null;
+        }
+    }
+
+    hasMarkdownFileAtPath(path: string): boolean {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        return !!file && file instanceof TFile;
+    }
+
+    /**
+     * Apply the Tasks plugin's toggle output without conflating the original
+     * task's indented notes with a newly generated recurring instance.
+     */
+    async applyToggleResult(task: ObsidianTask, toggledContent: string): Promise<void> {
+        const filePath = task.taskLocation.path;
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!file || !(file instanceof TFile)) {
+            throw new Error(`File not found: ${filePath}`);
+        }
+
+        await this.app.vault.process(file, (content) => {
+            const lines = content.split('\n');
+            const taskIndex = this.findTaskLineIndex(lines, task);
+            if (taskIndex === -1) {
+                throw new Error(`Could not find task in file: ${task.originalMarkdown}`);
+            }
+            const outputLines = toggledContent.split('\n');
+            const firstTaskLine = outputLines.findIndex((line) => /^\s*-\s+\[[^\]]*\]\s+/.test(line));
+            if (firstTaskLine === -1) {
+                throw new Error("Tasks plugin returned no task line when toggling a task");
+            }
+
+            const nextTaskLine = outputLines.findIndex(
+                (line, index) => index > firstTaskLine && /^\s*-\s+\[[^\]]*\]\s+/.test(line),
+            );
+            // A regular completion only replaces its own line. Existing notes
+            // remain attached to it exactly as the user authored them.
+            if (nextTaskLine === -1) {
+                lines[taskIndex] = outputLines[firstTaskLine];
+                return lines.join('\n');
+            }
+
+            let noteEnd = taskIndex + 1;
+            while (noteEnd < lines.length && /^(?:\s{2,}|\t)- /.test(lines[noteEnd])) {
+                noteEnd++;
+            }
+            lines[taskIndex] = outputLines[firstTaskLine];
+            // The next recurring task is a sibling after the original task
+            // block, so the original task's notes remain with the completed
+            // instance rather than becoming notes of the new one.
+            lines.splice(noteEnd, 0, ...outputLines.slice(nextTaskLine));
+            return lines.join('\n');
+        });
+    }
+
+    private replaceTaskInContent(
+        content: string,
+        task: ObsidianTask,
+        newContent: string,
+    ): string {
         const lines = content.split('\n');
 
         const originalMarkdown = task.originalMarkdown;
@@ -219,82 +298,7 @@ export class ObsidianTasksWrapper {
         const newLines = newContent.split('\n');
         lines.splice(taskIndex, 1 + noteLineCount, ...newLines);
 
-        // Write back to file
-        await this.app.vault.modify(file, lines.join('\n'));
-    }
-
-    async deleteTaskInVault(task: ObsidianTask): Promise<void> {
-        const filePath = task.taskLocation.path;
-        const file = this.app.vault.getAbstractFileByPath(filePath);
-        if (!file || !(file instanceof TFile)) {
-            throw new Error(`File not found: ${filePath}`);
-        }
-        const content = await this.app.vault.read(file);
-        const lines = content.split('\n');
-        const taskIndex = this.findTaskLineIndex(lines, task);
-        if (taskIndex === -1) {
-            throw new Error(`Could not find task in file: ${task.originalMarkdown}`);
-        }
-        let noteLineCount = 0;
-        for (let index = taskIndex + 1; index < lines.length; index++) {
-            if (!/^(?:\s{2,}|\t)- /.test(lines[index])) break;
-            noteLineCount++;
-        }
-        lines.splice(taskIndex, 1 + noteLineCount);
-        await this.app.vault.modify(file, lines.join('\n'));
-    }
-
-    /**
-     * Create a new task in the destination file
-     * @param taskContent The task markdown (e.g., "- [ ] New task")
-     * @param destinationPath Path to the file where task should be added
-     * @param section Optional section heading under which to add the task
-     */
-    async createTask(
-        taskContent: string,
-        destinationPath: string,
-        section?: string
-    ): Promise<void> {
-        // Get or create the destination file
-        const file = this.app.vault.getAbstractFileByPath(destinationPath);
-
-        if (!file) {
-            // Create new file
-            await this.app.vault.create(destinationPath, taskContent + '\n');
-            return;
-        }
-
-        if (!(file instanceof TFile)) {
-            throw new Error(`Path is not a file: ${destinationPath}`);
-        }
-
-        // Read existing content
-        let content = await this.app.vault.read(file);
-
-        if (section) {
-            // Try to find the section
-            const sectionHeader = `## ${section}`;
-            const lines = content.split('\n');
-            const sectionIndex = lines.findIndex(line =>
-                line.trim() === sectionHeader ||
-                line.trim() === `# ${section}`
-            );
-
-            if (sectionIndex !== -1) {
-                // Insert after section header
-                lines.splice(sectionIndex + 1, 0, taskContent);
-                content = lines.join('\n');
-            } else {
-                // Section not found, create it at the end
-                content += `\n\n${sectionHeader}\n${taskContent}`;
-            }
-        } else {
-            // Append to end of file
-            content += '\n' + taskContent;
-        }
-
-        // Write back
-        await this.app.vault.modify(file, content);
+        return lines.join('\n');
     }
 
     /**
@@ -345,6 +349,15 @@ export class ObsidianTasksWrapper {
     }
 
     /**
+     * Read each task file once and return both note bodies and the identity on
+     * the current line. Publication uses this instead of reading the same
+     * Markdown file once for bodies and once again per task for IDs.
+     */
+    async getTasksWithCurrentFileState(tasks: ObsidianTask[]): Promise<TaskWithCurrentFileState[]> {
+        return this.loadCurrentFileState(tasks);
+    }
+
+    /**
      * Resolve a task's containing file path via the public obsidian-tasks
      * accessor. Returns null (and warns) if the path is absent, so one task
      * with an unexpected shape can't abort the entire sync.
@@ -365,6 +378,10 @@ export class ObsidianTasksWrapper {
      * Groups tasks by file to avoid re-reading the same file multiple times.
      */
     private async loadBodies(tasks: ObsidianTask[]): Promise<TaskWithBody[]> {
+        return (await this.loadCurrentFileState(tasks)).map(({ task, body }) => ({ task, body }));
+    }
+
+    private async loadCurrentFileState(tasks: ObsidianTask[]): Promise<TaskWithCurrentFileState[]> {
         const tasksByFile = new Map<string, ObsidianTask[]>();
         for (const task of tasks) {
             const filePath = this.resolveTaskPath(task);
@@ -380,13 +397,13 @@ export class ObsidianTasksWrapper {
         }
 
         const groups = [...tasksByFile.entries()];
-        const groupResults: TaskWithBody[][] = new Array(groups.length);
+        const groupResults: TaskWithCurrentFileState[][] = new Array(groups.length);
         let nextGroup = 0;
         const processNextGroup = async (): Promise<void> => {
             while (nextGroup < groups.length) {
                 const groupIndex = nextGroup++;
                 const [filePath, fileTasks] = groups[groupIndex];
-                groupResults[groupIndex] = await this.loadBodiesForFile(filePath, fileTasks);
+                groupResults[groupIndex] = await this.loadCurrentFileStateForFile(filePath, fileTasks);
             }
         };
         await Promise.all(
@@ -395,27 +412,48 @@ export class ObsidianTasksWrapper {
         return groupResults.flat();
     }
 
-    private async loadBodiesForFile(
+    private async loadCurrentFileStateForFile(
         filePath: string,
         fileTasks: ObsidianTask[]
-    ): Promise<TaskWithBody[]> {
+    ): Promise<TaskWithCurrentFileState[]> {
         try {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (!file || !(file instanceof TFile)) {
-                return fileTasks.map((task) => ({ task, body: '' }));
+                return fileTasks.map((task) => ({
+                    task,
+                    body: '',
+                    identity: { found: false, id: null },
+                }));
             }
             const content = await this.app.vault.read(file);
             const lines = content.split('\n');
             const usedLineIndexes = new Set<number>();
             return fileTasks.map((task) => {
                 const lineIndex = this.findTaskLineIndex(lines, task, usedLineIndexes);
-                if (lineIndex === -1) return { task, body: '' };
+                if (lineIndex === -1) {
+                    return {
+                        task,
+                        body: '',
+                        identity: { found: false, id: null },
+                    };
+                }
                 usedLineIndexes.add(lineIndex);
-                return { task, body: this.extractBodyFromFile(content, lineIndex) };
+                return {
+                    task,
+                    body: this.extractBodyFromFile(content, lineIndex),
+                    identity: {
+                        found: true,
+                        id: this.extractIdFromLine(lines[lineIndex]),
+                    },
+                };
             });
         } catch (error) {
             console.error(`[ObsidianTasksWrapper] Failed to read file for body: ${filePath}`, error);
-            return fileTasks.map((task) => ({ task, body: '' }));
+            return fileTasks.map((task) => ({
+                task,
+                body: '',
+                identity: { found: false, id: null },
+            }));
         }
     }
 
@@ -448,7 +486,7 @@ export class ObsidianTasksWrapper {
             .map((line, index) => ({ line, index }))
             .filter(({ line, index }) =>
                 !usedLineIndexes.has(index)
-                && line.trim() === task.originalMarkdown.trim()
+                && this.matchesOriginalTaskLine(line, task, taskId)
             );
         if (matches.length <= 1) return matches[0]?.index ?? -1;
 
@@ -462,8 +500,25 @@ export class ObsidianTasksWrapper {
 
     private lineMatchesTask(line: string, task: ObsidianTask): boolean {
         const taskId = this.getTaskId(task);
-        return line.trim() === task.originalMarkdown.trim()
+        return this.matchesOriginalTaskLine(line, task, taskId)
             || (!!taskId && this.extractIdFromLine(line) === taskId);
+    }
+
+    private matchesOriginalTaskLine(line: string, task: ObsidianTask, taskId = this.getTaskId(task)): boolean {
+        if (line.trim() === task.originalMarkdown.trim()) return true;
+        // During the short interval between a vault write and Tasks cache
+        // refresh, the cached line lacks the freshly appended ID. Comparing
+        // the line without identity metadata avoids allocating another ID.
+        return !taskId
+            && this.withoutTaskIdentity(line) === this.withoutTaskIdentity(task.originalMarkdown);
+    }
+
+    private withoutTaskIdentity(line: string): string {
+        return line
+            .replace(/\[id::\s*[^\]]+\]/g, '')
+            .replace(/🆔\s+\S+/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
     }
 
     private extractIdFromLine(line: string): string | null {

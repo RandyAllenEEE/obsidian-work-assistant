@@ -1,4 +1,4 @@
-import { VTODOMapper, type CalendarObject } from './vtodoMapper';
+import type { CalendarObject } from './vtodoMapper';
 import { ObsidianHttpClient, type HttpClient } from './httpClient';
 import { PROPFIND_PRINCIPAL, PROPFIND_CALENDAR_HOME, PROPFIND_CALENDARS, REPORT_VTODOS } from './templates';
 
@@ -17,9 +17,6 @@ export interface CalDAVClient {
   fetchVTODOs(): Promise<CalendarObject[]>;
   createVTODO(vtodoData: string, uid: string): Promise<void>;
   updateVTODO(vtodo: { data: string; url: string; etag?: string }, newData: string): Promise<void>;
-  deleteVTODO(vtodo: { data: string; url: string; etag?: string }): Promise<void>;
-  deleteVTODOByUID(uid: string): Promise<void>;
-  fetchVTODOByUID(uid: string): Promise<{ data: string; url: string; etag?: string } | null>;
 }
 
 /**
@@ -29,14 +26,12 @@ export interface CalDAVClient {
  */
 export class CalDAVClientDirect implements CalDAVClient {
   private config: CalDAVConnectionConfig;
-  private mapper: VTODOMapper;
   private calendarUrl: string | null = null;
   private authHeader: string;
   private httpClient: HttpClient;
 
   constructor(config: CalDAVConnectionConfig, httpClient?: HttpClient) {
     this.config = config;
-    this.mapper = new VTODOMapper();
     this.httpClient = httpClient ?? new ObsidianHttpClient();
 
     const credentials = new TextEncoder().encode(`${config.username}:${config.password}`);
@@ -49,6 +44,7 @@ export class CalDAVClientDirect implements CalDAVClient {
    * Connect to CalDAV server and find the calendar
    */
   async connect(): Promise<void> {
+    if (this.calendarUrl) return;
     try {
       // Step 1: Discover calendar home URL
       const homeUrl = await this.discoverCalendarHome();
@@ -324,18 +320,13 @@ export class CalDAVClientDirect implements CalDAVClient {
     });
 
     if (response.status !== 207) {
+      if (response.status === 404 || response.status === 410) {
+        this.calendarUrl = null;
+      }
       throw new Error(`REPORT VTODOs failed: ${response.status}`);
     }
 
     return CalDAVClientDirect.parseVTODOsFromXML(response.text, this.config.serverUrl);
-  }
-
-  /**
-   * Fetch VTODO by UID
-   */
-  async fetchVTODOByUID(uid: string): Promise<{ data: string; url: string; etag?: string } | null> {
-    const vtodos = await this.fetchVTODOs();
-    return vtodos.find(vtodo => this.mapper.extractUID(vtodo.data) === uid) || null;
   }
 
   /**
@@ -347,7 +338,7 @@ export class CalDAVClientDirect implements CalDAVClient {
     }
 
     const filename = `${uid}.ics`;
-    const url = `${this.calendarUrl}/${filename}`;
+    const url = `${this.calendarUrl.replace(/\/+$/, '')}/${filename}`;
 
     const response = await this.httpClient.request({
       url,
@@ -396,40 +387,6 @@ export class CalDAVClientDirect implements CalDAVClient {
   }
 
   /**
-   * Delete a VTODO
-   */
-  async deleteVTODO(vtodo: { data: string; url: string; etag?: string }): Promise<void> {
-    const headers: Record<string, string> = {
-      'Authorization': this.authHeader
-    };
-
-    if (vtodo.etag) {
-      headers['If-Match'] = `"${vtodo.etag}"`;
-    }
-
-    const response = await this.httpClient.request({
-      url: vtodo.url,
-      method: 'DELETE',
-      headers,
-      throw: false
-    });
-
-    if (response.status !== 204 && response.status !== 200) {
-      throw new Error(`Delete VTODO failed: ${response.status}`);
-    }
-
-  }
-
-  /**
-   * Delete VTODO by UID
-   */
-  async deleteVTODOByUID(uid: string): Promise<void> {
-    const vtodo = await this.fetchVTODOByUID(uid);
-    if (!vtodo) throw new Error(`VTODO ${uid} not found for deletion`);
-    await this.deleteVTODO(vtodo);
-  }
-
-  /**
    * Test connection
    */
   async testConnection(): Promise<{ success: boolean; message: string }> {
@@ -447,12 +404,6 @@ export class CalDAVClientDirect implements CalDAVClient {
     }
   }
 
-  /**
-   * Get the mapper instance
-   */
-  getMapper(): VTODOMapper {
-    return this.mapper;
-  }
 }
 
 /**

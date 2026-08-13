@@ -37,32 +37,4 @@ describe("ObsidianMapper", () => {
     expect(common.recurrenceRule).toBe("FREQ=WEEKLY");
     expect(common.body).toBe("Body line");
   });
-
-  test("serializes dataview task format without duplicating reserved tags", () => {
-    const mapper = new ObsidianMapper();
-    const markdown = mapper.toMarkdown(
-      {
-        uid: "20260606-abc",
-        title: "Write proposal",
-        status: "TODO",
-        dueDate: "2026-06-08",
-        startDate: null,
-        scheduledDate: null,
-        completedDate: null,
-        priority: "none",
-        tags: ["client", "sync"],
-        recurrenceRule: "FREQ=WEEKLY",
-        body: "Body line",
-      },
-      "sync",
-      "dataview",
-      "tasks"
-    );
-
-    expect(markdown).toContain("[due:: 2026-06-08]");
-    expect(markdown).toContain("[repeat:: every week]");
-    expect(markdown).toContain("[id:: 20260606-abc]");
-    expect(markdown.match(/#sync/g)).toHaveLength(1);
-    expect(markdown).toContain("    - Body line");
-  });
 });

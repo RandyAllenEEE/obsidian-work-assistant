@@ -144,6 +144,11 @@ function normalizeSettings(value: ISettings): ISettings {
     defaultSettings.assistant.tasks.syncInterval,
     0
   );
+  const obsoleteTaskSettings = normalized.assistant.tasks as unknown as Record<string, unknown>;
+  delete obsoleteTaskSettings.newTasksDestination;
+  delete obsoleteTaskSettings.newTasksSection;
+  delete obsoleteTaskSettings.autoResolveObsidianWins;
+  delete obsoleteTaskSettings.appliedMigrations;
   return normalized;
 }
 
@@ -482,6 +487,12 @@ export default class CalendarPlugin extends Plugin {
         }
       }
 
+      const obsoleteTaskSettings = finalSettings.assistant.tasks as unknown as Record<string, unknown>;
+      delete obsoleteTaskSettings.newTasksDestination;
+      delete obsoleteTaskSettings.newTasksSection;
+      delete obsoleteTaskSettings.autoResolveObsidianWins;
+      delete obsoleteTaskSettings.appliedMigrations;
+
     }
 
     // Fix JSON serialization for Infinity in heatmap
@@ -513,13 +524,19 @@ export default class CalendarPlugin extends Plugin {
     }
   }
 
-  private requestSettingsDrain(): Promise<void> {
-    if (!this.settingsDrainPromise) {
-      this.settingsDrainPromise = this.drainSettingsUpdates().finally(() => {
-        this.settingsDrainPromise = null;
-      });
+  private async requestSettingsDrain(): Promise<void> {
+    // A setting can be changed while the completed drain promise is waiting
+    // for its finalizer. Keep asking until the revision observed by this
+    // caller is actually persisted instead of losing that last update.
+    while (this.persistedSettingsRevision < this.settingsRevision) {
+      if (!this.settingsDrainPromise) {
+        const active = this.drainSettingsUpdates().finally(() => {
+          if (this.settingsDrainPromise === active) this.settingsDrainPromise = null;
+        });
+        this.settingsDrainPromise = active;
+      }
+      await this.settingsDrainPromise;
     }
-    return this.settingsDrainPromise;
   }
 
   private async drainSettingsUpdates(): Promise<void> {
@@ -1006,7 +1023,7 @@ export default class CalendarPlugin extends Plugin {
     this.addCommand({
       id: "refresh-tasks",
       name: t("command-tasks-refresh", lang),
-      callback: () => void this.taskSyncManager?.refreshLocalTasks(),
+      callback: () => void this.taskSyncManager?.refreshRemoteTasks(),
     });
   }
 

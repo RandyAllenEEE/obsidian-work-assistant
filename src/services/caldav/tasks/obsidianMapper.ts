@@ -1,14 +1,13 @@
 import type { CommonTask, TaskStatus, TaskPriority } from '../sync/types';
 import type { ObsidianTask } from './obsidianTasksWrapper';
-import { recurrenceTextToRule, ruleToRecurrenceText } from '../utils/rruleLite';
+import { recurrenceTextToRule } from '../utils/rruleLite';
 
 /**
  * Maps between obsidian-tasks Task objects and CommonTask.
  * Parallel to VTODOMapper on the CalDAV side.
  *
  * We cannot instantiate obsidian-tasks Task objects — they come from
- * the plugin's in-memory cache (read-only). For writing, we generate
- * markdown strings directly.
+ * the plugin's in-memory cache and are read through its public API.
  */
 export class ObsidianMapper {
   /**
@@ -38,139 +37,6 @@ export class ObsidianMapper {
   }
 
   /**
-   * Serialize: CommonTask → obsidian-tasks markdown string.
-   * Uses task.uid for the id field. `format` defaults to 'emoji' so
-   * existing callers are unaffected.
-   */
-  toMarkdown(
-    task: CommonTask,
-    syncTag?: string,
-    format: 'emoji' | 'dataview' = 'emoji',
-    globalFilter?: string,
-  ): string {
-    return format === 'dataview'
-      ? this.toDataviewMarkdown(task, syncTag, globalFilter)
-      : this.toEmojiMarkdown(task, syncTag, globalFilter);
-  }
-
-  private toEmojiMarkdown(task: CommonTask, syncTag?: string, globalFilter?: string): string {
-    let line = `- [${this.statusSymbol(task.status)}] `;
-
-    line += task.title;
-
-    const syncTagName = this.bareTagName(syncTag);
-    const globalFilterName = this.bareTagName(globalFilter);
-    for (const tag of this.nonReservedTags(task.tags, syncTagName, globalFilterName)) {
-      line += ` #${tag}`;
-    }
-
-    if (task.startDate) {
-      line += ` 🛫 ${task.startDate}`;
-    }
-    if (task.scheduledDate) {
-      line += ` ⏳ ${task.scheduledDate}`;
-    }
-    if (task.dueDate) {
-      line += ` 📅 ${task.dueDate}`;
-    }
-    if (task.completedDate) {
-      line += ` ✅ ${task.completedDate}`;
-    }
-
-    if (task.recurrenceRule) {
-      const text = this.rruleToText(task.recurrenceRule);
-      if (text) {
-        line += ` 🔁 ${text}`;
-      }
-    }
-
-    line += ` 🆔 ${task.uid}`;
-
-    line += this.trailingTagSuffix(syncTagName, globalFilterName);
-
-    return this.appendBody(line, task.body);
-  }
-
-  private toDataviewMarkdown(task: CommonTask, syncTag?: string, globalFilter?: string): string {
-    let line = `- [${this.statusSymbol(task.status)}] `;
-
-    line += task.title;
-
-    const syncTagName = this.bareTagName(syncTag);
-    const globalFilterName = this.bareTagName(globalFilter);
-    for (const tag of this.nonReservedTags(task.tags, syncTagName, globalFilterName)) {
-      line += ` #${tag}`;
-    }
-
-    // Dates in obsidian-tasks order: start, scheduled, due, completed
-    if (task.startDate) {
-      line += ` [start:: ${task.startDate}]`;
-    }
-    if (task.scheduledDate) {
-      line += ` [scheduled:: ${task.scheduledDate}]`;
-    }
-    if (task.dueDate) {
-      line += ` [due:: ${task.dueDate}]`;
-    }
-    if (task.completedDate) {
-      line += ` [completion:: ${task.completedDate}]`;
-    }
-
-    if (task.recurrenceRule) {
-      const text = this.rruleToText(task.recurrenceRule);
-      if (text) {
-        line += ` [repeat:: ${text}]`;
-      }
-    }
-
-    line += ` [id:: ${task.uid}]`;
-
-    line += this.trailingTagSuffix(syncTagName, globalFilterName);
-
-    return this.appendBody(line, task.body);
-  }
-
-  private bareTagName(tag: string | undefined): string {
-    return tag?.replace(/^#/, '').trim() ?? '';
-  }
-
-  /**
-   * Drop tags that we re-emit explicitly (sync tag + global filter) so the
-   * suffix renders them exactly once. Comparisons are case-insensitive — both
-   * obsidian-tasks and Obsidian itself treat tags case-insensitively.
-   */
-  private nonReservedTags(tags: string[], syncTagName: string, globalFilterName: string): string[] {
-    const reserved = new Set(
-      [syncTagName, globalFilterName].filter(Boolean).map(t => t.toLowerCase()),
-    );
-    return tags.filter(t => !reserved.has(t.toLowerCase()));
-  }
-
-  /**
-   * Trailing global filter + sync tag suffix. Global filter goes first so
-   * obsidian-tasks recognises the line; sync tag last (existing convention).
-   * Skips the global filter if it equals the sync tag (case-insensitive) to
-   * avoid duplication.
-   */
-  private trailingTagSuffix(syncTagName: string, globalFilterName: string): string {
-    let out = '';
-    if (globalFilterName && globalFilterName.toLowerCase() !== syncTagName.toLowerCase()) {
-      out += ` #${globalFilterName}`;
-    }
-    if (syncTagName) {
-      out += ` #${syncTagName}`;
-    }
-    return out;
-  }
-
-  /** Append the task body as indented bullet lines, if any. */
-  private appendBody(line: string, body: string): string {
-    if (!body) return line;
-    const bodyLines = body.split('\n').map(l => `    - ${l}`);
-    return line + '\n' + bodyLines.join('\n');
-  }
-
-  /**
    * Clean description by removing metadata that belongs in other fields.
    */
   private cleanDescription(description: string): string {
@@ -196,15 +62,6 @@ export class ObsidianMapper {
     if (statusType === 'IN_PROGRESS' || statusType === 'INPROGRESS') return 'IN_PROGRESS';
     if (task.isDone) return 'DONE';
     return 'TODO';
-  }
-
-  private statusSymbol(status: TaskStatus): string {
-    switch (status) {
-      case 'DONE': return 'x';
-      case 'IN_PROGRESS': return '/';
-      case 'CANCELLED': return '-';
-      default: return ' ';
-    }
   }
 
   private mapPriority(priority: string): TaskPriority {
@@ -244,14 +101,4 @@ export class ObsidianMapper {
     return null;
   }
 
-  /**
-   * Convert an RRULE string to obsidian-tasks human-readable format.
-   */
-  private rruleToText(rruleStr: string): string {
-    try {
-      return ruleToRecurrenceText(rruleStr);
-    } catch {
-      return '';
-    }
-  }
 }

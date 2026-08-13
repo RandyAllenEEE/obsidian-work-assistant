@@ -75,46 +75,53 @@
     {/if}
   </div>
 
-  {#if $tasksStore.error}
+  {#if $tasksStore.error && $tasksStore.tasks.length === 0}
     <p class="task-empty">{t("tasks-error")}: {$tasksStore.error}</p>
   {:else if !$tasksStore.ready && $tasksStore.tasks.length === 0}
     <p class="task-empty">{t("tasks-requires-tasks-plugin")}</p>
-  {:else if !hasTasks}
-    <p class="task-empty">{t("tasks-empty")}</p>
   {:else}
-    {#each groups as group}
-      <div class="task-group">
-        <div class="task-group-title">
-          <span>{group.title}</span>
-          <span>{group.tasks.length}</span>
-        </div>
-        {#if group.tasks.length === 0}
-          <p class="task-group-empty">{t("tasks-group-empty")}</p>
-        {:else}
-          <ul>
-            {#each group.tasks as task (task.uid)}
-              <li>
-                <label class:toggling={toggling[task.uid]}>
-                  <input
-                    type="checkbox"
-                    disabled={toggling[task.uid]}
-                    on:change={() => completeTask(task)}
-                  />
-                  <span class="task-content">
-                    <span class="task-title {getTitleClass(task, todayDate)}">{task.title}</span>
-                    <span class="task-meta">
-                      {#if getDateRangeLabel(task)}
-                        <span>{getDateRangeLabel(task)}</span>
-                      {/if}
+    {#if $tasksStore.stale}
+      <p class="task-warning">{t("tasks-stale")}: {$tasksStore.error}</p>
+    {:else if $tasksStore.warning}
+      <p class="task-warning">{$tasksStore.warning}</p>
+    {/if}
+    {#if !hasTasks}
+      <p class="task-empty">{t("tasks-empty")}</p>
+    {:else}
+      {#each groups as group}
+        <div class="task-group">
+          <div class="task-group-title">
+            <span>{group.title}</span>
+            <span>{group.tasks.length}</span>
+          </div>
+          {#if group.tasks.length === 0}
+            <p class="task-group-empty">{t("tasks-group-empty")}</p>
+          {:else}
+            <ul>
+              {#each group.tasks as task (task.uid)}
+                <li>
+                  <label class:toggling={toggling[task.uid]}>
+                    <input
+                      type="checkbox"
+                      disabled={toggling[task.uid]}
+                      on:change={() => completeTask(task)}
+                    />
+                    <span class="task-content">
+                      <span class="task-title {getTitleClass(task, todayDate)}">{task.title}</span>
+                      <span class="task-meta">
+                        {#if getDateRangeLabel(task)}
+                          <span>{getDateRangeLabel(task)}</span>
+                        {/if}
+                      </span>
                     </span>
-                  </span>
-                </label>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
-    {/each}
+                  </label>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/each}
+    {/if}
   {/if}
 </section>
 
@@ -237,11 +244,16 @@
   }
 
   .task-empty,
+  .task-warning,
   .task-group-empty {
     color: var(--text-muted);
     font-size: 0.78rem;
     line-height: 1.4;
     margin: 6px 0 0;
+  }
+
+  .task-warning {
+    color: var(--text-warning, var(--color-orange));
   }
 
   .task-group-empty {

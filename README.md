@@ -5,13 +5,25 @@ This is a comprehensive productivity center for [Obsidian](https://obsidian.md/)
 ![screenshot-hero](https://raw.githubusercontent.com/liamcain/obsidian-calendar-plugin/master/images/screenshot-full.png)
 *(Note: Due to rich functionality, the actual interface includes enhanced periodic notes integration and heatmap display)*
 
-## 🚀 Version 4.4.0 Update: Stability, Data Safety, and Performance
+## Version 4.5.0 Update: CalDAV-Authoritative Tasks
+
+Tasks now use a deliberately narrower, more reliable CalDAV workflow:
+
+*   **CalDAV Is the Sidebar Authority**: The task sidebar is populated only after a live server query. Local scans and disk state never publish guessed task entries.
+*   **Create Once, Then Complete Only**: Tagged local Tasks entries create a VTODO once. After association, only monotonic completion is coordinated; local title, body, date, tag, and priority edits never overwrite cloud data.
+*   **No Remote Markdown Imports**: VTODOs created by other clients remain server-side entries. They appear in the sidebar but do not create or alter Markdown notes.
+*   **Durable Coordination Ledger**: `task-state.json` keeps only mappings, create intents, completion retries, and tombstones. It never stores a server task snapshot; `cache.json` remains for weather, media, and timer state.
+*   **Safer Retry Semantics**: A create intent is saved before network I/O, UID collisions are re-queried by stable source identity, and completed state converges without rolling back the already-successful side.
+
+---
+
+## Version 4.4.0 Update: Stability, Data Safety, and Performance
 
 This release strengthens the plugin's core data flows and reduces background work across desktop and mobile:
 
 *   **📊 Reliable Word Count History**: Statistics now keep the newest date first, preserve deleted-note history in the broken-links aggregate, and protect an existing `stats.md` from accidental overwrite after read or parse failures.
 *   **📁 Robust File Lifecycles**: Create, rename, move, and delete events now update word-count, task, and periodic-note state consistently, including folder operations and delayed worker results.
-*   **✅ Correct Task Dates and Safer Sync**: Task grouping follows the current day across midnight, handles mixed start/scheduled/due dates correctly, and CalDAV sync no longer advances its baseline after partial failures.
+*   **✅ Correct Task Dates and Safer Sync**: Task grouping follows the current day across midnight, handles mixed start/scheduled/due dates correctly, and CalDAV coordination safely retries after partial failures.
 *   **⚡ Event-Driven Calendar**: The calendar no longer performs a full refresh every two seconds; shared note metrics, indexed task dates, scan cancellation, and bounded concurrency reduce repeated reads and parsing.
 *   **🧭 Restored Timeline Lifecycle**: Timeline complications now use the Svelte 5 mounting API and cleanly release view components and listeners when disabled or unloaded.
 *   **🎵 Desktop-Only SMTC Runtime**: Windows media modules load only on supported desktop environments, with chunk-safe album art, restart backoff, empty-media persistence, and mobile-safe entry validation.
@@ -19,12 +31,12 @@ This release strengthens the plugin's core data flows and reduces background wor
 
 ---
 
-## 🚀 Version 4.3.0 Update: CalDAV Task Sync
+## Version 4.3.0 Update: CalDAV Task Sync
 
 This release adds a real bidirectional task workflow on top of the existing calendar and productivity panel:
 
 *   **✅ CalDAV VTODO Sync**: Synchronize Obsidian Tasks markdown tasks with a single configured CalDAV calendar, including Radicale-compatible VTODO read/write flows.
-*   **🔁 Two-Way Task Updates**: Pull new CalDAV tasks into Markdown and push tagged Obsidian Tasks entries back to the server, with baseline and ID mapping to avoid blind overwrites.
+*   **Historical note**: This initial bidirectional model has been superseded by the CalDAV-authoritative workflow described in version 4.5.0.
 *   **📋 Sidebar Task List**: The assistant panel can now show open, selected-date, and future tasks beneath the calendar.
 *   **🧩 Runtime Tasks Integration**: Uses the Obsidian Tasks plugin at runtime for cache access, date parsing, and completion toggles instead of bundling Tasks itself.
 *   **🚫 Task Exclusions**: Configure files, folders, or regex patterns whose tasks should stay out of the sidebar and CalDAV sync.
@@ -83,10 +95,10 @@ Your time management command center.
 
 ### ✅ 7. Tasks & CalDAV Sync
 -   **Obsidian Tasks Runtime Dependency**: Reads tasks from the Obsidian Tasks plugin cache and uses its toggle API for completions.
--   **Single CalDAV Calendar**: Configure one CalDAV server/calendar pair for focused bidirectional VTODO sync.
--   **Markdown Destination**: New tasks pulled from CalDAV can be written to a configured Markdown file and optional section.
+-   **Single CalDAV Calendar**: Configure one CalDAV server/calendar pair. A live server query is the sole source for sidebar tasks.
+-   **One-Way Creation, Coordinated Completion**: Eligible local tasks are published once. Third-party CalDAV tasks are displayed but never written into Markdown; only completion can propagate for an existing association.
 -   **Date-Aware Sidebar**: Tasks are grouped into open, selected-date, and future sections, and calendar dots mark dates with synced tasks.
--   **Exclude Paths**: Skip tasks from specific files, folders, or regex patterns without affecting the rest of the assistant.
+-   **Exclude Paths**: Skip local publication from selected files, folders, or regex patterns without deleting cloud tasks.
 
 ### 📁 8. File Management Utilities
 -   **Custom Templates**: Support for custom templates in periodic notes creation.
@@ -126,9 +138,8 @@ The settings panel has been restructured to reflect strict hierarchical relation
 
 6.  **Tasks**
     *   **CalDAV Calendar**: Configure server URL, calendar name, username, password secret ID, Obsidian tag, and CalDAV category.
-    *   **Sync Behavior**: Set sync interval, conflict preference, Obsidian links, and background sync notifications.
-    *   **New Task Destination**: Choose where CalDAV-created tasks are written in Markdown.
-    *   **Exclude Paths**: Keep selected task files/folders out of both the sidebar task list and CalDAV synchronization.
+    *   **Sync Behavior**: Set the server query interval, optional first-publication Obsidian links, and background sync notifications.
+    *   **Exclude Paths**: Keep selected local task files/folders out of first-time CalDAV publication. Existing cloud tasks remain intact.
 
 ---
 
@@ -158,7 +169,7 @@ This project is built upon the excellent work of the open-source community. We e
     *   Provided core inspiration for our high-performance background word count and heatmap rendering.
 
 3.  **[josecoelho](https://github.com/josecoelho/obsidian-tasks-caldav)** - Creator of **obsidian-tasks-caldav**
-    *   The CalDAV task synchronization architecture in Work Assistant is implemented with sincere appreciation for this project's ideas around VTODO mapping, diffing, sync storage, and Obsidian Tasks integration.
+    *   The CalDAV task integration in Work Assistant is implemented with sincere appreciation for this project's ideas around VTODO mapping and Obsidian Tasks integration.
 
 It is their open-source spirit that makes this tool possible.
 
