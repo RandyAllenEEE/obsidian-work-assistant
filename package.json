@@ -1,6 +1,6 @@
 {
-  "name": "work-assistant",
-  "version": "4.5.0",
+  "name": "obsidian-work-assistant",
+  "version": "4.5.1",
   "description": "A comprehensive productivity companion combining Calendar, Periodic Notes, and Word Count Heatmap features.",
   "author": "Randy Allen",
   "main": "main.js",
@@ -10,7 +10,8 @@
     "verify:smtc": "node scripts/verify-smtc-hashes.mjs",
     "build": "npm run verify:smtc && npm run lint && rollup -c",
     "test": "jest --passWithNoTests",
-    "test:watch": "yarn test -- --watch"
+    "test:watch": "yarn test -- --watch",
+    "test:identity": "node --test scripts/plugin-id-migration.test.mjs"
   },
   "dependencies": {
     "@popperjs/core": "^2.11.8",

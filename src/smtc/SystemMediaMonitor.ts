@@ -69,7 +69,8 @@ export class SystemMediaMonitor extends Component {
             getBasePath(): string;
         };
         const basePath = adapter.getBasePath();
-        const manifestDir = plugin.manifest.dir || ".obsidian/plugins/obsidian-work-assistant";
+        const manifestDir = plugin.manifest.dir
+            || `${plugin.app.vault.configDir || ".obsidian"}/plugins/${plugin.manifest.id}`;
         const pluginPath = joinSystemPath(basePath, manifestDir);
         this.setupDirectory = joinSystemPath(pluginPath, "bin");
         this.bridgePath = joinSystemPath(this.setupDirectory, "SMTCBridge.exe");

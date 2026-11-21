@@ -256,7 +256,7 @@ export default class CalendarPlugin extends Plugin {
     this.configureSystemMedia();
     this.taskSyncManager = new TaskSyncManager(this);
     this.addChild(this.taskSyncManager);
-    await this.configureTaskSync();
+    this.configureTaskSyncCommands();
 
     addIcon("calendar-day", calendarDayIcon);
     addIcon("calendar-week", calendarWeekIcon);
@@ -295,6 +295,8 @@ export default class CalendarPlugin extends Plugin {
       }, 1000)
     );
 
+    // Local views and commands are ready before any remote task discovery.
+    this.taskSyncManager.startAfterLayoutReady();
   }
 
   initLeaf(reveal = true): void {
@@ -629,7 +631,7 @@ export default class CalendarPlugin extends Plugin {
 
     granularities.forEach(g => {
       getCommands(this.app, this, g).forEach(cmd => {
-        this.app.commands.removeCommand(`work-assistant:${cmd.id}`);
+        this.app.commands.removeCommand(`${this.manifest.id}:${cmd.id}`);
       });
     });
 
@@ -988,9 +990,12 @@ export default class CalendarPlugin extends Plugin {
   }
 
   private async configureTaskSync(): Promise<void> {
-    if (!this.taskSyncManager) return;
-    await this.taskSyncManager.configure();
+    const manager = this.taskSyncManager;
+    if (!manager) return;
+    // Reflect changed settings immediately; a slow request must not retain
+    // disabled commands or register commands after the plugin has unloaded.
     this.configureTaskSyncCommands();
+    await manager.configure();
   }
 
   private configureTaskSyncCommands(): void {

@@ -1,9 +1,24 @@
 # Work Assistant Plugin
 
+The plugin ID, package name, and local installation folder are `obsidian-work-assistant`.
+Install the build in `.obsidian/plugins/obsidian-work-assistant/`.
+When migrating an existing `work-assistant` identity, retain the folder's `data.json`,
+`cache.json`, `task-state.json`, and secret IDs. Migrate the enabled-plugin list,
+command references, and Assistant startup/status-bar preferences using
+`migratePluginIdentity` from `scripts/plugin-id-migration.mjs`. Existing view types
+remain compatible. Reload plugin manifests after updating the ID.
+
 This is a comprehensive productivity center for [Obsidian](https://obsidian.md/), perfectly integrating **Calendar**, **Periodic Notes**, **Word Count Heatmap**, **Pomodoro Timer**, and **System Media Control** into a high-performance, modular efficiency ecosystem.
 
 ![screenshot-hero](https://raw.githubusercontent.com/liamcain/obsidian-calendar-plugin/master/images/screenshot-full.png)
 *(Note: Due to rich functionality, the actual interface includes enhanced periodic notes integration and heatmap display)*
+
+## Version 4.5.1 Update: Responsive Startup
+
+Local views, settings, and commands initialize before the first CalDAV request.
+Initial task coordination runs after layout readiness in the background. The task
+panel remains loading until a live query confirms its data. Unloading or replacing
+the task manager invalidates pending startup callbacks and stale failure results.
 
 ## Version 4.5.0 Update: CalDAV-Authoritative Tasks
 

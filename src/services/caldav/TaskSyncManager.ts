@@ -60,6 +60,27 @@ export class TaskSyncManager extends Component {
     tasksStore.set(defaultTaskSyncState);
   }
 
+  /** Start initial synchronization without blocking Plugin.onload or the UI. */
+  startAfterLayoutReady(): void {
+    const scheduledGeneration = this.configurationGeneration;
+    this.plugin.app.workspace.onLayoutReady(() => {
+      if (this.plugin.taskSyncManager !== this
+        || this.configurationGeneration !== scheduledGeneration) return;
+
+      const pending = this.configure();
+      const generation = this.configurationGeneration;
+      void pending.catch((error) => {
+        if (this.plugin.taskSyncManager !== this
+          || this.configurationGeneration !== generation) return;
+        this.stopAutoSync();
+        this.coordinator?.dispose();
+        this.coordinator = null;
+        tasksStore.set({ ...defaultTaskSyncState, error: errorMessage(error) });
+        console.error("[Work Assistant] Initial task synchronization failed:", error);
+      });
+    });
+  }
+
   async configure(): Promise<void> {
     const generation = ++this.configurationGeneration;
     this.stopAutoSync();

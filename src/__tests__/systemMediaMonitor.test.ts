@@ -75,18 +75,20 @@ describe("SystemMediaMonitor process buffer", () => {
     return value;
   }
 
-  function createMonitor() {
+  function createMonitor(manifest: { id: string; dir?: string } = {
+    id: "obsidian-work-assistant",
+    dir: ".obsidian/plugins/obsidian-work-assistant",
+  }) {
     const plugin = {
       app: {
         vault: {
+          configDir: ".obsidian",
           adapter: {
             getBasePath: () => "E:/vault",
           },
         },
       },
-      manifest: {
-        dir: ".obsidian/plugins/obsidian-work-assistant",
-      },
+      manifest,
       options: {
         media: {
           trustedExeHash: "",
@@ -102,6 +104,16 @@ describe("SystemMediaMonitor process buffer", () => {
 
     return new SystemMediaMonitor(plugin, cacheManager) as any;
   }
+
+  test("resolves the media bridge from the current plugin ID when dir is absent", () => {
+    const monitor = createMonitor({ id: "obsidian-work-assistant" });
+    expect(monitor.bridgePath).toBe("E:/vault/.obsidian/plugins/obsidian-work-assistant/bin/SMTCBridge.exe");
+  });
+
+  test("preserves a custom manifest directory rather than guessing from the ID", () => {
+    const monitor = createMonitor({ id: "obsidian-work-assistant", dir: ".custom/plugins/existing-install" });
+    expect(monitor.bridgePath).toBe("E:/vault/.custom/plugins/existing-install/bin/SMTCBridge.exe");
+  });
 
   test("processBuffer parses JSON payload and updates store", () => {
     const monitor = createMonitor();
