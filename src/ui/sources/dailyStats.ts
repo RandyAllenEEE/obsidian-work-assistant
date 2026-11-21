@@ -1,5 +1,5 @@
 import type { Moment } from "moment";
-import type { ICalendarSource, IDayMetadata } from "obsidian-calendar-ui";
+import type { ICalendarSource, IDayMetadata } from "../../calendar-ui/types";
 import type WordCountStats from "../../wordCountStats";
 import { t } from "../../i18n";
 

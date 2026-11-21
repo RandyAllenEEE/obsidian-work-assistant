@@ -1,7 +1,12 @@
-# Work Assistant Plugin
+# Work Assistant
 
-The plugin ID, package name, and local installation folder are `obsidian-work-assistant`.
-Install the build in `.obsidian/plugins/obsidian-work-assistant/`.
+## Installation
+
+1. Download `obsidian-work-assistant-<version>.zip` from the [latest release](https://github.com/RandyAllenEEE/obsidian-work-assistant/releases/latest).
+2. Extract its `obsidian-work-assistant/` folder into `.obsidian/plugins/` in your vault.
+3. Restart Obsidian and enable Work Assistant.
+
+Use the ZIP for a complete installation with the default periodic note templates and Windows media bridge. When upgrading, keep your existing `data.json`, `cache.json`, and `task-state.json`.
 When migrating an existing `work-assistant` identity, retain the folder's `data.json`,
 `cache.json`, `task-state.json`, and secret IDs. Migrate the enabled-plugin list,
 command references, and Assistant startup/status-bar preferences using
@@ -157,6 +162,14 @@ The settings panel has been restructured to reflect strict hierarchical relation
     *   **Exclude Paths**: Keep selected local task files/folders out of first-time CalDAV publication. Existing cloud tasks remain intact.
 
 ---
+
+## Build and release
+
+With Node.js 24, run `npm ci` and `npm run build`. The installable files and supporting folders are in `dist/`.
+
+### Publishing
+
+Run the checks in [the release workflow](.github/workflows/release.yml) and push the updated default branch. Once its checks pass, push only the `X.Y.Z` tag that matches `manifest.json`. The tag run rebuilds, packages, and verifies the attachments before publishing the GitHub Release.
 
 ## 🏗️ Technical Architecture
 

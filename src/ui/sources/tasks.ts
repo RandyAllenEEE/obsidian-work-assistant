@@ -1,5 +1,5 @@
 import type { Moment } from "moment";
-import type { ICalendarSource, IDayMetadata, IDot } from "obsidian-calendar-ui";
+import type { ICalendarSource, IDayMetadata, IDot } from "../../calendar-ui/types";
 import { get } from "svelte/store";
 
 import { tasksStore } from "../stores";

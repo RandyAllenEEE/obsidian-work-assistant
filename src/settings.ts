@@ -1,7 +1,7 @@
 import * as obsidian from "obsidian";
 import { PluginSettingTab, Setting, Platform, Notice } from "obsidian";
 import type { App } from "obsidian";
-import type { IWeekStartOption } from "obsidian-calendar-ui";
+import type { IWeekStartOption } from "./calendar-ui/localization";
 import { DEFAULT_WORDS_PER_DOT, DEFAULT_REFRESH_INTERVAL } from "src/constants";
 import { t, getLanguage } from "./i18n";
 import type { Language } from "./i18n";

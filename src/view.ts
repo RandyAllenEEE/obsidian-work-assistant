@@ -28,7 +28,7 @@ import { WORD_COUNT_STATS_UPDATED_EVENT } from "./wordCountStats";
 import type CalendarPlugin from "./main";
 import { isMetaPressed } from "./periodic/utils";
 import type { Granularity, PeriodicNotesConfig } from "./periodic/types";
-import type { ICalendarSource } from "obsidian-calendar-ui";
+import type { ICalendarSource } from "./calendar-ui/types";
 import { invalidateNoteMetrics } from "./ui/sources/noteMetrics";
 
 export default class CalendarView extends ItemView {
