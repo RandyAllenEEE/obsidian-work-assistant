@@ -1,3 +1,4 @@
+import { createSettingsList } from "./settings-list";
 import * as obsidian from "obsidian";
 import { PluginSettingTab, Setting, Platform, Notice } from "obsidian";
 import type { App } from "obsidian";
@@ -215,6 +216,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
   display(): void {
     this.containerEl.empty();
+    this.containerEl.addClass("work-assistant-settings");
     const lang = getLanguage();
 
     // Deconstruct NEW properties
@@ -226,7 +228,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     //   .setName(t("settings-general-title", lang) || "General") // Fallback if key missing, but should be added
     //   .setHeading();
 
-    this.addLocaleOverrideSetting(this.containerEl, lang);
+    this.addLocaleOverrideSetting(createSettingsList(this.containerEl), lang);
 
     // 2. Assistant Panel
     this.addAssistantSettings(lang);
@@ -1178,10 +1180,8 @@ Inbox/              # Folder prefix match (includes subfolders)
           media: { ...old.media, enabled: val }
         }));
       },
-      (contentEl) => {
-        if (!isWin) {
-          contentEl.createDiv({ text: t("settings-media-windows-only", lang), cls: "setting-item-description" });
-        }
+      isWin ? null : (contentEl) => {
+        contentEl.createDiv({ text: t("settings-media-windows-only", lang), cls: "setting-item-description" });
       }
     );
   }
@@ -1456,15 +1456,16 @@ Inbox/              # Folder prefix match (includes subfolders)
     title: string,
     enabled: boolean,
     onToggle: ((enabled: boolean) => void) | null,
-    contentBuilder: (container: HTMLElement) => void,
+    contentBuilder: ((container: HTMLElement) => void) | null,
     defaultOpen = false,
     showToggle = true
   ): void {
+    const list = createSettingsList(parent);
     let section: Setting;
     let currentState = enabled;  // Internal state for stateless containers
     
     if (showToggle) {
-      section = new Setting(parent)
+      section = new Setting(list)
           .setName(title)
           .addToggle(toggle => {
               toggle.setValue(currentState).onChange((value) => {
@@ -1477,19 +1478,18 @@ Inbox/              # Folder prefix match (includes subfolders)
           });
     } else {
       // Create a pure container/label without toggle
-      section = new Setting(parent)
+      section = new Setting(list)
           .setName(title);
-      section.settingEl.style.fontSize = "0.9rem";
-      section.settingEl.style.fontWeight = "500";
     }
 
-    const contentContainer = parent.createDiv();
-    // Apply indentation based on parent's padding
-    const parentPaddingLeft = window.getComputedStyle(parent).paddingLeft;
-    const currentIndent = parentPaddingLeft ? parseInt(parentPaddingLeft) : 0;
-    contentContainer.style.paddingLeft = (currentIndent + 15) + "px";
-    contentContainer.style.marginBottom = "10px";
-    
+    section.settingEl.addClass("assistant-settings-section-header", "assistant-work-section-header");
+    if (!contentBuilder) {
+      section.settingEl.addClass("is-toggle-only");
+      return;
+    }
+
+    const contentContainer = list.createDiv({ cls: "assistant-work-group-body" });
+
     let hasBuiltContent = false;
     
     const toggleContent = () => {
@@ -1506,6 +1506,7 @@ Inbox/              # Folder prefix match (includes subfolders)
 
     // If no toggle, always show content
     if (showToggle) {
+        section.settingEl.addClass("is-collapsible");
         contentContainer.style.display = defaultOpen ? "block" : "none";
 
         if (defaultOpen) {

@@ -2,7 +2,7 @@
   "id": "obsidian-work-assistant",
   "name": "Work Assistant",
   "description": "A comprehensive productivity companion combining Calendar, Periodic Notes, and Word Count Heatmap features.",
-  "version": "4.5.1",
+  "version": "4.5.2",
   "author": "Randy Allen",
   "authorUrl": "https://github.com/RandyAllenEEE",
   "isDesktopOnly": false,
